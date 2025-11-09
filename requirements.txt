@@ -1,0 +1,5 @@
+cryptography>=41.0.0
+pycryptodome>=3.19.0
+tenseal>=0.3.14
+pytest>=7.4.0
+pytest-cov>=4.1.0
