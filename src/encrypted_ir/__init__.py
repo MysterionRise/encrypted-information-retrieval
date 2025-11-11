@@ -10,6 +10,7 @@ from .searchable import SearchableEncryption
 from .order_preserving import OrderPreservingEncryption
 from .homomorphic import BasicHomomorphicEncryption
 from .key_manager import KeyManager
+from .blind_index import BlindIndexGenerator, BlindIndexConfig, BlindIndexSearch
 
 __version__ = "1.0.0"
 __all__ = [
@@ -18,4 +19,7 @@ __all__ = [
     "OrderPreservingEncryption",
     "BasicHomomorphicEncryption",
     "KeyManager",
+    "BlindIndexGenerator",
+    "BlindIndexConfig",
+    "BlindIndexSearch",
 ]
