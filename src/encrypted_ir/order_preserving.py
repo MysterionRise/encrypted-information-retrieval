@@ -9,12 +9,30 @@ range queries are essential and the security trade-off is acceptable.
 
 Use Case: Transaction amounts, dates, account balances where range queries
 are required (e.g., "find transactions > $1000").
+
+DEPRECATION NOTICE:
+    This OPE implementation is DEPRECATED and will be removed in v2.0.0 (Q3 2025).
+
+    Security Rationale:
+    - Current OPE leaks global total order + frequency across all encrypted values
+    - Fails to meet 2025 security standards (DORA Art. 9, PCI DSS 3.5.1)
+    - Vulnerable to inference attacks in multi-tenant environments
+
+    Migration Path:
+    - Use ORE (Order-Revealing Encryption) with Lewi-Wu construction instead
+    - See docs/migration/OPE_TO_ORE.md for migration guide
+    - ORE provides pairwise comparison without global order leakage
+
+    Timeline:
+    - Deprecation: v1.0.0 (now)
+    - Removal: v2.0.0 (Q3 2025)
 """
 
 import os
 import hmac
 import hashlib
 import struct
+import warnings
 from typing import Union
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
@@ -40,7 +58,23 @@ class OrderPreservingEncryption:
             key: 256-bit encryption key. If None, generates new key.
             plaintext_bits: Bit size of plaintext values (default: 32)
             ciphertext_bits: Bit size of ciphertext values (default: 64)
+
+        .. deprecated:: 1.0.0
+            OrderPreservingEncryption is deprecated and will be removed in v2.0.0.
+            Use ORE (Order-Revealing Encryption) instead for improved security.
+            See docs/migration/OPE_TO_ORE.md for migration guide.
         """
+        # Emit deprecation warning
+        warnings.warn(
+            "OrderPreservingEncryption is deprecated and will be removed in v2.0.0 (Q3 2025). "
+            "Current OPE leaks global order across all encrypted values, which fails "
+            "2025 security standards (DORA Art. 9, PCI DSS 3.5.1). "
+            "Migrate to ORE (Order-Revealing Encryption) with Lewi-Wu construction for "
+            "improved security. See docs/migration/OPE_TO_ORE.md for migration guide.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
         if key is None:
             key = os.urandom(32)
         elif len(key) != 32:
