@@ -178,4 +178,8 @@ directory = "htmlcov"
 
 [tool.bandit]
 exclude_dirs = ["tests", ".venv", "venv"]
-skips = ["B101", "B601"]  # Skip assert_used and paramiko_calls
+# B101: assert_used (needed for pytest)
+# B601: paramiko_calls (not applicable)
+# Note: B413 (pycrypto) warnings are suppressed inline with # nosec B413
+# We use pycryptodome (>=3.19.0), which is actively maintained, NOT deprecated pycrypto
+skips = ["B101", "B601"]

@@ -34,8 +34,11 @@ import hashlib
 import struct
 import warnings
 from typing import Union
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import pad, unpad
+# NOTE: We use pycryptodome (>=3.19.0), NOT the deprecated pycrypto library.
+# pycryptodome is actively maintained and secure. Bandit cannot distinguish between
+# them because they share the same namespace, hence the nosec annotations.
+from Crypto.Cipher import AES  # nosec B413
+from Crypto.Util.Padding import pad, unpad  # nosec B413
 import base64
 
 
