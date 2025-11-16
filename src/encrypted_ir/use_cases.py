@@ -25,9 +25,7 @@ class AccountManagement:
         self.key_manager = key_manager
         # Create encryption key for account numbers (64 bytes for AES-SIV)
         self.key_id = key_manager.create_key(
-            'deterministic',
-            key_size=64,
-            description='Account number encryption'
+            "deterministic", key_size=64, description="Account number encryption"
         )
         key = key_manager.get_key(self.key_id)
         self.encryptor = DeterministicEncryption(key)
@@ -40,8 +38,7 @@ class AccountManagement:
         """Create searchable index for account number."""
         return self.encryptor.search_index(account_number)
 
-    def search_account(self, account_number: str,
-                      encrypted_accounts: List[str]) -> List[int]:
+    def search_account(self, account_number: str, encrypted_accounts: List[str]) -> List[int]:
         """
         Search for matching account in encrypted database.
 
@@ -70,10 +67,7 @@ class TransactionProcessing:
 
     def __init__(self, key_manager: KeyManager):
         self.key_manager = key_manager
-        self.key_id = key_manager.create_key(
-            'ope',
-            description='Transaction amount encryption'
-        )
+        self.key_id = key_manager.create_key("ope", description="Transaction amount encryption")
         key = key_manager.get_key(self.key_id)
         self.encryptor = OrderPreservingEncryption(key)
 
@@ -81,8 +75,7 @@ class TransactionProcessing:
         """Encrypt a transaction amount."""
         return self.encryptor.encrypt_amount(amount)
 
-    def find_large_transactions(self, encrypted_amounts: List[int],
-                               threshold: float) -> List[int]:
+    def find_large_transactions(self, encrypted_amounts: List[int], threshold: float) -> List[int]:
         """
         Find transactions above a threshold.
 
@@ -95,13 +88,12 @@ class TransactionProcessing:
         """
         encrypted_threshold = self.encrypt_amount(threshold)
         return [
-            idx for idx, enc_amt in enumerate(encrypted_amounts)
-            if enc_amt >= encrypted_threshold
+            idx for idx, enc_amt in enumerate(encrypted_amounts) if enc_amt >= encrypted_threshold
         ]
 
-    def find_transactions_in_range(self, encrypted_amounts: List[int],
-                                   min_amount: float,
-                                   max_amount: float) -> List[int]:
+    def find_transactions_in_range(
+        self, encrypted_amounts: List[int], min_amount: float, max_amount: float
+    ) -> List[int]:
         """
         Find transactions within amount range.
 
@@ -117,8 +109,7 @@ class TransactionProcessing:
         enc_max = self.encrypt_amount(max_amount)
 
         return [
-            idx for idx, enc_amt in enumerate(encrypted_amounts)
-            if enc_min <= enc_amt <= enc_max
+            idx for idx, enc_amt in enumerate(encrypted_amounts) if enc_min <= enc_amt <= enc_max
         ]
 
 
@@ -133,17 +124,13 @@ class DocumentSearch:
     def __init__(self, key_manager: KeyManager):
         self.key_manager = key_manager
         self.key_id = key_manager.create_key(
-            'searchable',
-            key_size=32,
-            description='Document encryption'
+            "searchable", key_size=32, description="Document encryption"
         )
         enc_key = key_manager.get_key(self.key_id)
 
         # Create separate search key
         self.search_key_id = key_manager.create_key(
-            'searchable_search',
-            key_size=32,
-            description='Document search tokens'
+            "searchable_search", key_size=32, description="Document search tokens"
         )
         search_key = key_manager.get_key(self.search_key_id)
 
@@ -195,7 +182,7 @@ class DocumentSearch:
             Decrypted content
         """
         plaintext = self.encryptor.decrypt_document_from_base64(encrypted_document)
-        return plaintext.decode('utf-8')
+        return plaintext.decode("utf-8")
 
 
 class CreditScoring:
@@ -209,8 +196,9 @@ class CreditScoring:
     def __init__(self):
         self.encryptor = BasicHomomorphicEncryption()
 
-    def encrypt_financial_data(self, income: float, debt: float,
-                              credit_history_months: int) -> Dict[str, str]:
+    def encrypt_financial_data(
+        self, income: float, debt: float, credit_history_months: int
+    ) -> Dict[str, str]:
         """
         Encrypt financial data for credit scoring.
 
@@ -223,19 +211,20 @@ class CreditScoring:
             Dictionary of encrypted values (as base64)
         """
         return {
-            'income': self.encryptor.serialize_encrypted_to_base64(
+            "income": self.encryptor.serialize_encrypted_to_base64(
                 self.encryptor.encrypt_value(income)
             ),
-            'debt': self.encryptor.serialize_encrypted_to_base64(
+            "debt": self.encryptor.serialize_encrypted_to_base64(
                 self.encryptor.encrypt_value(debt)
             ),
-            'credit_history': self.encryptor.serialize_encrypted_to_base64(
+            "credit_history": self.encryptor.serialize_encrypted_to_base64(
                 self.encryptor.encrypt_value(credit_history_months)
-            )
+            ),
         }
 
-    def calculate_debt_to_income_ratio(self, encrypted_income_b64: str,
-                                      encrypted_debt_b64: str) -> float:
+    def calculate_debt_to_income_ratio(
+        self, encrypted_income_b64: str, encrypted_debt_b64: str
+    ) -> float:
         """
         Calculate debt-to-income ratio on encrypted values.
 
@@ -253,15 +242,16 @@ class CreditScoring:
         # Note: division is complex in HE, so we'll compute debt * (1/income)
         income_val = self.encryptor.decrypt_value(enc_income)
         if income_val == 0:
-            return float('inf')
+            return float("inf")
 
         # For simplicity, decrypt income to get ratio
         # In production, use more sophisticated HE division
         debt_val = self.encryptor.decrypt_value(enc_debt)
         return debt_val / income_val
 
-    def calculate_credit_score(self, encrypted_data: Dict[str, str],
-                             weights: Dict[str, float] = None) -> float:
+    def calculate_credit_score(
+        self, encrypted_data: Dict[str, str], weights: Dict[str, float] = None
+    ) -> float:
         """
         Calculate weighted credit score on encrypted data.
 
@@ -274,21 +264,21 @@ class CreditScoring:
         """
         if weights is None:
             weights = {
-                'income': 0.3,
-                'debt': -0.2,  # negative because more debt = lower score
-                'credit_history': 0.5
+                "income": 0.3,
+                "debt": -0.2,  # negative because more debt = lower score
+                "credit_history": 0.5,
             }
 
         # Decrypt values for scoring
         # In production, this would use pure HE operations
         income = self.encryptor.decrypt_value(
-            self.encryptor.deserialize_encrypted_from_base64(encrypted_data['income'])
+            self.encryptor.deserialize_encrypted_from_base64(encrypted_data["income"])
         )
         debt = self.encryptor.decrypt_value(
-            self.encryptor.deserialize_encrypted_from_base64(encrypted_data['debt'])
+            self.encryptor.deserialize_encrypted_from_base64(encrypted_data["debt"])
         )
         history = self.encryptor.decrypt_value(
-            self.encryptor.deserialize_encrypted_from_base64(encrypted_data['credit_history'])
+            self.encryptor.deserialize_encrypted_from_base64(encrypted_data["credit_history"])
         )
 
         # Normalize values and calculate score
@@ -297,9 +287,9 @@ class CreditScoring:
         normalized_history = min(history / 120, 1.0)  # Cap at 10 years
 
         raw_score = (
-            normalized_income * weights['income'] +
-            normalized_debt * weights['debt'] +
-            normalized_history * weights['credit_history']
+            normalized_income * weights["income"]
+            + normalized_debt * weights["debt"]
+            + normalized_history * weights["credit_history"]
         )
 
         # Scale to 300-850 range
@@ -318,22 +308,20 @@ class FraudDetection:
     def __init__(self, key_manager: KeyManager):
         self.key_manager = key_manager
         self.ope_key_id = key_manager.create_key(
-            'ope_fraud',
-            description='Transaction amount encryption for fraud detection'
+            "ope_fraud", description="Transaction amount encryption for fraud detection"
         )
         ope_key = key_manager.get_key(self.ope_key_id)
         self.ope_encryptor = OrderPreservingEncryption(ope_key)
 
         self.det_key_id = key_manager.create_key(
-            'deterministic_fraud',
+            "deterministic_fraud",
             key_size=64,
-            description='Account ID encryption for fraud detection'
+            description="Account ID encryption for fraud detection",
         )
         det_key = key_manager.get_key(self.det_key_id)
         self.det_encryptor = DeterministicEncryption(det_key)
 
-    def encrypt_transaction(self, account_id: str, amount: float,
-                           merchant: str) -> Dict[str, any]:
+    def encrypt_transaction(self, account_id: str, amount: float, merchant: str) -> Dict[str, any]:
         """
         Encrypt transaction data.
 
@@ -346,13 +334,14 @@ class FraudDetection:
             Dictionary with encrypted fields
         """
         return {
-            'account_id': self.det_encryptor.encrypt_to_base64(account_id),
-            'amount': self.ope_encryptor.encrypt_amount(amount),
-            'merchant': self.det_encryptor.encrypt_to_base64(merchant)
+            "account_id": self.det_encryptor.encrypt_to_base64(account_id),
+            "amount": self.ope_encryptor.encrypt_amount(amount),
+            "merchant": self.det_encryptor.encrypt_to_base64(merchant),
         }
 
-    def detect_unusual_amounts(self, encrypted_transactions: List[Dict],
-                              threshold_amount: float) -> List[int]:
+    def detect_unusual_amounts(
+        self, encrypted_transactions: List[Dict], threshold_amount: float
+    ) -> List[int]:
         """
         Detect transactions with unusual amounts.
 
@@ -367,14 +356,14 @@ class FraudDetection:
         suspicious = []
 
         for idx, txn in enumerate(encrypted_transactions):
-            if txn['amount'] > enc_threshold:
+            if txn["amount"] > enc_threshold:
                 suspicious.append(idx)
 
         return suspicious
 
-    def detect_rapid_transactions(self, encrypted_transactions: List[Dict],
-                                 account_id: str,
-                                 max_count: int = 5) -> bool:
+    def detect_rapid_transactions(
+        self, encrypted_transactions: List[Dict], account_id: str, max_count: int = 5
+    ) -> bool:
         """
         Detect rapid succession of transactions from same account.
 
@@ -387,5 +376,5 @@ class FraudDetection:
             True if fraud pattern detected
         """
         enc_account = self.det_encryptor.encrypt_to_base64(account_id)
-        count = sum(1 for txn in encrypted_transactions if txn['account_id'] == enc_account)
+        count = sum(1 for txn in encrypted_transactions if txn["account_id"] == enc_account)
         return count > max_count

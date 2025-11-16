@@ -81,7 +81,7 @@ class DeterministicEncryption:
             Encrypted ciphertext (bytes)
         """
         if isinstance(plaintext, str):
-            plaintext = plaintext.encode('utf-8')
+            plaintext = plaintext.encode("utf-8")
 
         if associated_data is None:
             associated_data = []
@@ -112,7 +112,9 @@ class DeterministicEncryption:
         except InvalidTag as e:
             raise ValueError("Decryption failed - invalid key or corrupted data") from e
 
-    def encrypt_to_base64(self, plaintext: Union[str, bytes], associated_data: list[bytes] = None) -> str:
+    def encrypt_to_base64(
+        self, plaintext: Union[str, bytes], associated_data: list[bytes] = None
+    ) -> str:
         """
         Encrypt and encode as base64 string for storage.
 
@@ -124,9 +126,11 @@ class DeterministicEncryption:
             Base64-encoded ciphertext
         """
         ciphertext = self.encrypt(plaintext, associated_data)
-        return base64.b64encode(ciphertext).decode('ascii')
+        return base64.b64encode(ciphertext).decode("ascii")
 
-    def decrypt_from_base64(self, ciphertext_b64: str, associated_data: list[bytes] = None) -> bytes:
+    def decrypt_from_base64(
+        self, ciphertext_b64: str, associated_data: list[bytes] = None
+    ) -> bytes:
         """
         Decrypt from base64-encoded ciphertext.
 
@@ -156,10 +160,10 @@ class DeterministicEncryption:
 
     def export_key(self) -> str:
         """Export key as base64 string."""
-        return base64.b64encode(self.key).decode('ascii')
+        return base64.b64encode(self.key).decode("ascii")
 
     @staticmethod
-    def import_key(key_b64: str) -> 'DeterministicEncryption':
+    def import_key(key_b64: str) -> "DeterministicEncryption":
         """
         Import key from base64 string.
 

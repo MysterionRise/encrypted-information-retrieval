@@ -67,7 +67,7 @@ class SearchableEncryption:
         # Simple word extraction - in production, use more sophisticated NLP
         words = text.lower().split()
         # Remove short words and common stop words
-        stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for'}
+        stop_words = {"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for"}
         keywords = {w.strip('.,!?;:"()[]{}') for w in words if len(w) > 2 and w not in stop_words}
         return keywords
 
@@ -82,15 +82,15 @@ class SearchableEncryption:
             Base64-encoded search token
         """
         # Use HMAC with search key to create deterministic token
-        token = hmac.new(
-            self.search_key,
-            keyword.lower().encode('utf-8'),
-            hashlib.sha256
-        ).digest()
-        return base64.b64encode(token).decode('ascii')
+        token = hmac.new(self.search_key, keyword.lower().encode("utf-8"), hashlib.sha256).digest()
+        return base64.b64encode(token).decode("ascii")
 
-    def encrypt_document(self, document: Union[str, bytes], auto_extract_keywords: bool = True,
-                        keywords: Set[str] = None) -> tuple[bytes, Set[str]]:
+    def encrypt_document(
+        self,
+        document: Union[str, bytes],
+        auto_extract_keywords: bool = True,
+        keywords: Set[str] = None,
+    ) -> tuple[bytes, Set[str]]:
         """
         Encrypt a document and generate search tokens.
 
@@ -103,11 +103,11 @@ class SearchableEncryption:
             Tuple of (encrypted_document, search_tokens)
         """
         if isinstance(document, str):
-            plaintext = document.encode('utf-8')
+            plaintext = document.encode("utf-8")
             doc_text = document
         else:
             plaintext = document
-            doc_text = document.decode('utf-8', errors='ignore')
+            doc_text = document.decode("utf-8", errors="ignore")
 
         # Extract or use provided keywords
         if auto_extract_keywords:
@@ -118,9 +118,7 @@ class SearchableEncryption:
         # Encrypt document using AES-GCM
         iv = os.urandom(12)
         cipher = Cipher(
-            algorithms.AES(self.encryption_key),
-            modes.GCM(iv),
-            backend=default_backend()
+            algorithms.AES(self.encryption_key), modes.GCM(iv), backend=default_backend()
         )
         encryptor = cipher.encryptor()
         ciphertext = encryptor.update(plaintext) + encryptor.finalize()
@@ -152,9 +150,7 @@ class SearchableEncryption:
         ciphertext = encrypted_document[28:]
 
         cipher = Cipher(
-            algorithms.AES(self.encryption_key),
-            modes.GCM(iv, tag),
-            backend=default_backend()
+            algorithms.AES(self.encryption_key), modes.GCM(iv, tag), backend=default_backend()
         )
         decryptor = cipher.decryptor()
 
@@ -189,9 +185,12 @@ class SearchableEncryption:
         """
         return query_token in document_tokens
 
-    def encrypt_document_to_base64(self, document: Union[str, bytes],
-                                   auto_extract_keywords: bool = True,
-                                   keywords: Set[str] = None) -> tuple[str, List[str]]:
+    def encrypt_document_to_base64(
+        self,
+        document: Union[str, bytes],
+        auto_extract_keywords: bool = True,
+        keywords: Set[str] = None,
+    ) -> tuple[str, List[str]]:
         """
         Encrypt document and return base64-encoded result with tokens.
 
@@ -204,10 +203,7 @@ class SearchableEncryption:
             Tuple of (base64_encrypted_doc, list_of_search_tokens)
         """
         encrypted_doc, tokens = self.encrypt_document(document, auto_extract_keywords, keywords)
-        return (
-            base64.b64encode(encrypted_doc).decode('ascii'),
-            sorted(list(tokens))
-        )
+        return (base64.b64encode(encrypted_doc).decode("ascii"), sorted(list(tokens)))
 
     def decrypt_document_from_base64(self, encrypted_document_b64: str) -> bytes:
         """
@@ -230,12 +226,12 @@ class SearchableEncryption:
             Tuple of (encryption_key_b64, search_key_b64)
         """
         return (
-            base64.b64encode(self.encryption_key).decode('ascii'),
-            base64.b64encode(self.search_key).decode('ascii')
+            base64.b64encode(self.encryption_key).decode("ascii"),
+            base64.b64encode(self.search_key).decode("ascii"),
         )
 
     @staticmethod
-    def import_keys(encryption_key_b64: str, search_key_b64: str) -> 'SearchableEncryption':
+    def import_keys(encryption_key_b64: str, search_key_b64: str) -> "SearchableEncryption":
         """
         Import keys from base64 strings.
 

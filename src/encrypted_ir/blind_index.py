@@ -39,10 +39,11 @@ class BlindIndexConfig:
         case_sensitive: Whether to preserve case (default: False)
         unicode_normalize: Unicode normalization form (default: 'NFKC')
     """
+
     field_name: str
     output_length: int = 16
     case_sensitive: bool = False
-    unicode_normalize: str = 'NFKC'
+    unicode_normalize: str = "NFKC"
 
 
 class BlindIndexGenerator:
@@ -99,12 +100,8 @@ class BlindIndexGenerator:
             return self._field_keys[field_name]
 
         # KDF: HMAC-SHA256(master_key, tenant_id || field_name)
-        context = f"{self.tenant_id}:{field_name}".encode('utf-8')
-        derived_key = hmac.new(
-            self.master_key,
-            context,
-            hashlib.sha256
-        ).digest()
+        context = f"{self.tenant_id}:{field_name}".encode("utf-8")
+        derived_key = hmac.new(self.master_key, context, hashlib.sha256).digest()
 
         self._field_keys[field_name] = derived_key
         return derived_key
@@ -158,17 +155,13 @@ class BlindIndexGenerator:
         field_key = self._derive_field_key(config.field_name)
 
         # Compute HMAC
-        h = hmac.new(
-            field_key,
-            normalized.encode('utf-8'),
-            hashlib.sha256
-        )
+        h = hmac.new(field_key, normalized.encode("utf-8"), hashlib.sha256)
 
         # Truncate to desired output length
-        index_bytes = h.digest()[:config.output_length]
+        index_bytes = h.digest()[: config.output_length]
 
         # Encode as base64 for storage
-        return base64.b64encode(index_bytes).decode('ascii')
+        return base64.b64encode(index_bytes).decode("ascii")
 
     def create_index_raw(self, value: str, config: BlindIndexConfig) -> bytes:
         """
@@ -186,13 +179,9 @@ class BlindIndexGenerator:
         normalized = self._normalize_value(value, config)
         field_key = self._derive_field_key(config.field_name)
 
-        h = hmac.new(
-            field_key,
-            normalized.encode('utf-8'),
-            hashlib.sha256
-        )
+        h = hmac.new(field_key, normalized.encode("utf-8"), hashlib.sha256)
 
-        return h.digest()[:config.output_length]
+        return h.digest()[: config.output_length]
 
     def verify_index(self, value: str, index: str, config: BlindIndexConfig) -> bool:
         """
@@ -238,10 +227,10 @@ class BlindIndexGenerator:
         Returns:
             Base64-encoded master key
         """
-        return base64.b64encode(self.master_key).decode('ascii')
+        return base64.b64encode(self.master_key).decode("ascii")
 
     @staticmethod
-    def import_master_key(master_key_b64: str, tenant_id: str) -> 'BlindIndexGenerator':
+    def import_master_key(master_key_b64: str, tenant_id: str) -> "BlindIndexGenerator":
         """
         Import master key from base64 string.
 
@@ -289,8 +278,9 @@ class BlindIndexSearch:
         self.generator = BlindIndexGenerator(tenant_id, master_key)
         self.tenant_id = tenant_id
 
-    def index_records(self, records: Dict[str, Dict], field_name: str,
-                     config: BlindIndexConfig) -> Dict[str, str]:
+    def index_records(
+        self, records: Dict[str, Dict], field_name: str, config: BlindIndexConfig
+    ) -> Dict[str, str]:
         """
         Generate blind indexes for a set of records.
 
@@ -325,8 +315,9 @@ class BlindIndexSearch:
 
         return index_map
 
-    def search(self, query_value: str, index_map: Dict[str, str],
-              config: BlindIndexConfig) -> list[str]:
+    def search(
+        self, query_value: str, index_map: Dict[str, str], config: BlindIndexConfig
+    ) -> list[str]:
         """
         Search for records matching a query value.
 
@@ -348,8 +339,9 @@ class BlindIndexSearch:
         else:
             return []
 
-    def multi_search(self, query_values: list[str], index_map: Dict[str, str],
-                    config: BlindIndexConfig) -> Dict[str, list[str]]:
+    def multi_search(
+        self, query_values: list[str], index_map: Dict[str, str], config: BlindIndexConfig
+    ) -> Dict[str, list[str]]:
         """
         Search for multiple values at once.
 
@@ -369,6 +361,7 @@ class BlindIndexSearch:
 
 # Convenience functions for common use cases
 
+
 def create_ssn_index(ssn: str, tenant_id: str, master_key: bytes) -> str:
     """
     Create a blind index for an SSN.
@@ -382,11 +375,7 @@ def create_ssn_index(ssn: str, tenant_id: str, master_key: bytes) -> str:
         Blind index for SSN
     """
     generator = BlindIndexGenerator(tenant_id, master_key)
-    config = BlindIndexConfig(
-        field_name="ssn",
-        case_sensitive=False,
-        output_length=16
-    )
+    config = BlindIndexConfig(field_name="ssn", case_sensitive=False, output_length=16)
     return generator.create_index(ssn, config)
 
 
@@ -403,11 +392,7 @@ def create_email_index(email: str, tenant_id: str, master_key: bytes) -> str:
         Blind index for email
     """
     generator = BlindIndexGenerator(tenant_id, master_key)
-    config = BlindIndexConfig(
-        field_name="email",
-        case_sensitive=False,
-        output_length=16
-    )
+    config = BlindIndexConfig(field_name="email", case_sensitive=False, output_length=16)
     return generator.create_index(email, config)
 
 
@@ -427,6 +412,6 @@ def create_account_index(account_number: str, tenant_id: str, master_key: bytes)
     config = BlindIndexConfig(
         field_name="account_number",
         case_sensitive=True,  # Account numbers are usually case-sensitive
-        output_length=16
+        output_length=16,
     )
     return generator.create_index(account_number, config)

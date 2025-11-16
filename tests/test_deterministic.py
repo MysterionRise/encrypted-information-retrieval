@@ -31,7 +31,7 @@ class TestDeterministicEncryption:
         ciphertext = encryptor.encrypt(plaintext)
         decrypted = encryptor.decrypt(ciphertext)
 
-        assert decrypted.decode('utf-8') == plaintext
+        assert decrypted.decode("utf-8") == plaintext
 
     def test_deterministic_property(self):
         """Test that same plaintext produces same ciphertext."""
@@ -61,7 +61,7 @@ class TestDeterministicEncryption:
         assert isinstance(ciphertext_b64, str)
 
         decrypted = encryptor.decrypt_from_base64(ciphertext_b64)
-        assert decrypted.decode('utf-8') == plaintext
+        assert decrypted.decode("utf-8") == plaintext
 
     def test_search_index(self):
         """Test search index creation."""
@@ -86,7 +86,7 @@ class TestDeterministicEncryption:
 
         # Should be able to decrypt with imported key
         decrypted = encryptor2.decrypt(ciphertext)
-        assert decrypted.decode('utf-8') == plaintext
+        assert decrypted.decode("utf-8") == plaintext
 
     def test_bytes_encryption(self):
         """Test encryption of bytes."""
@@ -124,7 +124,7 @@ class TestDeterministicEncryption:
         ciphertext = encryptor.encrypt(plaintext, associated_data)
         decrypted = encryptor.decrypt(ciphertext, associated_data)
 
-        assert decrypted.decode('utf-8') == plaintext
+        assert decrypted.decode("utf-8") == plaintext
 
         # Wrong associated data should fail
         with pytest.raises(ValueError):

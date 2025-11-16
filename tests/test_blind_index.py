@@ -7,7 +7,7 @@ from encrypted_ir.blind_index import (
     BlindIndexSearch,
     create_ssn_index,
     create_email_index,
-    create_account_index
+    create_account_index,
 )
 
 
@@ -242,7 +242,7 @@ class TestBlindIndexSearch:
         records = {
             "rec1": {"email": "alice@example.com", "name": "Alice"},
             "rec2": {"email": "bob@example.com", "name": "Bob"},
-            "rec3": {"email": "charlie@example.com", "name": "Charlie"}
+            "rec3": {"email": "charlie@example.com", "name": "Charlie"},
         }
 
         index_map = search.index_records(records, "email", config)
@@ -263,7 +263,7 @@ class TestBlindIndexSearch:
         records = {
             "rec1": {"email": "alice@example.com"},
             "rec2": {"name": "Bob"},  # Missing email
-            "rec3": {"email": None}    # Null email
+            "rec3": {"email": None},  # Null email
         }
 
         index_map = search.index_records(records, "email", config)
@@ -277,10 +277,7 @@ class TestBlindIndexSearch:
         search = BlindIndexSearch("tenant_1")
         config = BlindIndexConfig(field_name="email")
 
-        records = {
-            "rec1": {"email": "alice@example.com"},
-            "rec2": {"email": "bob@example.com"}
-        }
+        records = {"rec1": {"email": "alice@example.com"}, "rec2": {"email": "bob@example.com"}}
 
         index_map = search.index_records(records, "email", config)
         results = search.search("alice@example.com", index_map, config)
@@ -293,10 +290,7 @@ class TestBlindIndexSearch:
         search = BlindIndexSearch("tenant_1")
         config = BlindIndexConfig(field_name="email")
 
-        records = {
-            "rec1": {"email": "alice@example.com"},
-            "rec2": {"email": "bob@example.com"}
-        }
+        records = {"rec1": {"email": "alice@example.com"}, "rec2": {"email": "bob@example.com"}}
 
         index_map = search.index_records(records, "email", config)
         results = search.search("nonexistent@example.com", index_map, config)
@@ -308,9 +302,7 @@ class TestBlindIndexSearch:
         search = BlindIndexSearch("tenant_1")
         config = BlindIndexConfig(field_name="email", case_sensitive=False)
 
-        records = {
-            "rec1": {"email": "Alice@Example.COM"}
-        }
+        records = {"rec1": {"email": "Alice@Example.COM"}}
 
         index_map = search.index_records(records, "email", config)
         results = search.search("alice@example.com", index_map, config)
@@ -326,14 +318,14 @@ class TestBlindIndexSearch:
         records = {
             "rec1": {"email": "alice@example.com"},
             "rec2": {"email": "bob@example.com"},
-            "rec3": {"email": "charlie@example.com"}
+            "rec3": {"email": "charlie@example.com"},
         }
 
         index_map = search.index_records(records, "email", config)
         results = search.multi_search(
             ["alice@example.com", "charlie@example.com", "nonexistent@example.com"],
             index_map,
-            config
+            config,
         )
 
         assert len(results) == 3

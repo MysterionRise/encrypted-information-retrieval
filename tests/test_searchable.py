@@ -21,7 +21,7 @@ class TestSearchableEncryption:
         encrypted_doc, tokens = encryptor.encrypt_document(document)
         decrypted = encryptor.decrypt_document(encrypted_doc)
 
-        assert decrypted.decode('utf-8') == document
+        assert decrypted.decode("utf-8") == document
         assert len(tokens) > 0
 
     def test_keyword_extraction(self):
@@ -41,9 +41,7 @@ class TestSearchableEncryption:
         keywords = {"custom", "keywords", "test"}
 
         _, tokens = encryptor.encrypt_document(
-            document,
-            auto_extract_keywords=False,
-            keywords=keywords
+            document, auto_extract_keywords=False, keywords=keywords
         )
 
         assert len(tokens) == len(keywords)
@@ -107,7 +105,7 @@ class TestSearchableEncryption:
         assert isinstance(tokens, list)
 
         decrypted = encryptor.decrypt_document_from_base64(enc_doc_b64)
-        assert decrypted.decode('utf-8') == document
+        assert decrypted.decode("utf-8") == document
 
     def test_key_export_import(self):
         """Test key export and import."""
@@ -122,7 +120,7 @@ class TestSearchableEncryption:
 
         # Should be able to decrypt and search with imported keys
         decrypted = encryptor2.decrypt_document(encrypted_doc)
-        assert decrypted.decode('utf-8') == document
+        assert decrypted.decode("utf-8") == document
 
         query = encryptor2.generate_search_query("test")
         assert encryptor2.search(query, tokens) is True
@@ -133,10 +131,7 @@ class TestSearchableEncryption:
             SearchableEncryption(encryption_key=b"short")
 
         with pytest.raises(ValueError):
-            SearchableEncryption(
-                encryption_key=b"0" * 32,
-                search_key=b"short"
-            )
+            SearchableEncryption(encryption_key=b"0" * 32, search_key=b"short")
 
     def test_bytes_encryption(self):
         """Test encryption of binary data."""
@@ -167,7 +162,7 @@ class TestSearchableEncryption:
         docs = [
             "Financial report on quarterly earnings",
             "Transaction analysis and fraud detection",
-            "Customer account management system"
+            "Customer account management system",
         ]
 
         encrypted_docs = []
@@ -177,12 +172,14 @@ class TestSearchableEncryption:
 
         # Search for "financial" - should match first doc
         query = encryptor.generate_search_query("financial")
-        matches = [i for i, (_, tokens) in enumerate(encrypted_docs)
-                  if encryptor.search(query, tokens)]
+        matches = [
+            i for i, (_, tokens) in enumerate(encrypted_docs) if encryptor.search(query, tokens)
+        ]
         assert matches == [0]
 
         # Search for "fraud" - should match second doc
         query = encryptor.generate_search_query("fraud")
-        matches = [i for i, (_, tokens) in enumerate(encrypted_docs)
-                  if encryptor.search(query, tokens)]
+        matches = [
+            i for i, (_, tokens) in enumerate(encrypted_docs) if encryptor.search(query, tokens)
+        ]
         assert matches == [1]

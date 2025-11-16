@@ -7,7 +7,7 @@ from encrypted_ir.use_cases import (
     TransactionProcessing,
     DocumentSearch,
     CreditScoring,
-    FraudDetection
+    FraudDetection,
 )
 
 
@@ -92,9 +92,7 @@ class TestTransactionProcessing:
         encrypted_amounts = [txn_processor.encrypt_amount(amt) for amt in amounts]
 
         # Find transactions between $100 and $1000
-        matches = txn_processor.find_transactions_in_range(
-            encrypted_amounts, 100.00, 1000.00
-        )
+        matches = txn_processor.find_transactions_in_range(encrypted_amounts, 100.00, 1000.00)
 
         # Should find $100, $500, $1000
         assert len(matches) == 3
@@ -177,8 +175,7 @@ class TestDocumentSearch:
         doc_search = DocumentSearch(manager)
 
         doc_search.encrypt_document(
-            "doc_001",
-            "Analysis of transaction patterns for fraud detection"
+            "doc_001", "Analysis of transaction patterns for fraud detection"
         )
 
         # Both keywords should match the same document
@@ -197,29 +194,22 @@ class TestCreditScoring:
         scorer = CreditScoring()
 
         encrypted = scorer.encrypt_financial_data(
-            income=75000.00,
-            debt=25000.00,
-            credit_history_months=60
+            income=75000.00, debt=25000.00, credit_history_months=60
         )
 
-        assert 'income' in encrypted
-        assert 'debt' in encrypted
-        assert 'credit_history' in encrypted
+        assert "income" in encrypted
+        assert "debt" in encrypted
+        assert "credit_history" in encrypted
 
     def test_debt_to_income_ratio(self):
         """Test debt-to-income ratio calculation."""
         scorer = CreditScoring()
 
         encrypted = scorer.encrypt_financial_data(
-            income=100000.00,
-            debt=30000.00,
-            credit_history_months=72
+            income=100000.00, debt=30000.00, credit_history_months=72
         )
 
-        ratio = scorer.calculate_debt_to_income_ratio(
-            encrypted['income'],
-            encrypted['debt']
-        )
+        ratio = scorer.calculate_debt_to_income_ratio(encrypted["income"], encrypted["debt"])
 
         expected_ratio = 30000.00 / 100000.00
         assert abs(ratio - expected_ratio) < 0.01
@@ -230,9 +220,7 @@ class TestCreditScoring:
 
         # Good credit profile
         encrypted = scorer.encrypt_financial_data(
-            income=80000.00,
-            debt=10000.00,
-            credit_history_months=96
+            income=80000.00, debt=10000.00, credit_history_months=96
         )
 
         score = scorer.calculate_credit_score(encrypted)
@@ -249,16 +237,12 @@ class TestCreditScoring:
 
         # Good profile
         good_profile = scorer.encrypt_financial_data(
-            income=100000.00,
-            debt=5000.00,
-            credit_history_months=120
+            income=100000.00, debt=5000.00, credit_history_months=120
         )
 
         # Poor profile
         poor_profile = scorer.encrypt_financial_data(
-            income=30000.00,
-            debt=40000.00,
-            credit_history_months=12
+            income=30000.00, debt=40000.00, credit_history_months=12
         )
 
         good_score = scorer.calculate_credit_score(good_profile)
@@ -272,19 +256,14 @@ class TestCreditScoring:
         scorer = CreditScoring()
 
         encrypted = scorer.encrypt_financial_data(
-            income=0.0,
-            debt=1000.00,
-            credit_history_months=12
+            income=0.0, debt=1000.00, credit_history_months=12
         )
 
-        ratio = scorer.calculate_debt_to_income_ratio(
-            encrypted['income'],
-            encrypted['debt']
-        )
+        ratio = scorer.calculate_debt_to_income_ratio(encrypted["income"], encrypted["debt"])
 
         # With HE, very small values might not be exactly 0, so check for very large ratio
         # The ratio might be inf or an extremely large number (positive or negative)
-        assert ratio == float('inf') or abs(ratio) > 1000000
+        assert ratio == float("inf") or abs(ratio) > 1000000
 
 
 class TestFraudDetection:
@@ -296,14 +275,12 @@ class TestFraudDetection:
         fraud_detector = FraudDetection(manager)
 
         encrypted = fraud_detector.encrypt_transaction(
-            account_id="ACC-12345",
-            amount=1500.00,
-            merchant="Online Store XYZ"
+            account_id="ACC-12345", amount=1500.00, merchant="Online Store XYZ"
         )
 
-        assert 'account_id' in encrypted
-        assert 'amount' in encrypted
-        assert 'merchant' in encrypted
+        assert "account_id" in encrypted
+        assert "amount" in encrypted
+        assert "merchant" in encrypted
 
     def test_unusual_amount_detection(self):
         """Test detection of unusual transaction amounts."""
@@ -335,14 +312,11 @@ class TestFraudDetection:
 
         # Create multiple transactions from same account
         transactions = [
-            fraud_detector.encrypt_transaction(account_id, 100.00, f"Store {i}")
-            for i in range(7)
+            fraud_detector.encrypt_transaction(account_id, 100.00, f"Store {i}") for i in range(7)
         ]
 
         # Should detect fraud pattern (> 5 transactions)
-        is_fraud = fraud_detector.detect_rapid_transactions(
-            transactions, account_id, max_count=5
-        )
+        is_fraud = fraud_detector.detect_rapid_transactions(transactions, account_id, max_count=5)
 
         assert is_fraud is True
 
@@ -355,14 +329,11 @@ class TestFraudDetection:
 
         # Create normal number of transactions
         transactions = [
-            fraud_detector.encrypt_transaction(account_id, 50.00, f"Store {i}")
-            for i in range(3)
+            fraud_detector.encrypt_transaction(account_id, 50.00, f"Store {i}") for i in range(3)
         ]
 
         # Should not detect fraud pattern
-        is_fraud = fraud_detector.detect_rapid_transactions(
-            transactions, account_id, max_count=5
-        )
+        is_fraud = fraud_detector.detect_rapid_transactions(transactions, account_id, max_count=5)
 
         assert is_fraud is False
 
@@ -380,8 +351,6 @@ class TestFraudDetection:
         ]
 
         # Check rapid transactions for ACC-001 (2 transactions)
-        is_fraud = fraud_detector.detect_rapid_transactions(
-            transactions, "ACC-001", max_count=5
-        )
+        is_fraud = fraud_detector.detect_rapid_transactions(transactions, "ACC-001", max_count=5)
 
         assert is_fraud is False

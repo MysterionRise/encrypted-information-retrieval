@@ -34,6 +34,7 @@ import hashlib
 import struct
 import warnings
 from typing import Union
+
 # NOTE: We use pycryptodome (>=3.19.0), NOT the deprecated pycrypto library.
 # pycryptodome is actively maintained and secure. Bandit cannot distinguish between
 # them because they share the same namespace, hence the nosec annotations.
@@ -75,7 +76,7 @@ class OrderPreservingEncryption:
             "Migrate to ORE (Order-Revealing Encryption) with Lewi-Wu construction for "
             "improved security. See docs/migration/OPE_TO_ORE.md for migration guide.",
             DeprecationWarning,
-            stacklevel=2
+            stacklevel=2,
         )
 
         if key is None:
@@ -118,11 +119,11 @@ class OrderPreservingEncryption:
 
         # Use HMAC as PRF to generate deterministic but unpredictable mapping
         # We create a mapping that preserves order
-        prf_input = struct.pack('>Q', plaintext)
+        prf_input = struct.pack(">Q", plaintext)
         prf_output = hmac.new(self.key, prf_input, hashlib.sha256).digest()
 
         # Convert PRF output to integer
-        prf_value = int.from_bytes(prf_output[:8], byteorder='big')
+        prf_value = int.from_bytes(prf_output[:8], byteorder="big")
 
         # Scale to ciphertext range while preserving order
         # Simple linear scaling with noise
@@ -164,7 +165,7 @@ class OrderPreservingEncryption:
             Encrypted integer value
         """
         # Convert float to integer with fixed precision
-        multiplier = 10 ** precision
+        multiplier = 10**precision
         int_value = int(plaintext * multiplier)
 
         if int_value < 0:
@@ -172,7 +173,9 @@ class OrderPreservingEncryption:
 
         # Adjust range if needed
         if int_value > self.plaintext_max:
-            raise ValueError(f"Value too large: {plaintext} (max: {self.plaintext_max / multiplier})")
+            raise ValueError(
+                f"Value too large: {plaintext} (max: {self.plaintext_max / multiplier})"
+            )
 
         return self.encrypt_int(int_value)
 
@@ -208,8 +211,9 @@ class OrderPreservingEncryption:
         else:
             return 0
 
-    def range_query(self, encrypted_values: list[int], min_val: int = None,
-                    max_val: int = None) -> list[int]:
+    def range_query(
+        self, encrypted_values: list[int], min_val: int = None, max_val: int = None
+    ) -> list[int]:
         """
         Perform range query on encrypted values.
 
@@ -242,7 +246,7 @@ class OrderPreservingEncryption:
             Encrypted value as bytes
         """
         ciphertext = self.encrypt_int(plaintext)
-        return struct.pack('>Q', ciphertext)
+        return struct.pack(">Q", ciphertext)
 
     def encrypt_int_to_base64(self, plaintext: int) -> str:
         """
@@ -255,7 +259,7 @@ class OrderPreservingEncryption:
             Base64-encoded encrypted value
         """
         encrypted_bytes = self.encrypt_int_to_bytes(plaintext)
-        return base64.b64encode(encrypted_bytes).decode('ascii')
+        return base64.b64encode(encrypted_bytes).decode("ascii")
 
     @staticmethod
     def decrypt_int_from_bytes(ciphertext: bytes) -> int:
@@ -271,7 +275,7 @@ class OrderPreservingEncryption:
         Returns:
             Encrypted integer value
         """
-        return struct.unpack('>Q', ciphertext)[0]
+        return struct.unpack(">Q", ciphertext)[0]
 
     @staticmethod
     def decrypt_int_from_base64(ciphertext_b64: str) -> int:
@@ -289,11 +293,12 @@ class OrderPreservingEncryption:
 
     def export_key(self) -> str:
         """Export key as base64 string."""
-        return base64.b64encode(self.key).decode('ascii')
+        return base64.b64encode(self.key).decode("ascii")
 
     @staticmethod
-    def import_key(key_b64: str, plaintext_bits: int = 32,
-                   ciphertext_bits: int = 64) -> 'OrderPreservingEncryption':
+    def import_key(
+        key_b64: str, plaintext_bits: int = 32, ciphertext_bits: int = 64
+    ) -> "OrderPreservingEncryption":
         """
         Import key from base64 string.
 

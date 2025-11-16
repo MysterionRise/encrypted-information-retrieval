@@ -34,9 +34,7 @@ class BasicHomomorphicEncryption:
             # poly_modulus_degree: security parameter (higher = more secure but slower)
             # coeff_mod_bit_sizes: coefficient modulus chain
             context = ts.context(
-                ts.SCHEME_TYPE.CKKS,
-                poly_modulus_degree=8192,
-                coeff_mod_bit_sizes=[60, 40, 40, 60]
+                ts.SCHEME_TYPE.CKKS, poly_modulus_degree=8192, coeff_mod_bit_sizes=[60, 40, 40, 60]
             )
             # Set scale for encoding (precision)
             context.global_scale = 2**40
@@ -47,9 +45,11 @@ class BasicHomomorphicEncryption:
         self.context = context
 
     @staticmethod
-    def create_context(poly_modulus_degree: int = 8192,
-                      coeff_mod_bit_sizes: List[int] = None,
-                      global_scale: int = 2**40) -> ts.Context:
+    def create_context(
+        poly_modulus_degree: int = 8192,
+        coeff_mod_bit_sizes: List[int] = None,
+        global_scale: int = 2**40,
+    ) -> ts.Context:
         """
         Create a new TenSEAL context with custom parameters.
 
@@ -67,7 +67,7 @@ class BasicHomomorphicEncryption:
         context = ts.context(
             ts.SCHEME_TYPE.CKKS,
             poly_modulus_degree=poly_modulus_degree,
-            coeff_mod_bit_sizes=coeff_mod_bit_sizes
+            coeff_mod_bit_sizes=coeff_mod_bit_sizes,
         )
         context.global_scale = global_scale
         context.generate_galois_keys()
@@ -164,8 +164,9 @@ class BasicHomomorphicEncryption:
         """
         return enc1 - enc2
 
-    def subtract_plain(self, encrypted: ts.CKKSVector,
-                       plaintext: Union[float, int]) -> ts.CKKSVector:
+    def subtract_plain(
+        self, encrypted: ts.CKKSVector, plaintext: Union[float, int]
+    ) -> ts.CKKSVector:
         """
         Subtract plaintext from encrypted value.
 
@@ -191,8 +192,9 @@ class BasicHomomorphicEncryption:
         """
         return enc1 * enc2
 
-    def multiply_plain(self, encrypted: ts.CKKSVector,
-                       plaintext: Union[float, int]) -> ts.CKKSVector:
+    def multiply_plain(
+        self, encrypted: ts.CKKSVector, plaintext: Union[float, int]
+    ) -> ts.CKKSVector:
         """
         Multiply encrypted value by plaintext.
 
@@ -245,8 +247,7 @@ class BasicHomomorphicEncryption:
         product = enc_vec1 * enc_vec2
         return self.sum_vector(product)
 
-    def weighted_sum(self, encrypted_vector: ts.CKKSVector,
-                     weights: List[float]) -> float:
+    def weighted_sum(self, encrypted_vector: ts.CKKSVector, weights: List[float]) -> float:
         """
         Compute weighted sum of encrypted vector.
 
@@ -296,7 +297,7 @@ class BasicHomomorphicEncryption:
             Base64-encoded serialized value
         """
         serialized = self.serialize_encrypted(encrypted)
-        return base64.b64encode(serialized).decode('ascii')
+        return base64.b64encode(serialized).decode("ascii")
 
     def deserialize_encrypted_from_base64(self, data_b64: str) -> ts.CKKSVector:
         """
@@ -337,10 +338,10 @@ class BasicHomomorphicEncryption:
             Base64-encoded context
         """
         context_bytes = self.export_context()
-        return base64.b64encode(context_bytes).decode('ascii')
+        return base64.b64encode(context_bytes).decode("ascii")
 
     @staticmethod
-    def import_context(context_bytes: bytes) -> 'BasicHomomorphicEncryption':
+    def import_context(context_bytes: bytes) -> "BasicHomomorphicEncryption":
         """
         Import context from bytes.
 
@@ -354,7 +355,7 @@ class BasicHomomorphicEncryption:
         return BasicHomomorphicEncryption(context)
 
     @staticmethod
-    def import_context_from_base64(context_b64: str) -> 'BasicHomomorphicEncryption':
+    def import_context_from_base64(context_b64: str) -> "BasicHomomorphicEncryption":
         """
         Import context from base64 string.
 

@@ -14,7 +14,7 @@ class TestKeyMetadata:
             key_id="test_key_001",
             key_type="deterministic",
             created_at=datetime.now(),
-            rotation_period_days=90
+            rotation_period_days=90,
         )
 
         assert metadata.key_id == "test_key_001"
@@ -27,13 +27,13 @@ class TestKeyMetadata:
             key_id="test_key_002",
             key_type="searchable",
             created_at=datetime.now(),
-            description="Test key"
+            description="Test key",
         )
 
         # Convert to dict
         data = metadata.to_dict()
         assert isinstance(data, dict)
-        assert data['key_id'] == "test_key_002"
+        assert data["key_id"] == "test_key_002"
 
         # Convert back from dict
         metadata2 = KeyMetadata.from_dict(data)
@@ -47,7 +47,7 @@ class TestKeyMetadata:
             key_id="test_key_003",
             key_type="ope",
             created_at=datetime.now(),
-            rotation_period_days=30
+            rotation_period_days=30,
         )
 
         # Recently created - doesn't need rotation
@@ -65,9 +65,7 @@ class TestKeyMetadata:
         """Test expiration check."""
         # Key without expiration
         metadata = KeyMetadata(
-            key_id="test_key_004",
-            key_type="deterministic",
-            created_at=datetime.now()
+            key_id="test_key_004", key_type="deterministic", created_at=datetime.now()
         )
         assert metadata.is_expired() is False
 
@@ -105,9 +103,7 @@ class TestKeyManager:
         manager = KeyManager()
 
         key_id = manager.create_key(
-            key_type="deterministic",
-            key_size=32,
-            description="Test encryption key"
+            key_type="deterministic", key_size=32, description="Test encryption key"
         )
 
         assert key_id is not None
