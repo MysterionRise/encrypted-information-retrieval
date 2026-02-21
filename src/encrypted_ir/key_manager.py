@@ -25,6 +25,7 @@ import base64
 
 if TYPE_CHECKING:
     from .storage_backend import StorageBackend
+    from .kms_provider import KMSProvider
 
 
 class KeyMetadata:
@@ -120,12 +121,62 @@ class KeyManager:
 
         self.master_key = master_key
         self._storage_backend = storage_backend
+        self._kms_provider: Optional["KMSProvider"] = None
+        self._encrypted_master_key: Optional[bytes] = None
         self._keys: Dict[str, bytes] = {}
         self._metadata: Dict[str, KeyMetadata] = {}
         self._audit_log: List[dict] = []
 
         if self._storage_backend is not None:
             self._load_from_backend()
+
+    @classmethod
+    def from_kms(
+        cls,
+        kms_provider: "KMSProvider",
+        storage_backend: "StorageBackend" = None,
+        encrypted_master_key: bytes = None,
+    ) -> "KeyManager":
+        """Create a KeyManager with KMS-protected master key.
+
+        Uses envelope encryption: the cloud KMS generates or unwraps
+        the master key, which then protects local encryption keys.
+
+        Args:
+            kms_provider: Cloud KMS provider for key wrapping.
+            storage_backend: Optional persistent storage backend.
+            encrypted_master_key: Previously KMS-encrypted master key
+                for recovery. If None, generates a new master key via KMS.
+
+        Returns:
+            KeyManager instance with KMS-protected master key.
+        """
+        if encrypted_master_key is not None:
+            master_key = kms_provider.decrypt(encrypted_master_key)
+            enc_mk = encrypted_master_key
+        else:
+            master_key, enc_mk = kms_provider.generate_data_key("AES_256")
+
+        instance = cls(master_key=master_key, storage_backend=storage_backend)
+        instance._kms_provider = kms_provider
+        instance._encrypted_master_key = enc_mk
+        return instance
+
+    def get_encrypted_master_key(self) -> Optional[bytes]:
+        """Get the KMS-encrypted master key for secure storage.
+
+        Returns:
+            KMS-encrypted master key bytes, or None if not using KMS.
+        """
+        return self._encrypted_master_key
+
+    def get_kms_provider(self) -> Optional["KMSProvider"]:
+        """Get the configured KMS provider, if any.
+
+        Returns:
+            The KMS provider, or None if not using KMS.
+        """
+        return self._kms_provider
 
     @staticmethod
     def generate_master_key() -> bytes:
