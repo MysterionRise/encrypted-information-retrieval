@@ -81,7 +81,7 @@ class FF1:
 
     def _aes_ecb_encrypt_block(self, block: bytes) -> bytes:
         """Encrypt a single 16-byte block with AES-ECB."""
-        cipher = Cipher(algorithms.AES(self.key), modes.ECB())
+        cipher = Cipher(algorithms.AES(self.key), modes.ECB())  # nosec B305
         enc = cipher.encryptor()
         return enc.update(block) + enc.finalize()
 
