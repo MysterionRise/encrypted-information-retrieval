@@ -1,12 +1,14 @@
 """Tests for storage backend module."""
 
 import os
-import pytest
-import tempfile
 import shutil
-from datetime import datetime, timedelta
-from encrypted_ir.key_manager import KeyManager, KeyMetadata
-from encrypted_ir.storage_backend import StorageBackend, FileStorageBackend
+import tempfile
+from datetime import datetime
+
+import pytest
+
+from encrypted_ir.key_manager import KeyManager
+from encrypted_ir.storage_backend import FileStorageBackend, StorageBackend
 
 
 class TestStorageBackendInterface:
@@ -59,7 +61,7 @@ class TestFileStorageBackend:
         shutil.rmtree(d)
         subdir = os.path.join(d, "nested", "path")
         try:
-            backend = FileStorageBackend(subdir, os.urandom(32))
+            FileStorageBackend(subdir, os.urandom(32))
             assert os.path.isdir(subdir)
         finally:
             shutil.rmtree(d)

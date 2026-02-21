@@ -3,6 +3,7 @@
 import time
 
 import pytest
+
 from encrypted_ir.ore import ORE
 
 
@@ -272,8 +273,8 @@ class TestORESecurityProperties:
         # identical (same key, same empty prefix), the first few bytes
         # will be the same. Sorting still shouldn't be reliable because
         # the right components are masked with random offsets.
-        sorted_by_int = sorted(range(len(values)), key=lambda i: as_ints[i])
-        original_order = list(range(len(values)))
+        sorted(range(len(values)), key=lambda i: as_ints[i])
+        list(range(len(values)))
 
         # With the Lewi-Wu construction, byte-level sorting is unreliable
         # for determining plaintext order. We just verify that compare()
@@ -374,7 +375,7 @@ class TestORESerialisation:
         """Test that wrong version tag raises ValueError."""
         ore = ORE()
         ct = ore.encrypt_int(42)
-        bad_ct = b"\xFF" + ct[1:]
+        bad_ct = b"\xff" + ct[1:]
         with pytest.raises(ValueError, match="version"):
             ore.compare(bad_ct, ct)
 

@@ -1,7 +1,7 @@
 """Tests for homomorphic encryption module."""
 
-import pytest
 import tenseal as ts
+
 from encrypted_ir.homomorphic import BasicHomomorphicEncryption
 
 

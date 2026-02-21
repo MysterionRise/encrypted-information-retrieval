@@ -5,12 +5,13 @@ Demonstrates practical applications of encrypted information retrieval
 in financial services scenarios.
 """
 
-from typing import List, Dict
+from __future__ import annotations
+
 from .deterministic import DeterministicEncryption
-from .searchable import SearchableEncryption
-from .order_preserving import OrderPreservingEncryption
 from .homomorphic import BasicHomomorphicEncryption
 from .key_manager import KeyManager
+from .order_preserving import OrderPreservingEncryption
+from .searchable import SearchableEncryption
 
 
 class AccountManagement:
@@ -38,7 +39,7 @@ class AccountManagement:
         """Create searchable index for account number."""
         return self.encryptor.search_index(account_number)
 
-    def search_account(self, account_number: str, encrypted_accounts: List[str]) -> List[int]:
+    def search_account(self, account_number: str, encrypted_accounts: list[str]) -> list[int]:
         """
         Search for matching account in encrypted database.
 
@@ -75,7 +76,7 @@ class TransactionProcessing:
         """Encrypt a transaction amount."""
         return self.encryptor.encrypt_amount(amount)
 
-    def find_large_transactions(self, encrypted_amounts: List[int], threshold: float) -> List[int]:
+    def find_large_transactions(self, encrypted_amounts: list[int], threshold: float) -> list[int]:
         """
         Find transactions above a threshold.
 
@@ -92,8 +93,8 @@ class TransactionProcessing:
         ]
 
     def find_transactions_in_range(
-        self, encrypted_amounts: List[int], min_amount: float, max_amount: float
-    ) -> List[int]:
+        self, encrypted_amounts: list[int], min_amount: float, max_amount: float
+    ) -> list[int]:
         """
         Find transactions within amount range.
 
@@ -135,7 +136,7 @@ class DocumentSearch:
         search_key = key_manager.get_key(self.search_key_id)
 
         self.encryptor = SearchableEncryption(enc_key, search_key)
-        self.document_index: Dict[str, set] = {}  # doc_id -> tokens
+        self.document_index: dict[str, set] = {}  # doc_id -> tokens
 
     def encrypt_document(self, doc_id: str, content: str) -> str:
         """
@@ -152,7 +153,7 @@ class DocumentSearch:
         self.document_index[doc_id] = set(tokens)
         return enc_doc
 
-    def search_documents(self, keyword: str) -> List[str]:
+    def search_documents(self, keyword: str) -> list[str]:
         """
         Search for documents containing keyword.
 
@@ -171,9 +172,7 @@ class DocumentSearch:
 
         return matching_docs
 
-    def boolean_search_documents(
-        self, keywords: List[str], operator: str = "AND"
-    ) -> List[str]:
+    def boolean_search_documents(self, keywords: list[str], operator: str = "AND") -> list[str]:
         """
         Search for documents using boolean (AND/OR) keyword queries.
 
@@ -233,7 +232,7 @@ class CreditScoring:
 
     def encrypt_financial_data(
         self, income: float, debt: float, credit_history_months: int
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """
         Encrypt financial data for credit scoring.
 
@@ -287,7 +286,7 @@ class CreditScoring:
         return debt_val / income_val
 
     def calculate_credit_score(
-        self, encrypted_data: Dict[str, str], weights: Dict[str, float] = None
+        self, encrypted_data: dict[str, str], weights: dict[str, float] = None
     ) -> float:
         """
         Calculate weighted credit score using homomorphic operations.
@@ -369,7 +368,7 @@ class FraudDetection:
         det_key = key_manager.get_key(self.det_key_id)
         self.det_encryptor = DeterministicEncryption(det_key)
 
-    def encrypt_transaction(self, account_id: str, amount: float, merchant: str) -> Dict[str, any]:
+    def encrypt_transaction(self, account_id: str, amount: float, merchant: str) -> dict[str, any]:
         """
         Encrypt transaction data.
 
@@ -388,8 +387,8 @@ class FraudDetection:
         }
 
     def detect_unusual_amounts(
-        self, encrypted_transactions: List[Dict], threshold_amount: float
-    ) -> List[int]:
+        self, encrypted_transactions: list[dict], threshold_amount: float
+    ) -> list[int]:
         """
         Detect transactions with unusual amounts.
 
@@ -410,7 +409,7 @@ class FraudDetection:
         return suspicious
 
     def detect_rapid_transactions(
-        self, encrypted_transactions: List[Dict], account_id: str, max_count: int = 5
+        self, encrypted_transactions: list[dict], account_id: str, max_count: int = 5
     ) -> bool:
         """
         Detect rapid succession of transactions from same account.

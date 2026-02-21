@@ -9,12 +9,14 @@ Supports boolean (AND/OR) queries across multiple keywords for real document sea
 Use Case: Document management, email archival, customer service knowledge bases.
 """
 
-import os
-import hmac
-import hashlib
-from typing import Set, List, Union
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from __future__ import annotations
+
 import base64
+import hashlib
+import hmac
+import os
+
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 
 class BooleanQuery:
@@ -43,7 +45,7 @@ class BooleanQuery:
         self.operator = operator
         self.operands = operands
 
-    def evaluate(self, document_tokens: Set[str]) -> bool:
+    def evaluate(self, document_tokens: set[str]) -> bool:
         """
         Evaluate this query against a set of document tokens.
 
@@ -62,7 +64,7 @@ class BooleanQuery:
         return f"BooleanQuery({self.operator}, {self.operands!r})"
 
 
-def _evaluate_operand(operand, document_tokens: Set[str]) -> bool:
+def _evaluate_operand(operand, document_tokens: set[str]) -> bool:
     """Evaluate a single operand (token string or nested BooleanQuery)."""
     if isinstance(operand, BooleanQuery):
         return operand.evaluate(document_tokens)
@@ -107,7 +109,7 @@ class SearchableEncryption:
         """
         return os.urandom(32), os.urandom(32)
 
-    def _extract_keywords(self, text: str) -> Set[str]:
+    def _extract_keywords(self, text: str) -> set[str]:
         """
         Extract keywords from text (simple tokenization).
 
@@ -140,10 +142,10 @@ class SearchableEncryption:
 
     def encrypt_document(
         self,
-        document: Union[str, bytes],
+        document: str | bytes,
         auto_extract_keywords: bool = True,
-        keywords: Set[str] = None,
-    ) -> tuple[bytes, Set[str]]:
+        keywords: set[str] = None,
+    ) -> tuple[bytes, set[str]]:
         """
         Encrypt a document and generate search tokens.
 
@@ -221,7 +223,7 @@ class SearchableEncryption:
         """
         return self._generate_search_token(keyword)
 
-    def search(self, query_token: str, document_tokens: Set[str]) -> bool:
+    def search(self, query_token: str, document_tokens: set[str]) -> bool:
         """
         Check if a document matches a search query.
 
@@ -234,9 +236,7 @@ class SearchableEncryption:
         """
         return query_token in document_tokens
 
-    def boolean_search_query(
-        self, keywords: List[str], operator: str = "AND"
-    ) -> BooleanQuery:
+    def boolean_search_query(self, keywords: list[str], operator: str = "AND") -> BooleanQuery:
         """
         Generate a boolean search query from multiple keywords.
 
@@ -250,9 +250,7 @@ class SearchableEncryption:
         tokens = [self._generate_search_token(kw) for kw in keywords]
         return BooleanQuery(operator, tokens)
 
-    def nested_boolean_query(
-        self, operator: str, *sub_queries: BooleanQuery
-    ) -> BooleanQuery:
+    def nested_boolean_query(self, operator: str, *sub_queries: BooleanQuery) -> BooleanQuery:
         """
         Combine multiple BooleanQuery objects into a nested query.
 
@@ -265,7 +263,7 @@ class SearchableEncryption:
         """
         return BooleanQuery(operator, list(sub_queries))
 
-    def boolean_search(self, query: BooleanQuery, document_tokens: Set[str]) -> bool:
+    def boolean_search(self, query: BooleanQuery, document_tokens: set[str]) -> bool:
         """
         Check if a document matches a boolean query.
 
@@ -280,10 +278,10 @@ class SearchableEncryption:
 
     def encrypt_document_to_base64(
         self,
-        document: Union[str, bytes],
+        document: str | bytes,
         auto_extract_keywords: bool = True,
-        keywords: Set[str] = None,
-    ) -> tuple[str, List[str]]:
+        keywords: set[str] = None,
+    ) -> tuple[str, list[str]]:
         """
         Encrypt document and return base64-encoded result with tokens.
 
@@ -296,7 +294,7 @@ class SearchableEncryption:
             Tuple of (base64_encrypted_doc, list_of_search_tokens)
         """
         encrypted_doc, tokens = self.encrypt_document(document, auto_extract_keywords, keywords)
-        return (base64.b64encode(encrypted_doc).decode("ascii"), sorted(list(tokens)))
+        return (base64.b64encode(encrypted_doc).decode("ascii"), sorted(tokens))
 
     def decrypt_document_from_base64(self, encrypted_document_b64: str) -> bytes:
         """
@@ -324,7 +322,7 @@ class SearchableEncryption:
         )
 
     @staticmethod
-    def import_keys(encryption_key_b64: str, search_key_b64: str) -> "SearchableEncryption":
+    def import_keys(encryption_key_b64: str, search_key_b64: str) -> SearchableEncryption:
         """
         Import keys from base64 strings.
 

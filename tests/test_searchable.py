@@ -1,7 +1,8 @@
 """Tests for searchable encryption module."""
 
 import pytest
-from encrypted_ir.searchable import SearchableEncryption, BooleanQuery
+
+from encrypted_ir.searchable import BooleanQuery, SearchableEncryption
 
 
 class TestSearchableEncryption:
@@ -301,15 +302,11 @@ class TestBooleanQuery:
         enc = SearchableEncryption()
         docs_tokens = []
         for kw_set in [{"alpha", "beta"}, {"alpha", "gamma"}, {"alpha", "delta"}]:
-            _, tokens = enc.encrypt_document(
-                "doc", auto_extract_keywords=False, keywords=kw_set
-            )
+            _, tokens = enc.encrypt_document("doc", auto_extract_keywords=False, keywords=kw_set)
             docs_tokens.append(tokens)
 
         query = enc.boolean_search_query(["alpha", "nonexistent"], "OR")
-        results = [
-            i for i, tokens in enumerate(docs_tokens) if enc.boolean_search(query, tokens)
-        ]
+        results = [i for i, tokens in enumerate(docs_tokens) if enc.boolean_search(query, tokens)]
         assert results == [0, 1, 2]
 
     def test_boolean_search_none_match(self):

@@ -19,13 +19,14 @@ References:
 - ADR-002: docs/DECISIONS.md
 """
 
-import os
-import hmac
-import hashlib
-import unicodedata
-from typing import Optional, Dict, Tuple
-from dataclasses import dataclass
+from __future__ import annotations
+
 import base64
+import hashlib
+import hmac
+import os
+import unicodedata
+from dataclasses import dataclass
 
 
 @dataclass
@@ -77,7 +78,7 @@ class BlindIndexGenerator:
 
         self.tenant_id = tenant_id
         self.master_key = master_key
-        self._field_keys: Dict[str, bytes] = {}
+        self._field_keys: dict[str, bytes] = {}
 
     @staticmethod
     def generate_master_key() -> bytes:
@@ -100,7 +101,7 @@ class BlindIndexGenerator:
             return self._field_keys[field_name]
 
         # KDF: HMAC-SHA256(master_key, tenant_id || field_name)
-        context = f"{self.tenant_id}:{field_name}".encode("utf-8")
+        context = f"{self.tenant_id}:{field_name}".encode()
         derived_key = hmac.new(self.master_key, context, hashlib.sha256).digest()
 
         self._field_keys[field_name] = derived_key
@@ -230,7 +231,7 @@ class BlindIndexGenerator:
         return base64.b64encode(self.master_key).decode("ascii")
 
     @staticmethod
-    def import_master_key(master_key_b64: str, tenant_id: str) -> "BlindIndexGenerator":
+    def import_master_key(master_key_b64: str, tenant_id: str) -> BlindIndexGenerator:
         """
         Import master key from base64 string.
 
@@ -279,8 +280,8 @@ class BlindIndexSearch:
         self.tenant_id = tenant_id
 
     def index_records(
-        self, records: Dict[str, Dict], field_name: str, config: BlindIndexConfig
-    ) -> Dict[str, str]:
+        self, records: dict[str, dict], field_name: str, config: BlindIndexConfig
+    ) -> dict[str, str]:
         """
         Generate blind indexes for a set of records.
 
@@ -300,7 +301,7 @@ class BlindIndexSearch:
             >>> config = BlindIndexConfig(field_name="ssn")
             >>> indexes = search.index_records(records, "ssn", config)
         """
-        index_map: Dict[str, str] = {}
+        index_map: dict[str, str] = {}
 
         for record_id, record_data in records.items():
             if field_name not in record_data:
@@ -316,7 +317,7 @@ class BlindIndexSearch:
         return index_map
 
     def search(
-        self, query_value: str, index_map: Dict[str, str], config: BlindIndexConfig
+        self, query_value: str, index_map: dict[str, str], config: BlindIndexConfig
     ) -> list[str]:
         """
         Search for records matching a query value.
@@ -340,8 +341,8 @@ class BlindIndexSearch:
             return []
 
     def multi_search(
-        self, query_values: list[str], index_map: Dict[str, str], config: BlindIndexConfig
-    ) -> Dict[str, list[str]]:
+        self, query_values: list[str], index_map: dict[str, str], config: BlindIndexConfig
+    ) -> dict[str, list[str]]:
         """
         Search for multiple values at once.
 

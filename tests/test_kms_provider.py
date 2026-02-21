@@ -1,13 +1,14 @@
 """Tests for cloud KMS provider module."""
 
 import os
-import pytest
-import tempfile
 import shutil
+import tempfile
 from unittest.mock import MagicMock, patch
 
-from encrypted_ir.kms_provider import KMSProvider, AWSKMSProvider, EnvelopeEncryption
+import pytest
+
 from encrypted_ir.key_manager import KeyManager
+from encrypted_ir.kms_provider import AWSKMSProvider, EnvelopeEncryption, KMSProvider
 from encrypted_ir.storage_backend import FileStorageBackend
 
 
@@ -137,7 +138,7 @@ class TestKeyManagerFromKMS:
         # Create original manager
         manager1 = KeyManager.from_kms(provider)
         key_id = manager1.create_key("deterministic")
-        original_key = manager1.get_key(key_id)
+        manager1.get_key(key_id)
         enc_mk = manager1.get_encrypted_master_key()
 
         # Recover using encrypted master key (simulating restart)
@@ -375,7 +376,7 @@ class TestAWSKMSProvider:
         mock_boto3 = MagicMock()
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
-            provider = AWSKMSProvider(
+            AWSKMSProvider(
                 key_id="alias/test-key",
                 region="eu-west-1",
                 boto3_session=mock_session,
@@ -430,7 +431,7 @@ class TestKeyManagerFromKMSWithAWSMock:
 
         # Create and use keys
         key_id = manager.create_key("deterministic", description="aws test")
-        original_key = manager.get_key(key_id)
+        manager.get_key(key_id)
 
         # Recover master key from KMS-encrypted blob
         recovered_mk = aws_provider.decrypt(enc_mk)

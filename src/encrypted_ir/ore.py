@@ -19,12 +19,13 @@ Leakage Profile:
     Leakage(ORE) = { compare(encrypt(a), encrypt(b)) -> (a < b, a = b, a > b) }
 """
 
-import os
-import hmac
-import hashlib
-import struct
+from __future__ import annotations
+
 import base64
-from typing import List, Optional
+import hashlib
+import hmac
+import os
+import struct
 
 
 class ORE:
@@ -76,7 +77,7 @@ class ORE:
         """Generate a new 256-bit key for ORE."""
         return os.urandom(ORE.KEY_SIZE)
 
-    def _get_blocks(self, plaintext: int) -> List[int]:
+    def _get_blocks(self, plaintext: int) -> list[int]:
         """Split plaintext into byte-sized blocks (MSB first)."""
         blocks = []
         for i in range(self.NUM_BLOCKS):
@@ -89,7 +90,7 @@ class ORE:
         """Pseudorandom function based on HMAC-SHA256."""
         return hmac.new(subkey, data, hashlib.sha256).digest()
 
-    def _encode_position_prefix(self, position: int, prefix_blocks: List[int]) -> bytes:
+    def _encode_position_prefix(self, position: int, prefix_blocks: list[int]) -> bytes:
         """Encode block position and prefix for PRF input."""
         data = struct.pack(">B", position)
         for b in prefix_blocks:
@@ -241,9 +242,7 @@ class ORE:
 
         for i in range(n1):
             if left1[i] != left2[i]:
-                raise ValueError(
-                    "Cannot compare ciphertexts encrypted under different keys"
-                )
+                raise ValueError("Cannot compare ciphertexts encrypted under different keys")
 
             diff = (right1[i] - right2[i]) % self.MODULUS
             if diff == 0:
@@ -257,10 +256,10 @@ class ORE:
 
     def range_query(
         self,
-        encrypted_values: List[bytes],
-        min_val: Optional[bytes] = None,
-        max_val: Optional[bytes] = None,
-    ) -> List[bytes]:
+        encrypted_values: list[bytes],
+        min_val: bytes | None = None,
+        max_val: bytes | None = None,
+    ) -> list[bytes]:
         """
         Perform range query on ORE-encrypted values.
 
@@ -313,7 +312,7 @@ class ORE:
         return base64.b64encode(self.key).decode("ascii")
 
     @staticmethod
-    def import_key(key_b64: str) -> "ORE":
+    def import_key(key_b64: str) -> ORE:
         """
         Import key from base64 string.
 

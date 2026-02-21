@@ -12,20 +12,22 @@ Use Case: Centralized key management for all encryption operations,
 key rotation, access control, and audit logging.
 """
 
-import os
-import json
-import hashlib
-import hmac
-from datetime import datetime, timedelta
-from typing import Dict, Optional, List, TYPE_CHECKING
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from __future__ import annotations
+
 import base64
+import hashlib
+import json
+import os
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 if TYPE_CHECKING:
-    from .storage_backend import StorageBackend
     from .kms_provider import KMSProvider
+    from .storage_backend import StorageBackend
 
 
 class KeyMetadata:
@@ -36,7 +38,7 @@ class KeyMetadata:
         key_id: str,
         key_type: str,
         created_at: datetime,
-        expires_at: Optional[datetime] = None,
+        expires_at: datetime | None = None,
         rotation_period_days: int = 90,
         description: str = "",
     ):
@@ -65,7 +67,7 @@ class KeyMetadata:
         }
 
     @staticmethod
-    def from_dict(data: dict) -> "KeyMetadata":
+    def from_dict(data: dict) -> KeyMetadata:
         """Create from dictionary."""
         metadata = KeyMetadata(
             key_id=data["key_id"],
@@ -103,7 +105,7 @@ class KeyManager:
     Handles generation, storage, rotation, and lifecycle of encryption keys.
     """
 
-    def __init__(self, master_key: bytes = None, storage_backend: "StorageBackend" = None):
+    def __init__(self, master_key: bytes = None, storage_backend: StorageBackend = None):
         """
         Initialize key manager.
 
@@ -121,11 +123,11 @@ class KeyManager:
 
         self.master_key = master_key
         self._storage_backend = storage_backend
-        self._kms_provider: Optional["KMSProvider"] = None
-        self._encrypted_master_key: Optional[bytes] = None
-        self._keys: Dict[str, bytes] = {}
-        self._metadata: Dict[str, KeyMetadata] = {}
-        self._audit_log: List[dict] = []
+        self._kms_provider: KMSProvider | None = None
+        self._encrypted_master_key: bytes | None = None
+        self._keys: dict[str, bytes] = {}
+        self._metadata: dict[str, KeyMetadata] = {}
+        self._audit_log: list[dict] = []
 
         if self._storage_backend is not None:
             self._load_from_backend()
@@ -133,10 +135,10 @@ class KeyManager:
     @classmethod
     def from_kms(
         cls,
-        kms_provider: "KMSProvider",
-        storage_backend: "StorageBackend" = None,
+        kms_provider: KMSProvider,
+        storage_backend: StorageBackend = None,
         encrypted_master_key: bytes = None,
-    ) -> "KeyManager":
+    ) -> KeyManager:
         """Create a KeyManager with KMS-protected master key.
 
         Uses envelope encryption: the cloud KMS generates or unwraps
@@ -162,7 +164,7 @@ class KeyManager:
         instance._encrypted_master_key = enc_mk
         return instance
 
-    def get_encrypted_master_key(self) -> Optional[bytes]:
+    def get_encrypted_master_key(self) -> bytes | None:
         """Get the KMS-encrypted master key for secure storage.
 
         Returns:
@@ -170,7 +172,7 @@ class KeyManager:
         """
         return self._encrypted_master_key
 
-    def get_kms_provider(self) -> Optional["KMSProvider"]:
+    def get_kms_provider(self) -> KMSProvider | None:
         """Get the configured KMS provider, if any.
 
         Returns:
@@ -384,7 +386,7 @@ class KeyManager:
         self._persist_key(key_id)
         self._log_access(key_id, "delete", True, "Key marked inactive")
 
-    def list_keys(self, key_type: str = None, active_only: bool = True) -> List[str]:
+    def list_keys(self, key_type: str = None, active_only: bool = True) -> list[str]:
         """
         List all keys.
 
@@ -404,7 +406,7 @@ class KeyManager:
             keys.append(key_id)
         return keys
 
-    def get_keys_needing_rotation(self) -> List[str]:
+    def get_keys_needing_rotation(self) -> list[str]:
         """
         Get list of keys that need rotation.
 
@@ -499,7 +501,7 @@ class KeyManager:
 
         self._log_access("*", "import", True, f"Imported {len(export_data['keys'])} keys")
 
-    def get_audit_log(self, key_id: str = None, limit: int = 100) -> List[dict]:
+    def get_audit_log(self, key_id: str = None, limit: int = 100) -> list[dict]:
         """
         Get audit log entries.
 

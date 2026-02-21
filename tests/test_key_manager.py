@@ -1,7 +1,9 @@
 """Tests for key management module."""
 
-import pytest
 from datetime import datetime, timedelta
+
+import pytest
+
 from encrypted_ir.key_manager import KeyManager, KeyMetadata
 
 
@@ -200,7 +202,7 @@ class TestKeyManager:
         manager = KeyManager()
 
         key_id1 = manager.create_key("deterministic")
-        key_id2 = manager.create_key("deterministic")
+        manager.create_key("deterministic")
 
         manager.delete_key(key_id1)
 
@@ -301,7 +303,7 @@ class TestKeyManager:
         manager = KeyManager()
 
         # Create many keys
-        for i in range(20):
+        for _i in range(20):
             manager.create_key("deterministic")
 
         # Get limited log
@@ -319,7 +321,6 @@ class TestKeyManager:
         manager2 = KeyManager()
 
         # Keys should be independent
-        key_id = "test_key_999"
         # Creating in one manager shouldn't affect the other
 
         id1 = manager1.create_key("deterministic")

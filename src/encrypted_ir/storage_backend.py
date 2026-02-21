@@ -9,14 +9,14 @@ The StorageBackend ABC defines the contract for any storage implementation.
 The FileStorageBackend provides encrypted file-based storage using AES-GCM.
 """
 
+from __future__ import annotations
+
 import abc
+import base64
+import fcntl
 import json
 import os
-import fcntl
-import base64
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Optional
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -44,7 +44,7 @@ class StorageBackend(abc.ABC):
         """
 
     @abc.abstractmethod
-    def load_key(self, key_id: str) -> Optional[tuple[bytes, dict]]:
+    def load_key(self, key_id: str) -> tuple[bytes, dict] | None:
         """Load a key and its metadata.
 
         Args:
@@ -66,7 +66,7 @@ class StorageBackend(abc.ABC):
         """
 
     @abc.abstractmethod
-    def list_keys(self) -> List[str]:
+    def list_keys(self) -> list[str]:
         """List all stored key IDs.
 
         Returns:
@@ -82,7 +82,7 @@ class StorageBackend(abc.ABC):
         """
 
     @abc.abstractmethod
-    def load_audit_log(self, key_id: Optional[str] = None, limit: int = 100) -> List[dict]:
+    def load_audit_log(self, key_id: str | None = None, limit: int = 100) -> list[dict]:
         """Load audit log entries.
 
         Args:
@@ -94,7 +94,7 @@ class StorageBackend(abc.ABC):
         """
 
     @abc.abstractmethod
-    def load_all(self) -> tuple[Dict[str, bytes], Dict[str, dict]]:
+    def load_all(self) -> tuple[dict[str, bytes], dict[str, dict]]:
         """Load all keys and metadata from storage.
 
         Returns:
@@ -200,7 +200,7 @@ class FileStorageBackend(StorageBackend):
         store["metadata"][key_id] = metadata
         self._write_store(store)
 
-    def load_key(self, key_id: str) -> Optional[tuple[bytes, dict]]:
+    def load_key(self, key_id: str) -> tuple[bytes, dict] | None:
         store = self._read_store()
         if key_id not in store["keys"]:
             return None
@@ -217,7 +217,7 @@ class FileStorageBackend(StorageBackend):
         self._write_store(store)
         return True
 
-    def list_keys(self) -> List[str]:
+    def list_keys(self) -> list[str]:
         store = self._read_store()
         return list(store["keys"].keys())
 
@@ -232,12 +232,12 @@ class FileStorageBackend(StorageBackend):
             finally:
                 fcntl.flock(f, fcntl.LOCK_UN)
 
-    def load_audit_log(self, key_id: Optional[str] = None, limit: int = 100) -> List[dict]:
+    def load_audit_log(self, key_id: str | None = None, limit: int = 100) -> list[dict]:
         if not self._audit_path.exists():
             return []
 
         entries = []
-        with open(self._audit_path, "r") as f:
+        with open(self._audit_path) as f:
             fcntl.flock(f, fcntl.LOCK_SH)
             try:
                 for line in f:
@@ -252,9 +252,7 @@ class FileStorageBackend(StorageBackend):
 
         return list(reversed(entries[-limit:]))
 
-    def load_all(self) -> tuple[Dict[str, bytes], Dict[str, dict]]:
+    def load_all(self) -> tuple[dict[str, bytes], dict[str, dict]]:
         store = self._read_store()
-        keys = {
-            key_id: base64.b64decode(key_b64) for key_id, key_b64 in store["keys"].items()
-        }
+        keys = {key_id: base64.b64decode(key_b64) for key_id, key_b64 in store["keys"].items()}
         return keys, store["metadata"]

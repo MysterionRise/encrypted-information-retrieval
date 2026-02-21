@@ -1,13 +1,14 @@
 """Tests for blind index module."""
 
 import pytest
+
 from encrypted_ir.blind_index import (
-    BlindIndexGenerator,
     BlindIndexConfig,
+    BlindIndexGenerator,
     BlindIndexSearch,
-    create_ssn_index,
-    create_email_index,
     create_account_index,
+    create_email_index,
+    create_ssn_index,
 )
 
 

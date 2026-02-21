@@ -28,14 +28,14 @@ DEPRECATION NOTICE:
     - Removal: v2.0.0 (Q3 2025)
 """
 
-import os
-import hmac
-import hashlib
-import struct
-import warnings
-from typing import Union
+from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
+import os
+import struct
+import warnings
 
 
 class OrderPreservingEncryption:
@@ -293,7 +293,7 @@ class OrderPreservingEncryption:
     @staticmethod
     def import_key(
         key_b64: str, plaintext_bits: int = 32, ciphertext_bits: int = 64
-    ) -> "OrderPreservingEncryption":
+    ) -> OrderPreservingEncryption:
         """
         Import key from base64 string.
 

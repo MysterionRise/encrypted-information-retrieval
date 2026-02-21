@@ -1,6 +1,7 @@
 """Tests for order-preserving encryption module."""
 
 import pytest
+
 from encrypted_ir.order_preserving import OrderPreservingEncryption
 
 

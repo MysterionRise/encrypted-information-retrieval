@@ -1,6 +1,7 @@
 """Tests for Format-Preserving Encryption (FF1) module."""
 
 import pytest
+
 from encrypted_ir.fpe import FF1, FormatPreservingEncryption
 
 
@@ -365,7 +366,9 @@ class TestFPEAlphanumeric:
 
     def test_lower_alphanumeric(self):
         key = FormatPreservingEncryption.generate_key()
-        fpe = FormatPreservingEncryption(key, alphabet=FormatPreservingEncryption.ALPHANUMERIC_LOWER)
+        fpe = FormatPreservingEncryption(
+            key, alphabet=FormatPreservingEncryption.ALPHANUMERIC_LOWER
+        )
         plaintext = "abc123"
         ct = fpe.encrypt(plaintext)
         assert len(ct) == 6

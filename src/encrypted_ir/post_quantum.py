@@ -22,25 +22,25 @@ Use Cases:
 - Long-term data protection against "harvest now, decrypt later" attacks
 """
 
-import os
-import base64
+from __future__ import annotations
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import base64
+import os
+
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey,
     X25519PublicKey,
 )
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
-    PublicFormat,
-    PrivateFormat,
     NoEncryption,
+    PrivateFormat,
+    PublicFormat,
 )
-from cryptography.hazmat.primitives import hashes
-
 from pqcrypto.kem import ml_kem_512, ml_kem_768, ml_kem_1024
 from pqcrypto.sign import ml_dsa_44, ml_dsa_65, ml_dsa_87
-
 
 # ---------------------------------------------------------------------------
 # ML-KEM parameter set registry
@@ -163,7 +163,7 @@ class MLKEM:
         self._public_key = public_key
 
     @classmethod
-    def from_secret_key(cls, secret_key_b64: str, security_level: int = 768) -> "MLKEM":
+    def from_secret_key(cls, secret_key_b64: str, security_level: int = 768) -> MLKEM:
         """
         Restore an MLKEM instance from a base64-encoded secret key.
 
@@ -242,8 +242,9 @@ class MLDSA:
         return self._mod.sign(self._secret_key, message)
 
     @staticmethod
-    def verify(public_key: bytes, message: bytes, signature: bytes,
-               security_level: int = 65) -> bool:
+    def verify(
+        public_key: bytes, message: bytes, signature: bytes, security_level: int = 65
+    ) -> bool:
         """
         Verify a signature.
 
@@ -284,7 +285,7 @@ class MLDSA:
         self._public_key = public_key
 
     @classmethod
-    def from_secret_key(cls, secret_key_b64: str, security_level: int = 65) -> "MLDSA":
+    def from_secret_key(cls, secret_key_b64: str, security_level: int = 65) -> MLDSA:
         """
         Restore an MLDSA instance from a base64-encoded secret key.
 
@@ -333,9 +334,7 @@ class HybridKEM:
         """
         kem_pub = self._mlkem.generate_keypair()
         self._x25519_private = X25519PrivateKey.generate()
-        x25519_pub = self._x25519_private.public_key().public_bytes(
-            Encoding.Raw, PublicFormat.Raw
-        )
+        x25519_pub = self._x25519_private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
         return kem_pub, x25519_pub
 
     @staticmethod
@@ -561,9 +560,7 @@ class PostQuantumEncryption:
         """
         return self._dsa.sign(document)
 
-    def verify_document(
-        self, public_key: bytes, document: bytes, signature: bytes
-    ) -> bool:
+    def verify_document(self, public_key: bytes, document: bytes, signature: bytes) -> bool:
         """
         Verify a document signature.
 

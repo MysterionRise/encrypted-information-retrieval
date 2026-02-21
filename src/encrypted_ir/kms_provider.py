@@ -18,9 +18,10 @@ Usage:
     key_id = manager.create_key("deterministic")
 """
 
+from __future__ import annotations
+
 import abc
 import base64
-from typing import Optional
 
 
 class KMSProvider(abc.ABC):
@@ -119,8 +120,8 @@ class AWSKMSProvider(KMSProvider):
     def __init__(
         self,
         key_id: str,
-        region: Optional[str] = None,
-        boto3_session: Optional[object] = None,
+        region: str | None = None,
+        boto3_session: object | None = None,
     ):
         try:
             import boto3

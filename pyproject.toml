@@ -87,6 +87,16 @@ skip_glob = ["*/migrations/*", "venv/*", ".venv/*"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    "*.egg-info",
+]
+
+[tool.ruff.lint]
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
@@ -103,18 +113,19 @@ ignore = [
     "E501",  # line too long (handled by black)
     "S101",  # use of assert (needed for pytest)
     "S311",  # use of random (not cryptographically secure - we use os.urandom where needed)
-]
-exclude = [
-    ".git",
-    ".venv",
-    "venv",
-    "build",
-    "dist",
-    "*.egg-info",
+    "N806",  # uppercase variables matching NIST spec notation (P, Q, R, S, A, B)
+    "N803",  # uppercase params matching NIST spec or AWS API naming
+    "S305",  # ECB mode required by FF1 FPE spec (NIST SP 800-38G)
+    "B905",  # zip strict= not available in Python 3.9 runtime
 ]
 
-[tool.ruff.per-file-ignores]
-"tests/*" = ["S101", "S106"]  # Allow assert and hardcoded passwords in tests
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "S105",   # hardcoded passwords in test fixtures
+    "S106",   # hardcoded passwords in test arguments
+    "B017",   # broad exception in pytest.raises
+    "SIM117", # nested with statements
+]
 
 [tool.mypy]
 python_version = "3.11"

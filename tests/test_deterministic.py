@@ -1,6 +1,7 @@
 """Tests for deterministic encryption module."""
 
 import pytest
+
 from encrypted_ir.deterministic import DeterministicEncryption
 
 

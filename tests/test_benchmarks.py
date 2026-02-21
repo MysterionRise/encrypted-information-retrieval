@@ -15,23 +15,22 @@ Run with: make bench
 Or:       PYTHONPATH=src:$PYTHONPATH pytest tests/test_benchmarks.py --benchmark-only
 """
 
-import os
-import time
 import hashlib
 import hmac
+import os
 
 import pytest
 
+from encrypted_ir.blind_index import BlindIndexConfig, BlindIndexGenerator, BlindIndexSearch
 from encrypted_ir.deterministic import DeterministicEncryption
-from encrypted_ir.searchable import SearchableEncryption
-from encrypted_ir.ore import ORE
 from encrypted_ir.homomorphic import BasicHomomorphicEncryption
-from encrypted_ir.blind_index import BlindIndexGenerator, BlindIndexConfig, BlindIndexSearch
-
+from encrypted_ir.ore import ORE
+from encrypted_ir.searchable import SearchableEncryption
 
 # ---------------------------------------------------------------------------
 # Test data generators
 # ---------------------------------------------------------------------------
+
 
 def _random_string(n: int) -> str:
     """Generate a random ASCII string of length n."""
@@ -56,6 +55,7 @@ SAMPLE_INTEGERS = [100, 1000, 10000, 100000, 1000000, 42949672]
 # ===========================================================================
 # Plaintext Baselines
 # ===========================================================================
+
 
 class TestPlaintextBaselines:
     """Plaintext operation baselines for measuring encryption overhead."""
@@ -120,6 +120,7 @@ class TestPlaintextBaselines:
 # ===========================================================================
 # Deterministic Encryption Benchmarks
 # ===========================================================================
+
 
 class TestDeterministicBenchmarks:
     """Benchmarks for AES-SIV deterministic encryption (claimed 2-5x slower)."""
@@ -216,6 +217,7 @@ class TestDeterministicBenchmarks:
 # Searchable Encryption Benchmarks
 # ===========================================================================
 
+
 class TestSearchableBenchmarks:
     """Benchmarks for searchable symmetric encryption (claimed 10-50x slower)."""
 
@@ -287,9 +289,7 @@ class TestSearchableBenchmarks:
         """Searchable: search keyword across 10 encrypted documents."""
         docs = []
         for i in range(10):
-            _, tokens = self.enc.encrypt_document(
-                f"Document {i}: " + SAMPLE_DOCUMENT
-            )
+            _, tokens = self.enc.encrypt_document(f"Document {i}: " + SAMPLE_DOCUMENT)
             docs.append(tokens)
         query = self.enc.generate_search_query("quarterly")
 
@@ -303,9 +303,7 @@ class TestSearchableBenchmarks:
         """Searchable: search keyword across 100 encrypted documents."""
         docs = []
         for i in range(100):
-            _, tokens = self.enc.encrypt_document(
-                f"Document {i}: " + SAMPLE_DOCUMENT
-            )
+            _, tokens = self.enc.encrypt_document(f"Document {i}: " + SAMPLE_DOCUMENT)
             docs.append(tokens)
         query = self.enc.generate_search_query("quarterly")
 
@@ -332,6 +330,7 @@ class TestSearchableBenchmarks:
 # Order-Revealing Encryption (ORE) Benchmarks
 # ===========================================================================
 
+
 class TestOREBenchmarks:
     """Benchmarks for Lewi-Wu ORE (replaces deprecated OPE, claimed 5-30x slower)."""
 
@@ -344,6 +343,7 @@ class TestOREBenchmarks:
     @pytest.mark.benchmark(group="ore-encrypt")
     def test_encrypt_small_int(self, benchmark):
         """ORE encrypt: small integer (100)."""
+
         # Clear cache each iteration to measure real encryption
         def encrypt():
             self.ore.clear_cache()
@@ -467,6 +467,7 @@ class TestOREBenchmarks:
 # ===========================================================================
 # Homomorphic Encryption Benchmarks
 # ===========================================================================
+
 
 class TestHomomorphicBenchmarks:
     """Benchmarks for CKKS homomorphic encryption (claimed 1000-10000x slower)."""
@@ -622,6 +623,7 @@ class TestHomomorphicBenchmarks:
 # Blind Index Benchmarks
 # ===========================================================================
 
+
 class TestBlindIndexBenchmarks:
     """Benchmarks for HMAC-based blind indexes."""
 
@@ -665,10 +667,7 @@ class TestBlindIndexBenchmarks:
     def test_search_10_records(self, benchmark):
         """Blind index: search across 10 indexed records."""
         search = BlindIndexSearch("tenant_1", self.master_key)
-        records = {
-            f"rec_{i}": {"account_number": f"ACC-{10000 + i}"}
-            for i in range(10)
-        }
+        records = {f"rec_{i}": {"account_number": f"ACC-{10000 + i}"} for i in range(10)}
         index_map = search.index_records(records, "account_number", self.config)
         benchmark(search.search, "ACC-10005", index_map, self.config)
 
@@ -676,10 +675,7 @@ class TestBlindIndexBenchmarks:
     def test_search_100_records(self, benchmark):
         """Blind index: search across 100 indexed records."""
         search = BlindIndexSearch("tenant_1", self.master_key)
-        records = {
-            f"rec_{i}": {"account_number": f"ACC-{10000 + i}"}
-            for i in range(100)
-        }
+        records = {f"rec_{i}": {"account_number": f"ACC-{10000 + i}"} for i in range(100)}
         index_map = search.index_records(records, "account_number", self.config)
         benchmark(search.search, "ACC-10050", index_map, self.config)
 
@@ -687,10 +683,7 @@ class TestBlindIndexBenchmarks:
     def test_search_1000_records(self, benchmark):
         """Blind index: search across 1000 indexed records."""
         search = BlindIndexSearch("tenant_1", self.master_key)
-        records = {
-            f"rec_{i}": {"account_number": f"ACC-{10000 + i}"}
-            for i in range(1000)
-        }
+        records = {f"rec_{i}": {"account_number": f"ACC-{10000 + i}"} for i in range(1000)}
         index_map = search.index_records(records, "account_number", self.config)
         benchmark(search.search, "ACC-10500", index_map, self.config)
 
@@ -700,10 +693,7 @@ class TestBlindIndexBenchmarks:
     def test_index_100_records(self, benchmark):
         """Blind index: batch index 100 records."""
         search = BlindIndexSearch("tenant_1", self.master_key)
-        records = {
-            f"rec_{i}": {"account_number": f"ACC-{10000 + i}"}
-            for i in range(100)
-        }
+        records = {f"rec_{i}": {"account_number": f"ACC-{10000 + i}"} for i in range(100)}
         benchmark(search.index_records, records, "account_number", self.config)
 
     # -- Multi-tenant isolation --
@@ -725,6 +715,7 @@ class TestBlindIndexBenchmarks:
 # ===========================================================================
 # Integration Benchmarks (Use Cases)
 # ===========================================================================
+
 
 class TestUseCasesBenchmarks:
     """End-to-end benchmarks for financial services use cases."""
@@ -766,8 +757,8 @@ class TestUseCasesBenchmarks:
     @pytest.mark.benchmark(group="usecase-docsearch")
     def test_docsearch_encrypt_and_search(self, benchmark):
         """Use case: encrypt 5 documents then keyword search."""
-        from encrypted_ir.use_cases import DocumentSearch
         from encrypted_ir.key_manager import KeyManager
+        from encrypted_ir.use_cases import DocumentSearch
 
         km = KeyManager()
         ds = DocumentSearch(km)
@@ -787,8 +778,8 @@ class TestUseCasesBenchmarks:
     @pytest.mark.benchmark(group="usecase-docsearch")
     def test_docsearch_boolean_search(self, benchmark):
         """Use case: boolean AND search across encrypted documents."""
-        from encrypted_ir.use_cases import DocumentSearch
         from encrypted_ir.key_manager import KeyManager
+        from encrypted_ir.use_cases import DocumentSearch
 
         km = KeyManager()
         ds = DocumentSearch(km)
@@ -807,6 +798,7 @@ class TestUseCasesBenchmarks:
 # ===========================================================================
 # Throughput Benchmarks (operations per second)
 # ===========================================================================
+
 
 class TestThroughputBenchmarks:
     """Throughput-oriented benchmarks measuring operations per second."""

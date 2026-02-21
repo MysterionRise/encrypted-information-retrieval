@@ -24,9 +24,11 @@ Constraints (per NIST SP 800-38G):
 - Tweak length in [0, maxTlen] where maxTlen is 2^32 - 1
 """
 
-import os
-import math
+from __future__ import annotations
+
 import base64
+import math
+import os
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
@@ -139,9 +141,7 @@ class FF1:
 
         for i, d in enumerate(numerals):
             if d < 0 or d >= self.radix:
-                raise ValueError(
-                    f"Numeral at index {i} is {d}, must be in [0, {self.radix - 1}]"
-                )
+                raise ValueError(f"Numeral at index {i} is {d}, must be in [0, {self.radix - 1}]")
 
     def _compute_p(self, n: int, u: int, t: int) -> bytes:
         """Compute the fixed P block (16 bytes) per NIST SP 800-38G step 5."""
@@ -151,8 +151,9 @@ class FF1:
         P += t.to_bytes(4, "big")
         return P
 
-    def _compute_round(self, P: bytes, tweak: bytes, t: int, b: int, d: int,
-                       round_num: int, source: list[int]) -> int:
+    def _compute_round(
+        self, P: bytes, tweak: bytes, t: int, b: int, d: int, round_num: int, source: list[int]
+    ) -> int:
         """
         Compute the Feistel round function, returning y.
 
@@ -268,7 +269,7 @@ class FF1:
         return base64.b64encode(self.key).decode("ascii")
 
     @staticmethod
-    def import_key(key_b64: str, radix: int = 10) -> "FF1":
+    def import_key(key_b64: str, radix: int = 10) -> FF1:
         """
         Import key from base64 string.
 
@@ -479,7 +480,7 @@ class FormatPreservingEncryption:
         return self._ff1.export_key()
 
     @staticmethod
-    def import_key(key_b64: str, alphabet: str = None) -> "FormatPreservingEncryption":
+    def import_key(key_b64: str, alphabet: str = None) -> FormatPreservingEncryption:
         """
         Import key from base64 string.
 

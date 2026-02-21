@@ -1,8 +1,8 @@
 """Tests for Post-Quantum Cryptography module."""
 
 import pytest
-from encrypted_ir.post_quantum import MLKEM, MLDSA, HybridKEM, PostQuantumEncryption
 
+from encrypted_ir.post_quantum import MLDSA, MLKEM, HybridKEM, PostQuantumEncryption
 
 # ---------------------------------------------------------------------------
 # ML-KEM Tests
@@ -96,6 +96,7 @@ class TestMLKEMKeyExport:
         pk_b64 = kem.export_public_key()
 
         import base64
+
         restored_pub = base64.b64decode(pk_b64)
         assert restored_pub == pub
 
@@ -219,7 +220,7 @@ class TestMLDSAKeyExport:
     def test_export_import_secret_key(self):
         dsa = MLDSA(65)
         pub = dsa.generate_keypair()
-        sig = dsa.sign(b"message")
+        dsa.sign(b"message")
 
         sk_b64 = dsa.export_secret_key()
         restored = MLDSA.from_secret_key(sk_b64, 65)
@@ -257,9 +258,7 @@ class TestHybridKEMBasic:
         assert len(self.x25519_pub) == 32
 
     def test_encapsulate_decapsulate_round_trip(self):
-        combined_ss, kem_ct, x25519_eph = HybridKEM.encapsulate(
-            self.kem_pub, self.x25519_pub, 768
-        )
+        combined_ss, kem_ct, x25519_eph = HybridKEM.encapsulate(self.kem_pub, self.x25519_pub, 768)
         recovered = self.hybrid.decapsulate(kem_ct, x25519_eph)
         assert combined_ss == recovered
 

@@ -8,13 +8,15 @@ Use Case: Account numbers, customer IDs, SSN/Tax IDs where equality
 searches are needed but pattern analysis risk is acceptable.
 """
 
-import os
-from typing import Union
-from cryptography.hazmat.primitives.ciphers.aead import AESSIV
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.exceptions import InvalidTag
+from __future__ import annotations
+
 import base64
+import os
+
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESSIV
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 
 class DeterministicEncryption:
@@ -69,7 +71,7 @@ class DeterministicEncryption:
         key = kdf.derive(password.encode())
         return key, salt
 
-    def encrypt(self, plaintext: Union[str, bytes], associated_data: list[bytes] = None) -> bytes:
+    def encrypt(self, plaintext: str | bytes, associated_data: list[bytes] = None) -> bytes:
         """
         Encrypt data deterministically.
 
@@ -112,9 +114,7 @@ class DeterministicEncryption:
         except InvalidTag as e:
             raise ValueError("Decryption failed - invalid key or corrupted data") from e
 
-    def encrypt_to_base64(
-        self, plaintext: Union[str, bytes], associated_data: list[bytes] = None
-    ) -> str:
+    def encrypt_to_base64(self, plaintext: str | bytes, associated_data: list[bytes] = None) -> str:
         """
         Encrypt and encode as base64 string for storage.
 
@@ -144,7 +144,7 @@ class DeterministicEncryption:
         ciphertext = base64.b64decode(ciphertext_b64)
         return self.decrypt(ciphertext, associated_data)
 
-    def search_index(self, plaintext: Union[str, bytes]) -> str:
+    def search_index(self, plaintext: str | bytes) -> str:
         """
         Create a searchable index value for equality comparisons.
 
@@ -163,7 +163,7 @@ class DeterministicEncryption:
         return base64.b64encode(self.key).decode("ascii")
 
     @staticmethod
-    def import_key(key_b64: str) -> "DeterministicEncryption":
+    def import_key(key_b64: str) -> DeterministicEncryption:
         """
         Import key from base64 string.
 

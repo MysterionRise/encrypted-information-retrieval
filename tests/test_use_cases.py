@@ -1,13 +1,12 @@
 """Tests for financial services use cases."""
 
-import pytest
 from encrypted_ir.key_manager import KeyManager
 from encrypted_ir.use_cases import (
     AccountManagement,
-    TransactionProcessing,
-    DocumentSearch,
     CreditScoring,
+    DocumentSearch,
     FraudDetection,
+    TransactionProcessing,
 )
 
 
