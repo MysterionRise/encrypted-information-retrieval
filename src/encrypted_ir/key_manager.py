@@ -4,6 +4,10 @@ Key Management Module
 Provides secure key generation, storage, rotation, and management.
 Implements best practices for cryptographic key lifecycle management.
 
+Supports pluggable storage backends for persistent key storage via the
+StorageBackend interface. When no backend is provided, keys are stored
+in memory only (lost on process exit).
+
 Use Case: Centralized key management for all encryption operations,
 key rotation, access control, and audit logging.
 """
@@ -13,11 +17,14 @@ import json
 import hashlib
 import hmac
 from datetime import datetime, timedelta
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, TYPE_CHECKING
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import base64
+
+if TYPE_CHECKING:
+    from .storage_backend import StorageBackend
 
 
 class KeyMetadata:
@@ -95,13 +102,16 @@ class KeyManager:
     Handles generation, storage, rotation, and lifecycle of encryption keys.
     """
 
-    def __init__(self, master_key: bytes = None):
+    def __init__(self, master_key: bytes = None, storage_backend: "StorageBackend" = None):
         """
         Initialize key manager.
 
         Args:
             master_key: 256-bit master key for encrypting stored keys.
                        If None, generates a new master key.
+            storage_backend: Optional persistent storage backend. When provided,
+                           keys are persisted across process restarts. When None,
+                           keys are stored in memory only.
         """
         if master_key is None:
             master_key = os.urandom(32)
@@ -109,9 +119,13 @@ class KeyManager:
             raise ValueError("Master key must be 32 bytes (256 bits)")
 
         self.master_key = master_key
+        self._storage_backend = storage_backend
         self._keys: Dict[str, bytes] = {}
         self._metadata: Dict[str, KeyMetadata] = {}
         self._audit_log: List[dict] = []
+
+        if self._storage_backend is not None:
+            self._load_from_backend()
 
     @staticmethod
     def generate_master_key() -> bytes:
@@ -174,6 +188,24 @@ class KeyManager:
             "details": details,
         }
         self._audit_log.append(log_entry)
+        if self._storage_backend is not None:
+            self._storage_backend.save_audit_entry(log_entry)
+
+    def _load_from_backend(self):
+        """Load all keys and metadata from the storage backend into memory."""
+        encrypted_keys, metadata_dicts = self._storage_backend.load_all()
+        for key_id, encrypted_key in encrypted_keys.items():
+            self._keys[key_id] = self._decrypt_key(encrypted_key)
+        for key_id, meta_dict in metadata_dicts.items():
+            self._metadata[key_id] = KeyMetadata.from_dict(meta_dict)
+
+    def _persist_key(self, key_id: str):
+        """Persist a single key and its metadata to the storage backend."""
+        if self._storage_backend is None:
+            return
+        encrypted_key = self._encrypt_key(self._keys[key_id])
+        metadata_dict = self._metadata[key_id].to_dict()
+        self._storage_backend.save_key(key_id, encrypted_key, metadata_dict)
 
     def create_key(
         self,
@@ -210,6 +242,7 @@ class KeyManager:
         )
         self._metadata[key_id] = metadata
 
+        self._persist_key(key_id)
         self._log_access(key_id, "create", True, f"Created {key_type} key")
         return key_id
 
@@ -243,6 +276,7 @@ class KeyManager:
 
         # Update access count
         metadata.access_count += 1
+        self._persist_key(key_id)
         self._log_access(key_id, "get", True)
 
         return self._keys[key_id]
@@ -275,6 +309,7 @@ class KeyManager:
 
         # Mark old key as inactive
         old_metadata.active = False
+        self._persist_key(key_id)
         self._log_access(key_id, "rotate", True, f"Rotated to {new_key_id}")
 
         return new_key_id
@@ -295,6 +330,7 @@ class KeyManager:
         # Mark as inactive instead of actually deleting
         # (crypto-shredding - key deletion = data deletion)
         self._metadata[key_id].active = False
+        self._persist_key(key_id)
         self._log_access(key_id, "delete", True, "Key marked inactive")
 
     def list_keys(self, key_type: str = None, active_only: bool = True) -> List[str]:
@@ -406,6 +442,10 @@ class KeyManager:
         for key_id, metadata_dict in export_data["metadata"].items():
             self._metadata[key_id] = KeyMetadata.from_dict(metadata_dict)
 
+        # Persist all imported keys
+        for key_id in export_data["keys"]:
+            self._persist_key(key_id)
+
         self._log_access("*", "import", True, f"Imported {len(export_data['keys'])} keys")
 
     def get_audit_log(self, key_id: str = None, limit: int = 100) -> List[dict]:
@@ -419,6 +459,8 @@ class KeyManager:
         Returns:
             List of audit log entries (most recent first)
         """
+        if self._storage_backend is not None:
+            return self._storage_backend.load_audit_log(key_id=key_id, limit=limit)
         logs = self._audit_log
         if key_id:
             logs = [log for log in logs if log["key_id"] == key_id]

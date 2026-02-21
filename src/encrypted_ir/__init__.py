@@ -12,6 +12,7 @@ from .ore import ORE
 from .homomorphic import BasicHomomorphicEncryption
 from .key_manager import KeyManager
 from .blind_index import BlindIndexGenerator, BlindIndexConfig, BlindIndexSearch
+from .storage_backend import StorageBackend, FileStorageBackend
 
 __version__ = "1.0.0"
 __all__ = [
@@ -24,4 +25,6 @@ __all__ = [
     "BlindIndexGenerator",
     "BlindIndexConfig",
     "BlindIndexSearch",
+    "StorageBackend",
+    "FileStorageBackend",
 ]
