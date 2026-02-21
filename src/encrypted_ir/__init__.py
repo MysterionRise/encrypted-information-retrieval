@@ -6,7 +6,7 @@ techniques suitable for financial services applications.
 """
 
 from .deterministic import DeterministicEncryption
-from .searchable import SearchableEncryption
+from .searchable import SearchableEncryption, BooleanQuery
 from .order_preserving import OrderPreservingEncryption
 from .ore import ORE
 from .homomorphic import BasicHomomorphicEncryption
@@ -17,6 +17,7 @@ __version__ = "1.0.0"
 __all__ = [
     "DeterministicEncryption",
     "SearchableEncryption",
+    "BooleanQuery",
     "OrderPreservingEncryption",
     "ORE",
     "BasicHomomorphicEncryption",

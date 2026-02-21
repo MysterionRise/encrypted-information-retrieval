@@ -4,6 +4,8 @@ Searchable Encryption Module
 Implements searchable symmetric encryption for keyword searches on encrypted documents.
 Uses a token-based approach where search tokens are generated from keywords.
 
+Supports boolean (AND/OR) queries across multiple keywords for real document search use cases.
+
 Use Case: Document management, email archival, customer service knowledge bases.
 """
 
@@ -13,6 +15,58 @@ import hashlib
 from typing import Set, List, Union
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 import base64
+
+
+class BooleanQuery:
+    """
+    Represents a boolean search query over encrypted search tokens.
+
+    Supports AND, OR operators and can be nested for complex queries
+    like (fraud AND quarterly) OR (risk AND annual).
+    """
+
+    AND = "AND"
+    OR = "OR"
+
+    def __init__(self, operator: str, operands: list):
+        """
+        Initialize a boolean query.
+
+        Args:
+            operator: "AND" or "OR"
+            operands: List of search tokens (str) or nested BooleanQuery objects
+        """
+        if operator not in (self.AND, self.OR):
+            raise ValueError(f"Operator must be '{self.AND}' or '{self.OR}', got '{operator}'")
+        if len(operands) < 2:
+            raise ValueError("Boolean query requires at least 2 operands")
+        self.operator = operator
+        self.operands = operands
+
+    def evaluate(self, document_tokens: Set[str]) -> bool:
+        """
+        Evaluate this query against a set of document tokens.
+
+        Args:
+            document_tokens: Set of search tokens from an encrypted document
+
+        Returns:
+            True if the document matches the query
+        """
+        if self.operator == self.AND:
+            return all(_evaluate_operand(op, document_tokens) for op in self.operands)
+        else:  # OR
+            return any(_evaluate_operand(op, document_tokens) for op in self.operands)
+
+    def __repr__(self) -> str:
+        return f"BooleanQuery({self.operator}, {self.operands!r})"
+
+
+def _evaluate_operand(operand, document_tokens: Set[str]) -> bool:
+    """Evaluate a single operand (token string or nested BooleanQuery)."""
+    if isinstance(operand, BooleanQuery):
+        return operand.evaluate(document_tokens)
+    return operand in document_tokens
 
 
 class SearchableEncryption:
@@ -179,6 +233,50 @@ class SearchableEncryption:
             True if document contains the keyword, False otherwise
         """
         return query_token in document_tokens
+
+    def boolean_search_query(
+        self, keywords: List[str], operator: str = "AND"
+    ) -> BooleanQuery:
+        """
+        Generate a boolean search query from multiple keywords.
+
+        Args:
+            keywords: List of keywords to search for
+            operator: "AND" (all must match) or "OR" (any must match)
+
+        Returns:
+            BooleanQuery that can be evaluated against document tokens
+        """
+        tokens = [self._generate_search_token(kw) for kw in keywords]
+        return BooleanQuery(operator, tokens)
+
+    def nested_boolean_query(
+        self, operator: str, *sub_queries: BooleanQuery
+    ) -> BooleanQuery:
+        """
+        Combine multiple BooleanQuery objects into a nested query.
+
+        Args:
+            operator: "AND" or "OR" to combine the sub-queries
+            *sub_queries: Two or more BooleanQuery objects to combine
+
+        Returns:
+            BooleanQuery combining the sub-queries
+        """
+        return BooleanQuery(operator, list(sub_queries))
+
+    def boolean_search(self, query: BooleanQuery, document_tokens: Set[str]) -> bool:
+        """
+        Check if a document matches a boolean query.
+
+        Args:
+            query: BooleanQuery from boolean_search_query() or nested_boolean_query()
+            document_tokens: Set of tokens from encrypt_document()
+
+        Returns:
+            True if document matches the boolean query
+        """
+        return query.evaluate(document_tokens)
 
     def encrypt_document_to_base64(
         self,
