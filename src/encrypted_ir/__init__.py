@@ -14,6 +14,7 @@ from .key_manager import KeyManager
 from .blind_index import BlindIndexGenerator, BlindIndexConfig, BlindIndexSearch
 from .storage_backend import StorageBackend, FileStorageBackend
 from .kms_provider import KMSProvider, AWSKMSProvider, EnvelopeEncryption
+from .fpe import FF1, FormatPreservingEncryption
 
 __version__ = "1.0.0"
 __all__ = [
@@ -32,4 +33,6 @@ __all__ = [
     "KMSProvider",
     "AWSKMSProvider",
     "EnvelopeEncryption",
+    "FF1",
+    "FormatPreservingEncryption",
 ]
