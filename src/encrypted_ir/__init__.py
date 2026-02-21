@@ -8,6 +8,7 @@ techniques suitable for financial services applications.
 from .deterministic import DeterministicEncryption
 from .searchable import SearchableEncryption
 from .order_preserving import OrderPreservingEncryption
+from .ore import ORE
 from .homomorphic import BasicHomomorphicEncryption
 from .key_manager import KeyManager
 from .blind_index import BlindIndexGenerator, BlindIndexConfig, BlindIndexSearch
@@ -17,6 +18,7 @@ __all__ = [
     "DeterministicEncryption",
     "SearchableEncryption",
     "OrderPreservingEncryption",
+    "ORE",
     "BasicHomomorphicEncryption",
     "KeyManager",
     "BlindIndexGenerator",
