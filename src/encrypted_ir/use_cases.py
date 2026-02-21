@@ -226,7 +226,15 @@ class CreditScoring:
         self, encrypted_income_b64: str, encrypted_debt_b64: str
     ) -> float:
         """
-        Calculate debt-to-income ratio on encrypted values.
+        Calculate debt-to-income ratio on encrypted values using homomorphic operations.
+
+        Uses a single-step Newton-Raphson reciprocal approximation to compute
+        debt/income without decrypting intermediate values. Only the final
+        ratio is decrypted.
+
+        The approximation: 1/income ~ 2*a0 - a0^2*income, where a0 = 1/c and
+        c is a normalization constant (expected income scale). Accurate when
+        income is near c.
 
         Args:
             encrypted_income_b64: Encrypted income
@@ -238,22 +246,29 @@ class CreditScoring:
         enc_income = self.encryptor.deserialize_encrypted_from_base64(encrypted_income_b64)
         enc_debt = self.encryptor.deserialize_encrypted_from_base64(encrypted_debt_b64)
 
-        # Compute ratio: debt / income (on encrypted values)
-        # Note: division is complex in HE, so we'll compute debt * (1/income)
-        income_val = self.encryptor.decrypt_value(enc_income)
-        if income_val == 0:
-            return float("inf")
+        # Newton-Raphson single-step reciprocal: 1/income ~ 2*a0 - a0^2*income
+        c = 100000.0
+        a0 = 1.0 / c
+        a0_sq = a0 * a0
 
-        # For simplicity, decrypt income to get ratio
-        # In production, use more sophisticated HE division
-        debt_val = self.encryptor.decrypt_value(enc_debt)
-        return debt_val / income_val
+        # Compute reciprocal entirely in the encrypted domain
+        enc_reciprocal = self.encryptor.multiply_plain(enc_income, -a0_sq)
+        enc_reciprocal = self.encryptor.add_plain(enc_reciprocal, 2.0 * a0)
+
+        # ratio = debt * reciprocal (encrypted multiplication)
+        enc_ratio = self.encryptor.multiply_encrypted(enc_debt, enc_reciprocal)
+
+        # Decrypt only the final result
+        return self.encryptor.decrypt_value(enc_ratio)
 
     def calculate_credit_score(
         self, encrypted_data: Dict[str, str], weights: Dict[str, float] = None
     ) -> float:
         """
-        Calculate weighted credit score on encrypted data.
+        Calculate weighted credit score on encrypted data using homomorphic operations.
+
+        Performs normalization, weighting, summation, and scaling entirely in the
+        encrypted domain. Only the final score is decrypted.
 
         Args:
             encrypted_data: Dictionary of encrypted financial metrics
@@ -269,32 +284,47 @@ class CreditScoring:
                 "credit_history": 0.5,
             }
 
-        # Decrypt values for scoring
-        # In production, this would use pure HE operations
-        income = self.encryptor.decrypt_value(
-            self.encryptor.deserialize_encrypted_from_base64(encrypted_data["income"])
+        # Normalization constants
+        income_norm = 100000.0
+        debt_norm = 50000.0
+        history_norm = 120.0
+
+        # Deserialize encrypted values
+        enc_income = self.encryptor.deserialize_encrypted_from_base64(
+            encrypted_data["income"]
         )
-        debt = self.encryptor.decrypt_value(
-            self.encryptor.deserialize_encrypted_from_base64(encrypted_data["debt"])
+        enc_debt = self.encryptor.deserialize_encrypted_from_base64(
+            encrypted_data["debt"]
         )
-        history = self.encryptor.decrypt_value(
-            self.encryptor.deserialize_encrypted_from_base64(encrypted_data["credit_history"])
+        enc_history = self.encryptor.deserialize_encrypted_from_base64(
+            encrypted_data["credit_history"]
         )
 
-        # Normalize values and calculate score
-        normalized_income = min(income / 100000, 1.0)  # Cap at 100k
-        normalized_debt = min(debt / 50000, 1.0)  # Cap at 50k
-        normalized_history = min(history / 120, 1.0)  # Cap at 10 years
-
-        raw_score = (
-            normalized_income * weights["income"]
-            + normalized_debt * weights["debt"]
-            + normalized_history * weights["credit_history"]
+        # Combine normalization and weighting into a single plaintext multiply
+        # per component to minimize multiplicative depth consumption
+        weighted_income = self.encryptor.multiply_plain(
+            enc_income, weights["income"] / income_norm
+        )
+        weighted_debt = self.encryptor.multiply_plain(
+            enc_debt, weights["debt"] / debt_norm
+        )
+        weighted_history = self.encryptor.multiply_plain(
+            enc_history, weights["credit_history"] / history_norm
         )
 
-        # Scale to 300-850 range
-        credit_score = 300 + (raw_score * 550)
-        return max(300, min(850, credit_score))
+        # Sum weighted components (addition is free in CKKS)
+        raw_score = self.encryptor.add_encrypted(weighted_income, weighted_debt)
+        raw_score = self.encryptor.add_encrypted(raw_score, weighted_history)
+
+        # Scale to 300-850 range: score = raw_score * 550 + 300
+        scaled = self.encryptor.multiply_plain(raw_score, 550.0)
+        final = self.encryptor.add_plain(scaled, 300.0)
+
+        # Decrypt only the final result
+        credit_score = self.encryptor.decrypt_value(final)
+
+        # Clamp to valid range
+        return max(300.0, min(850.0, credit_score))
 
 
 class FraudDetection:
