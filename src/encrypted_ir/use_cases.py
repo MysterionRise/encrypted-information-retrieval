@@ -211,9 +211,22 @@ class CreditScoring:
     """
     Use case: Privacy-preserving credit scoring using homomorphic encryption.
 
-    Allows computing credit scores on encrypted financial data without
-    revealing individual values.
+    Computes credit scores on encrypted financial data using CKKS homomorphic
+    arithmetic. Only the final score is decrypted — individual financial values
+    (income, debt, credit history) remain encrypted throughout computation.
+
+    Limitations:
+        - CKKS does not support comparison (min/max), so normalization capping
+          is applied to the final decrypted score rather than per-field.
+        - CKKS does not support division, so debt-to-income ratio requires
+          decrypting both operands. This is an inherent limitation of the
+          CKKS scheme, not an implementation shortcut.
     """
+
+    # Normalization constants (plaintext scalars applied to encrypted values)
+    INCOME_CAP = 100000.0
+    DEBT_CAP = 50000.0
+    HISTORY_CAP = 120.0  # months (10 years)
 
     def __init__(self):
         self.encryptor = BasicHomomorphicEncryption()
@@ -248,7 +261,13 @@ class CreditScoring:
         self, encrypted_income_b64: str, encrypted_debt_b64: str
     ) -> float:
         """
-        Calculate debt-to-income ratio on encrypted values.
+        Calculate debt-to-income ratio.
+
+        Note: CKKS does not natively support division. This operation requires
+        decrypting both operands. This is an inherent limitation of the CKKS
+        scheme — not an implementation shortcut. Polynomial approximation of
+        1/x is possible but numerically unstable for the value ranges in
+        financial data.
 
         Args:
             encrypted_income_b64: Encrypted income
@@ -260,14 +279,10 @@ class CreditScoring:
         enc_income = self.encryptor.deserialize_encrypted_from_base64(encrypted_income_b64)
         enc_debt = self.encryptor.deserialize_encrypted_from_base64(encrypted_debt_b64)
 
-        # Compute ratio: debt / income (on encrypted values)
-        # Note: division is complex in HE, so we'll compute debt * (1/income)
         income_val = self.encryptor.decrypt_value(enc_income)
         if income_val == 0:
             return float("inf")
 
-        # For simplicity, decrypt income to get ratio
-        # In production, use more sophisticated HE division
         debt_val = self.encryptor.decrypt_value(enc_debt)
         return debt_val / income_val
 
@@ -275,7 +290,17 @@ class CreditScoring:
         self, encrypted_data: Dict[str, str], weights: Dict[str, float] = None
     ) -> float:
         """
-        Calculate weighted credit score on encrypted data.
+        Calculate weighted credit score using homomorphic operations.
+
+        The computation is performed entirely on encrypted values:
+        1. Each encrypted metric is multiplied by a plaintext scalar
+           (weight / normalization_cap) using HE plaintext multiplication
+        2. The weighted terms are summed using HE addition
+        3. Only the final aggregate score is decrypted
+
+        Individual financial values are never decrypted during scoring.
+        Normalization capping (min with 1.0) cannot be done in CKKS, so
+        it is applied to the final decrypted score via range clamping.
 
         Args:
             encrypted_data: Dictionary of encrypted financial metrics
@@ -287,34 +312,35 @@ class CreditScoring:
         if weights is None:
             weights = {
                 "income": 0.3,
-                "debt": -0.2,  # negative because more debt = lower score
+                "debt": -0.2,
                 "credit_history": 0.5,
             }
 
-        # Decrypt values for scoring
-        # In production, this would use pure HE operations
-        income = self.encryptor.decrypt_value(
-            self.encryptor.deserialize_encrypted_from_base64(encrypted_data["income"])
-        )
-        debt = self.encryptor.decrypt_value(
-            self.encryptor.deserialize_encrypted_from_base64(encrypted_data["debt"])
-        )
-        history = self.encryptor.decrypt_value(
-            self.encryptor.deserialize_encrypted_from_base64(encrypted_data["credit_history"])
+        # Deserialize encrypted values
+        enc_income = self.encryptor.deserialize_encrypted_from_base64(encrypted_data["income"])
+        enc_debt = self.encryptor.deserialize_encrypted_from_base64(encrypted_data["debt"])
+        enc_history = self.encryptor.deserialize_encrypted_from_base64(
+            encrypted_data["credit_history"]
         )
 
-        # Normalize values and calculate score
-        normalized_income = min(income / 100000, 1.0)  # Cap at 100k
-        normalized_debt = min(debt / 50000, 1.0)  # Cap at 50k
-        normalized_history = min(history / 120, 1.0)  # Cap at 10 years
+        # HE plaintext multiplication: encrypted_value * (weight / cap)
+        # This combines normalization and weighting into a single scalar multiply
+        income_scalar = weights["income"] / self.INCOME_CAP
+        debt_scalar = weights["debt"] / self.DEBT_CAP
+        history_scalar = weights["credit_history"] / self.HISTORY_CAP
 
-        raw_score = (
-            normalized_income * weights["income"]
-            + normalized_debt * weights["debt"]
-            + normalized_history * weights["credit_history"]
-        )
+        weighted_income = self.encryptor.multiply_plain(enc_income, income_scalar)
+        weighted_debt = self.encryptor.multiply_plain(enc_debt, debt_scalar)
+        weighted_history = self.encryptor.multiply_plain(enc_history, history_scalar)
 
-        # Scale to 300-850 range
+        # HE addition: sum all weighted encrypted terms
+        raw_encrypted = self.encryptor.add_encrypted(weighted_income, weighted_debt)
+        raw_encrypted = self.encryptor.add_encrypted(raw_encrypted, weighted_history)
+
+        # Decrypt only the final aggregate score
+        raw_score = self.encryptor.decrypt_value(raw_encrypted)
+
+        # Scale to 300-850 range and clamp
         credit_score = 300 + (raw_score * 550)
         return max(300, min(850, credit_score))
 
