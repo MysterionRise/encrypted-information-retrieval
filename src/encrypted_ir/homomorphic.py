@@ -10,7 +10,6 @@ secure multi-party analytics, regulatory reporting on encrypted data.
 
 import tenseal as ts
 from typing import List, Union
-import pickle
 import base64
 
 

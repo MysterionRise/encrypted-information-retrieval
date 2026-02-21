@@ -12,7 +12,6 @@ import hmac
 import hashlib
 from typing import Set, List, Union
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.backends import default_backend
 import base64
 
 
@@ -117,9 +116,7 @@ class SearchableEncryption:
 
         # Encrypt document using AES-GCM
         iv = os.urandom(12)
-        cipher = Cipher(
-            algorithms.AES(self.encryption_key), modes.GCM(iv), backend=default_backend()
-        )
+        cipher = Cipher(algorithms.AES(self.encryption_key), modes.GCM(iv))
         encryptor = cipher.encryptor()
         ciphertext = encryptor.update(plaintext) + encryptor.finalize()
 
@@ -149,9 +146,7 @@ class SearchableEncryption:
         tag = encrypted_document[12:28]
         ciphertext = encrypted_document[28:]
 
-        cipher = Cipher(
-            algorithms.AES(self.encryption_key), modes.GCM(iv, tag), backend=default_backend()
-        )
+        cipher = Cipher(algorithms.AES(self.encryption_key), modes.GCM(iv, tag))
         decryptor = cipher.decryptor()
 
         try:

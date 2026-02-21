@@ -14,10 +14,9 @@ import hashlib
 import hmac
 from datetime import datetime, timedelta
 from typing import Dict, Optional, List
-from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.backends import default_backend
 import base64
 
 
