@@ -171,6 +171,28 @@ class DocumentSearch:
 
         return matching_docs
 
+    def boolean_search_documents(
+        self, keywords: List[str], operator: str = "AND"
+    ) -> List[str]:
+        """
+        Search for documents using boolean (AND/OR) keyword queries.
+
+        Args:
+            keywords: List of keywords to search for
+            operator: "AND" (all keywords must match) or "OR" (any keyword must match)
+
+        Returns:
+            List of document IDs matching the boolean query
+        """
+        query = self.encryptor.boolean_search_query(keywords, operator)
+        matching_docs = []
+
+        for doc_id, tokens in self.document_index.items():
+            if self.encryptor.boolean_search(query, tokens):
+                matching_docs.append(doc_id)
+
+        return matching_docs
+
     def decrypt_document(self, encrypted_document: str) -> str:
         """
         Decrypt a document.

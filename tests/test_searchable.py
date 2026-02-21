@@ -1,7 +1,7 @@
 """Tests for searchable encryption module."""
 
 import pytest
-from encrypted_ir.searchable import SearchableEncryption
+from encrypted_ir.searchable import SearchableEncryption, BooleanQuery
 
 
 class TestSearchableEncryption:
@@ -183,3 +183,141 @@ class TestSearchableEncryption:
             i for i, (_, tokens) in enumerate(encrypted_docs) if encryptor.search(query, tokens)
         ]
         assert matches == [1]
+
+
+class TestBooleanQuery:
+    """Test boolean/conjunctive query functionality."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.encryptor = SearchableEncryption()
+        self.docs = [
+            "Financial report on quarterly earnings and fraud detection",
+            "Transaction analysis and fraud detection system",
+            "Customer account management and quarterly review",
+            "Annual risk assessment report",
+        ]
+        self.encrypted_docs = []
+        for doc in self.docs:
+            _, tokens = self.encryptor.encrypt_document(doc)
+            self.encrypted_docs.append(tokens)
+
+    def test_and_query_matches(self):
+        """Test AND query matches documents containing all keywords."""
+        query = self.encryptor.boolean_search_query(["fraud", "financial"], "AND")
+        # Only doc 0 has both "fraud" and "financial"
+        results = [
+            i
+            for i, tokens in enumerate(self.encrypted_docs)
+            if self.encryptor.boolean_search(query, tokens)
+        ]
+        assert results == [0]
+
+    def test_and_query_no_match(self):
+        """Test AND query returns no match when not all keywords present."""
+        query = self.encryptor.boolean_search_query(["fraud", "customer"], "AND")
+        results = [
+            i
+            for i, tokens in enumerate(self.encrypted_docs)
+            if self.encryptor.boolean_search(query, tokens)
+        ]
+        assert results == []
+
+    def test_or_query_matches(self):
+        """Test OR query matches documents containing any keyword."""
+        query = self.encryptor.boolean_search_query(["fraud", "customer"], "OR")
+        results = [
+            i
+            for i, tokens in enumerate(self.encrypted_docs)
+            if self.encryptor.boolean_search(query, tokens)
+        ]
+        # Doc 0 has "fraud", doc 1 has "fraud", doc 2 has "customer"
+        assert results == [0, 1, 2]
+
+    def test_or_query_single_match(self):
+        """Test OR query with keyword in only one document."""
+        query = self.encryptor.boolean_search_query(["annual", "customer"], "OR")
+        results = [
+            i
+            for i, tokens in enumerate(self.encrypted_docs)
+            if self.encryptor.boolean_search(query, tokens)
+        ]
+        # Doc 2 has "customer", doc 3 has "annual"
+        assert results == [2, 3]
+
+    def test_nested_boolean_query(self):
+        """Test nested boolean queries: (fraud AND quarterly) OR (risk AND annual)."""
+        sub1 = self.encryptor.boolean_search_query(["fraud", "quarterly"], "AND")
+        sub2 = self.encryptor.boolean_search_query(["risk", "annual"], "AND")
+        nested = self.encryptor.nested_boolean_query("OR", sub1, sub2)
+        results = [
+            i
+            for i, tokens in enumerate(self.encrypted_docs)
+            if self.encryptor.boolean_search(nested, tokens)
+        ]
+        # Doc 0 has fraud+quarterly, doc 3 has risk+annual
+        assert results == [0, 3]
+
+    def test_nested_and_of_ors(self):
+        """Test nested: (fraud OR risk) AND (quarterly OR annual)."""
+        sub1 = self.encryptor.boolean_search_query(["fraud", "risk"], "OR")
+        sub2 = self.encryptor.boolean_search_query(["quarterly", "annual"], "OR")
+        nested = self.encryptor.nested_boolean_query("AND", sub1, sub2)
+        results = [
+            i
+            for i, tokens in enumerate(self.encrypted_docs)
+            if self.encryptor.boolean_search(nested, tokens)
+        ]
+        # Doc 0: fraud+quarterly ✓, Doc 3: risk+annual ✓
+        assert results == [0, 3]
+
+    def test_boolean_query_case_insensitive(self):
+        """Test boolean queries are case-insensitive."""
+        query_lower = self.encryptor.boolean_search_query(["fraud", "financial"], "AND")
+        query_upper = self.encryptor.boolean_search_query(["FRAUD", "FINANCIAL"], "AND")
+        for tokens in self.encrypted_docs:
+            assert self.encryptor.boolean_search(
+                query_lower, tokens
+            ) == self.encryptor.boolean_search(query_upper, tokens)
+
+    def test_invalid_operator(self):
+        """Test that invalid operator raises ValueError."""
+        with pytest.raises(ValueError, match="Operator must be"):
+            BooleanQuery("XOR", ["a", "b"])
+
+    def test_insufficient_operands(self):
+        """Test that fewer than 2 operands raises ValueError."""
+        with pytest.raises(ValueError, match="at least 2 operands"):
+            BooleanQuery("AND", ["single"])
+
+    def test_boolean_query_default_operator(self):
+        """Test that default operator is AND."""
+        query = self.encryptor.boolean_search_query(["fraud", "financial"])
+        assert query.operator == "AND"
+
+    def test_boolean_search_all_match(self):
+        """Test OR query where keyword appears in all documents."""
+        # Use manual keywords to control exactly what's indexed
+        enc = SearchableEncryption()
+        docs_tokens = []
+        for kw_set in [{"alpha", "beta"}, {"alpha", "gamma"}, {"alpha", "delta"}]:
+            _, tokens = enc.encrypt_document(
+                "doc", auto_extract_keywords=False, keywords=kw_set
+            )
+            docs_tokens.append(tokens)
+
+        query = enc.boolean_search_query(["alpha", "nonexistent"], "OR")
+        results = [
+            i for i, tokens in enumerate(docs_tokens) if enc.boolean_search(query, tokens)
+        ]
+        assert results == [0, 1, 2]
+
+    def test_boolean_search_none_match(self):
+        """Test query where no documents match."""
+        query = self.encryptor.boolean_search_query(["unicorn", "dragon"], "OR")
+        results = [
+            i
+            for i, tokens in enumerate(self.encrypted_docs)
+            if self.encryptor.boolean_search(query, tokens)
+        ]
+        assert results == []
