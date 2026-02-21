@@ -81,3 +81,11 @@ project/plugins/project/
 .scala_dependencies
 /lib*.pyc
 __pycache__/
+
+# Benchmark results (machine-specific)
+benchmarks/results/
+
+# Gas Town (added by gt)
+.runtime/
+.claude/commands/
+.logs/
