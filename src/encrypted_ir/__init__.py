@@ -15,6 +15,7 @@ from .blind_index import BlindIndexGenerator, BlindIndexConfig, BlindIndexSearch
 from .storage_backend import StorageBackend, FileStorageBackend
 from .kms_provider import KMSProvider, AWSKMSProvider, EnvelopeEncryption
 from .fpe import FF1, FormatPreservingEncryption
+from .post_quantum import MLKEM, MLDSA, HybridKEM, PostQuantumEncryption
 
 __version__ = "1.0.0"
 __all__ = [
@@ -35,4 +36,8 @@ __all__ = [
     "EnvelopeEncryption",
     "FF1",
     "FormatPreservingEncryption",
+    "MLKEM",
+    "MLDSA",
+    "HybridKEM",
+    "PostQuantumEncryption",
 ]
