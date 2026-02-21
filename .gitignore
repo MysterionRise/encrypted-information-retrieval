@@ -89,3 +89,7 @@ benchmarks/results/
 .runtime/
 .claude/commands/
 .logs/
+.beads/
+
+# Python packaging
+*.egg-info/
