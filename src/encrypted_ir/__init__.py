@@ -7,6 +7,15 @@ techniques suitable for financial services applications.
 
 from .blind_index import BlindIndexConfig, BlindIndexGenerator, BlindIndexSearch
 from .deterministic import DeterministicEncryption
+from .differential_privacy import (
+    DPQueryInterface,
+    ExponentialMechanism,
+    GaussianMechanism,
+    LaplaceMechanism,
+    PrivacyBudgetExhaustedError,
+    PrivacyBudgetTracker,
+    PrivacyBudgetWarning,
+)
 from .fpe import FF1, FormatPreservingEncryption
 from .homomorphic import BasicHomomorphicEncryption
 from .key_manager import KeyManager
@@ -40,4 +49,11 @@ __all__ = [
     "MLDSA",
     "HybridKEM",
     "PostQuantumEncryption",
+    "LaplaceMechanism",
+    "GaussianMechanism",
+    "ExponentialMechanism",
+    "PrivacyBudgetTracker",
+    "PrivacyBudgetExhaustedError",
+    "PrivacyBudgetWarning",
+    "DPQueryInterface",
 ]
