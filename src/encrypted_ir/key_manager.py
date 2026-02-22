@@ -30,6 +30,19 @@ if TYPE_CHECKING:
     from .storage_backend import StorageBackend
 
 
+class KeyLifecycleState:
+    """Key lifecycle states per NIST SP 800-57."""
+
+    ACTIVE = "active"
+    ROTATING = "rotating"
+    RETIRED = "retired"
+    ARCHIVED = "archived"
+    DESTROYED = "destroyed"
+
+    ALL = {ACTIVE, ROTATING, RETIRED, ARCHIVED, DESTROYED}
+    DECRYPTABLE = {ACTIVE, ROTATING, RETIRED, ARCHIVED}
+
+
 class KeyMetadata:
     """Metadata for encryption keys."""
 
@@ -51,6 +64,13 @@ class KeyMetadata:
         self.last_rotated = created_at
         self.access_count = 0
         self.active = True
+        self.version: int = 1
+        self.lifecycle_state: str = KeyLifecycleState.ACTIVE
+        self.successor_key_id: str | None = None
+        self.predecessor_key_id: str | None = None
+        self.retention_expires_at: datetime | None = None
+        self.compromise_detected_at: datetime | None = None
+        self.total_records_encrypted: int = 0
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -64,6 +84,17 @@ class KeyMetadata:
             "last_rotated": self.last_rotated.isoformat(),
             "access_count": self.access_count,
             "active": self.active,
+            "version": self.version,
+            "lifecycle_state": self.lifecycle_state,
+            "successor_key_id": self.successor_key_id,
+            "predecessor_key_id": self.predecessor_key_id,
+            "retention_expires_at": (
+                self.retention_expires_at.isoformat() if self.retention_expires_at else None
+            ),
+            "compromise_detected_at": (
+                self.compromise_detected_at.isoformat() if self.compromise_detected_at else None
+            ),
+            "total_records_encrypted": self.total_records_encrypted,
         }
 
     @staticmethod
@@ -82,11 +113,28 @@ class KeyMetadata:
         metadata.last_rotated = datetime.fromisoformat(data.get("last_rotated", data["created_at"]))
         metadata.access_count = data.get("access_count", 0)
         metadata.active = data.get("active", True)
+        metadata.version = data.get("version", 1)
+        metadata.lifecycle_state = data.get("lifecycle_state", KeyLifecycleState.ACTIVE)
+        metadata.successor_key_id = data.get("successor_key_id")
+        metadata.predecessor_key_id = data.get("predecessor_key_id")
+        metadata.retention_expires_at = (
+            datetime.fromisoformat(data["retention_expires_at"])
+            if data.get("retention_expires_at")
+            else None
+        )
+        metadata.compromise_detected_at = (
+            datetime.fromisoformat(data["compromise_detected_at"])
+            if data.get("compromise_detected_at")
+            else None
+        )
+        metadata.total_records_encrypted = data.get("total_records_encrypted", 0)
         return metadata
 
     def needs_rotation(self) -> bool:
         """Check if key needs rotation."""
         if not self.active:
+            return False
+        if self.lifecycle_state != KeyLifecycleState.ACTIVE:
             return False
         days_since_rotation = (datetime.now() - self.last_rotated).days
         return days_since_rotation >= self.rotation_period_days
@@ -334,6 +382,38 @@ class KeyManager:
 
         return self._keys[key_id]
 
+    def get_key_for_decryption(self, key_id: str) -> bytes:
+        """Retrieve a key for decryption, even if retired or rotating.
+
+        During key rotation, old keys must remain accessible for decrypting
+        existing data. This method allows access to keys in any decryptable
+        lifecycle state (active, rotating, retired, archived).
+
+        Args:
+            key_id: Key identifier.
+
+        Returns:
+            Key bytes.
+
+        Raises:
+            KeyError: If key not found.
+            ValueError: If key is destroyed.
+        """
+        if key_id not in self._keys:
+            self._log_access(key_id, "get_for_decryption", False, "Key not found")
+            raise KeyError(f"Key {key_id} not found")
+
+        metadata = self._metadata[key_id]
+
+        if metadata.lifecycle_state == KeyLifecycleState.DESTROYED:
+            self._log_access(key_id, "get_for_decryption", False, "Key is destroyed")
+            raise ValueError(f"Key {key_id} is destroyed and cannot be used")
+
+        metadata.access_count += 1
+        self._persist_key(key_id)
+        self._log_access(key_id, "get_for_decryption", True)
+        return self._keys[key_id]
+
     def rotate_key(self, key_id: str) -> str:
         """
         Rotate a key (create new version).
@@ -360,9 +440,17 @@ class KeyManager:
             description=f"Rotated from {key_id}",
         )
 
+        # Link versions
+        new_metadata = self._metadata[new_key_id]
+        new_metadata.version = old_metadata.version + 1
+        new_metadata.predecessor_key_id = key_id
+        old_metadata.successor_key_id = new_key_id
+
         # Mark old key as inactive
         old_metadata.active = False
+        old_metadata.lifecycle_state = KeyLifecycleState.RETIRED
         self._persist_key(key_id)
+        self._persist_key(new_key_id)
         self._log_access(key_id, "rotate", True, f"Rotated to {new_key_id}")
 
         return new_key_id
