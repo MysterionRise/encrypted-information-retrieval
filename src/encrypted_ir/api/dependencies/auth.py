@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum
+from typing import Optional
 
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 
-class Role(StrEnum):
+class Role(str, Enum):
     """User roles for RBAC."""
 
     ADMIN = "admin"
@@ -122,8 +123,8 @@ def _extract_tenant_from_jwt(payload: dict) -> TenantInfo:
 
 
 async def get_current_tenant(
-    bearer: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
-    api_key: str | None = Security(api_key_header),
+    bearer: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_header),
 ) -> TenantInfo:
     """Extract and validate the current tenant from auth credentials.
 

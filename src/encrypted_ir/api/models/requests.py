@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -61,10 +63,10 @@ class RangeSearchRequest(BaseModel):
     encrypted_values: list[str] = Field(
         ..., min_length=1, description="List of base64-encoded ORE ciphertexts"
     )
-    min_value: int | None = Field(
+    min_value: Optional[int] = Field(
         default=None, ge=0, description="Minimum value (inclusive)"
     )
-    max_value: int | None = Field(
+    max_value: Optional[int] = Field(
         default=None, ge=0, description="Maximum value (inclusive)"
     )
 
