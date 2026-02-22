@@ -81,9 +81,9 @@ We are committed to addressing security vulnerabilities promptly:
 | Severity    | Response Time | Fix Target  | Public Disclosure |
 |-------------|---------------|-------------|-------------------|
 | **Critical** | 24 hours     | 7 days      | After patch release |
-| **High**     | 48 hours     | 14 days     | After patch release |
+| **High**     | 7 days       | 14 days     | After patch release |
 | **Medium**   | 7 days       | 30 days     | After patch release |
-| **Low**      | 14 days      | 60 days     | After patch release |
+| **Low**      | 7 days       | 60 days     | After patch release |
 
 ### Severity Definitions
 
