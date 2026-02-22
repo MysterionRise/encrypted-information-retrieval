@@ -1,7 +1,6 @@
 # Migration Guide: OPE → ORE
 
-**Status:** In Progress (ORE implementation pending - see Issue #1)
-**Target Completion:** 2 weeks from MVP start
+**Status:** Active — ORE module implemented (`src/encrypted_ir/ore.py`)
 **Priority:** P0 (Critical for 2025 compliance)
 
 ## Executive Summary
