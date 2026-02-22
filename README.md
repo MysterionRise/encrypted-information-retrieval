@@ -365,12 +365,15 @@ This implementation supports compliance with:
 
 ## Roadmap
 
-- [ ] Post-quantum cryptography support (NIST algorithms)
+- [x] Post-quantum cryptography support (ML-KEM, ML-DSA)
 - [ ] Hardware acceleration (GPU/FPGA support)
-- [ ] Cloud KMS integration (AWS KMS, Azure Key Vault, GCP KMS)
-- [ ] Advanced searchable encryption (conjunctive queries)
+- [x] Cloud KMS integration (AWS KMS, Azure Key Vault, GCP KMS)
+- [x] Advanced searchable encryption (conjunctive queries)
 - [ ] Encrypted machine learning support
-- [ ] Format-preserving encryption
+- [x] Format-preserving encryption (FF1, NIST SP 800-38G)
+- [ ] REST API for encrypted search operations
+- [ ] Forward privacy SSE (forward-secure searchable encryption)
+- [ ] PIR mode (private information retrieval)
 
 ## Contributing
 
