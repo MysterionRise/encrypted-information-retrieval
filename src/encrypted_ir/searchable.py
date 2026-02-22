@@ -457,9 +457,7 @@ class ForwardPrivateSSE:
         """Initialize or retrieve state for a keyword."""
         kw = keyword.lower()
         if kw not in self._keyword_state:
-            initial = hmac.new(
-                self.state_key, kw.encode("utf-8"), hashlib.sha256
-            ).digest()
+            initial = hmac.new(self.state_key, kw.encode("utf-8"), hashlib.sha256).digest()
             self._keyword_state[kw] = {
                 "initial": initial,
                 "current": initial,
@@ -535,9 +533,7 @@ class ForwardPrivateSSE:
 
         if auto_extract_keywords:
             text = (
-                document
-                if isinstance(document, str)
-                else document.decode("utf-8", errors="ignore")
+                document if isinstance(document, str) else document.decode("utf-8", errors="ignore")
             )
             doc_keywords = self._sse._extract_keywords(text)
         else:
@@ -796,11 +792,7 @@ class BackwardPrivateIndex:
             List of matching document IDs
         """
         query_token = self.sse.generate_search_query(keyword)
-        return [
-            doc_id
-            for doc_id, tokens in self._index.items()
-            if query_token in tokens
-        ]
+        return [doc_id for doc_id, tokens in self._index.items() if query_token in tokens]
 
     def _generate_delete_token(self, doc_id: str, keyword: str) -> str:
         """
@@ -849,9 +841,7 @@ class BackwardPrivateIndex:
         keywords = self._doc_keywords[doc_id]
 
         # Generate delete tokens (unlinkable to search tokens)
-        delete_tokens = {
-            kw: self._generate_delete_token(doc_id, kw) for kw in keywords
-        }
+        delete_tokens = {kw: self._generate_delete_token(doc_id, kw) for kw in keywords}
 
         # Secure index pruning: completely remove all traces
         del self._index[doc_id]
@@ -888,9 +878,7 @@ class BackwardPrivateIndex:
         # Rebuild index with new tokens
         new_index: dict[str, set[str]] = {}
         for doc_id, keywords in self._doc_keywords.items():
-            new_index[doc_id] = {
-                new_sse._generate_search_token(kw) for kw in keywords
-            }
+            new_index[doc_id] = {new_sse._generate_search_token(kw) for kw in keywords}
 
         self.sse = new_sse
         self._index = new_index
@@ -908,9 +896,7 @@ class BackwardPrivateIndex:
         Returns:
             Number of stale entries removed
         """
-        stale_ids = [
-            doc_id for doc_id in self._index if doc_id not in self._doc_keywords
-        ]
+        stale_ids = [doc_id for doc_id in self._index if doc_id not in self._doc_keywords]
         for doc_id in stale_ids:
             del self._index[doc_id]
         return len(stale_ids)

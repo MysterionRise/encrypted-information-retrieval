@@ -20,6 +20,7 @@ from encrypted_ir.differential_privacy import (
 # Laplace Mechanism
 # ---------------------------------------------------------------------------
 
+
 class TestLaplaceMechanism:
     """Tests for the Laplace noise mechanism."""
 
@@ -92,6 +93,7 @@ class TestLaplaceMechanism:
 # Gaussian Mechanism
 # ---------------------------------------------------------------------------
 
+
 class TestGaussianMechanism:
     """Tests for the Gaussian noise mechanism."""
 
@@ -112,9 +114,7 @@ class TestGaussianMechanism:
         """Empirical variance should approximate σ²."""
         sensitivity, epsilon, delta = 1.0, 1.0, 1e-5
         n = 10_000
-        results = [
-            GaussianMechanism.add_noise(0.0, sensitivity, epsilon, delta) for _ in range(n)
-        ]
+        results = [GaussianMechanism.add_noise(0.0, sensitivity, epsilon, delta) for _ in range(n)]
         empirical_var = sum(r**2 for r in results) / n
         theoretical_var = GaussianMechanism.variance(sensitivity, epsilon, delta)
         assert abs(empirical_var - theoretical_var) < theoretical_var * 0.3
@@ -163,6 +163,7 @@ class TestGaussianMechanism:
 # ---------------------------------------------------------------------------
 # Exponential Mechanism
 # ---------------------------------------------------------------------------
+
 
 class TestExponentialMechanism:
     """Tests for the exponential mechanism."""
@@ -245,6 +246,7 @@ class TestExponentialMechanism:
 # ---------------------------------------------------------------------------
 # Privacy Budget Tracker
 # ---------------------------------------------------------------------------
+
 
 class TestPrivacyBudgetTracker:
     """Tests for per-tenant epsilon budget tracking."""
@@ -383,6 +385,7 @@ class TestPrivacyBudgetTracker:
 # DP Query Interface
 # ---------------------------------------------------------------------------
 
+
 class TestDPQueryInterface:
     """Tests for the dp_count, dp_sum, dp_average query interface."""
 
@@ -440,18 +443,14 @@ class TestDPQueryInterface:
     def test_dp_average_returns_noised_value(self):
         """dp_average should add noise."""
         dp = DPQueryInterface(budget_tracker=PrivacyBudgetTracker(total_epsilon=100.0))
-        results = [
-            dp.dp_average(50.0, count=100, epsilon=1.0, tenant_id="t1") for _ in range(20)
-        ]
+        results = [dp.dp_average(50.0, count=100, epsilon=1.0, tenant_id="t1") for _ in range(20)]
         assert not all(r == 50.0 for r in results)
 
     def test_dp_average_mean_converges(self):
         """Mean of dp_average should converge to true average."""
         dp = DPQueryInterface(budget_tracker=PrivacyBudgetTracker(total_epsilon=50000.0))
         n = 5000
-        total = sum(
-            dp.dp_average(75.0, count=1000, epsilon=1.0, tenant_id="t1") for _ in range(n)
-        )
+        total = sum(dp.dp_average(75.0, count=1000, epsilon=1.0, tenant_id="t1") for _ in range(n))
         mean = total / n
         assert abs(mean - 75.0) < 1.0
 
@@ -533,6 +532,7 @@ class TestDPQueryInterface:
 # ---------------------------------------------------------------------------
 # Privacy Guarantee Verification
 # ---------------------------------------------------------------------------
+
 
 class TestPrivacyGuarantees:
     """Statistical tests to verify differential privacy properties."""

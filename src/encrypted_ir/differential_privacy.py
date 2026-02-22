@@ -129,9 +129,7 @@ class GaussianMechanism:
         return sensitivity * math.sqrt(2 * math.log(1.25 / delta)) / epsilon
 
     @staticmethod
-    def add_noise(
-        value: float, sensitivity: float, epsilon: float, delta: float = 1e-5
-    ) -> float:
+    def add_noise(value: float, sensitivity: float, epsilon: float, delta: float = 1e-5) -> float:
         """
         Add Gaussian noise to a value.
 

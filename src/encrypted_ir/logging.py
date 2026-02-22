@@ -32,21 +32,23 @@ _PII_PATTERNS = [
 ]
 
 # Keys whose values should always be redacted in log output
-_SENSITIVE_KEYS = frozenset({
-    "key",
-    "keys",
-    "secret",
-    "password",
-    "token",
-    "plaintext",
-    "master_key",
-    "encryption_key",
-    "search_key",
-    "private_key",
-    "secret_key",
-    "credentials",
-    "api_key",
-})
+_SENSITIVE_KEYS = frozenset(
+    {
+        "key",
+        "keys",
+        "secret",
+        "password",
+        "token",
+        "plaintext",
+        "master_key",
+        "encryption_key",
+        "search_key",
+        "private_key",
+        "secret_key",
+        "credentials",
+        "api_key",
+    }
+)
 
 
 def get_correlation_id() -> str:
@@ -143,7 +145,9 @@ class StructuredFormatter(logging.Formatter):
 
         return json.dumps(log_entry, default=str)
 
-    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:  # noqa: N802
+    def formatTime(
+        self, record: logging.LogRecord, datefmt: str | None = None
+    ) -> str:  # noqa: N802
         """ISO-8601 timestamp with millisecond precision."""
         ct = self.converter(record.created)
         if datefmt:

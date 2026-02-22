@@ -95,6 +95,4 @@ class ErrorResponse(BaseModel):
     error: str = Field(..., description="Error type")
     message: str = Field(..., description="Human-readable error message")
     request_id: str = Field(..., description="Request trace ID")
-    details: list[ErrorDetail] = Field(
-        default_factory=list, description="Detailed field errors"
-    )
+    details: list[ErrorDetail] = Field(default_factory=list, description="Detailed field errors")

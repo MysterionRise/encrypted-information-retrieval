@@ -176,7 +176,11 @@ class TestLoggingConfig:
         logging.getLogger("encrypted_ir").handlers.clear()
 
     def test_custom_handler(self):
-        handler = logging.handlers.MemoryHandler(capacity=100) if hasattr(logging, "handlers") else logging.StreamHandler()
+        handler = (
+            logging.handlers.MemoryHandler(capacity=100)
+            if hasattr(logging, "handlers")
+            else logging.StreamHandler()
+        )
         config = LoggingConfig(handler=handler)
         config.setup()
         logger = logging.getLogger("encrypted_ir")

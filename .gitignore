@@ -97,3 +97,4 @@ benchmarks/results/
 # Virtual environments
 .venv/
 venv/
+tests/__init__.pyc

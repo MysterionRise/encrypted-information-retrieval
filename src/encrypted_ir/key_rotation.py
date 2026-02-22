@@ -161,7 +161,7 @@ class VersionedBlob:
     lookup of which key to use for decryption without storing the full key ID.
     """
 
-    MAGIC = b"\xEB\x01"  # Magic bytes + version 1
+    MAGIC = b"\xeb\x01"  # Magic bytes + version 1
     HEADER_SIZE = 6  # 2 (magic) + 4 (key_hash)
 
     @staticmethod
@@ -705,9 +705,7 @@ class KeyRotationManager:
         h = VersionedBlob._hash_key_id(key_id)
         self._key_hash_index.pop(h, None)
 
-        self._key_manager._log_access(
-            key_id, "destroy", True, f"Key destroyed (force={force})"
-        )
+        self._key_manager._log_access(key_id, "destroy", True, f"Key destroyed (force={force})")
         return True
 
     def get_lifecycle_report(self) -> dict:

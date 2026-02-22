@@ -4,3 +4,11 @@ pycryptodome>=3.19.0
 numpy>=1.24.0  # Required by tenseal
 tenseal>=0.3.14
 pqcrypto>=0.4.0
+
+# Observability
+prometheus-client>=0.17.0
+
+# API
+fastapi>=0.100.0
+uvicorn>=0.23.0
+pydantic>=2.0.0

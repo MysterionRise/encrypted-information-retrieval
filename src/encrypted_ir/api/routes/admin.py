@@ -71,9 +71,7 @@ async def health_check() -> HealthResponse:
 )
 async def get_metrics() -> MetricsResponse:
     request_count = _metrics["request_count"]
-    avg_latency = (
-        _metrics["total_latency_ms"] / request_count if request_count > 0 else 0.0
-    )
+    avg_latency = _metrics["total_latency_ms"] / request_count if request_count > 0 else 0.0
 
     return MetricsResponse(
         request_count=request_count,

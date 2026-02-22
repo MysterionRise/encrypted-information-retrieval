@@ -419,9 +419,7 @@ class TestForwardPrivateSSE:
     def test_case_insensitive_search(self):
         """Test that search is case-insensitive."""
         sse = ForwardPrivateSSE(forward_privacy_mode="balanced")
-        sse.add_document(
-            "doc1", "x", keywords={"Financial"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc1", "x", keywords={"Financial"}, auto_extract_keywords=False)
 
         assert sse.search("financial") == {"doc1"}
         assert sse.search("FINANCIAL") == {"doc1"}
@@ -430,9 +428,7 @@ class TestForwardPrivateSSE:
     def test_index_stats(self):
         """Test get_index_stats returns correct statistics."""
         sse = ForwardPrivateSSE(forward_privacy_mode="balanced")
-        sse.add_document(
-            "doc1", "x", keywords={"alpha", "beta"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc1", "x", keywords={"alpha", "beta"}, auto_extract_keywords=False)
 
         stats = sse.get_index_stats()
         assert stats["forward_privacy_mode"] == "balanced"
@@ -444,9 +440,7 @@ class TestForwardPrivateSSE:
     def test_search_moves_entries_to_secure_index(self):
         """Test that search moves auxiliary entries to secure index."""
         sse = ForwardPrivateSSE(forward_privacy_mode="balanced")
-        sse.add_document(
-            "doc1", "x", keywords={"alpha"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc1", "x", keywords={"alpha"}, auto_extract_keywords=False)
 
         stats_before = sse.get_index_stats()
         assert stats_before["auxiliary_entries"] == 1
@@ -461,9 +455,7 @@ class TestForwardPrivateSSE:
     def test_search_after_search_returns_from_secure_index(self):
         """Test that repeated search uses the secure index."""
         sse = ForwardPrivateSSE(forward_privacy_mode="balanced")
-        sse.add_document(
-            "doc1", "x", keywords={"alpha"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc1", "x", keywords={"alpha"}, auto_extract_keywords=False)
 
         assert sse.search("alpha") == {"doc1"}
         # Second search should still find doc1 (now from secure index)
@@ -472,15 +464,11 @@ class TestForwardPrivateSSE:
     def test_add_after_search_still_findable(self):
         """Test that documents added after a search are found in later searches."""
         sse = ForwardPrivateSSE(forward_privacy_mode="balanced")
-        sse.add_document(
-            "doc1", "x", keywords={"alpha"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc1", "x", keywords={"alpha"}, auto_extract_keywords=False)
         assert sse.search("alpha") == {"doc1"}
 
         # Add another doc with same keyword after search (re-keyed state)
-        sse.add_document(
-            "doc2", "y", keywords={"alpha"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc2", "y", keywords={"alpha"}, auto_extract_keywords=False)
         assert sse.search("alpha") == {"doc1", "doc2"}
 
 
@@ -490,12 +478,8 @@ class TestForwardPrivateSSEReEncryption:
     def test_re_encrypt_moves_all_entries(self):
         """Test that re_encrypt moves all auxiliary entries to secure index."""
         sse = ForwardPrivateSSE(forward_privacy_mode="balanced")
-        sse.add_document(
-            "doc1", "x", keywords={"alpha", "beta"}, auto_extract_keywords=False
-        )
-        sse.add_document(
-            "doc2", "y", keywords={"beta", "gamma"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc1", "x", keywords={"alpha", "beta"}, auto_extract_keywords=False)
+        sse.add_document("doc2", "y", keywords={"beta", "gamma"}, auto_extract_keywords=False)
 
         count = sse.re_encrypt()
         assert count == 4  # alpha:doc1, beta:doc1, beta:doc2, gamma:doc2
@@ -507,12 +491,8 @@ class TestForwardPrivateSSEReEncryption:
     def test_re_encrypt_preserves_searchability(self):
         """Test that search works correctly after re-encryption."""
         sse = ForwardPrivateSSE(forward_privacy_mode="balanced")
-        sse.add_document(
-            "doc1", "x", keywords={"alpha", "beta"}, auto_extract_keywords=False
-        )
-        sse.add_document(
-            "doc2", "y", keywords={"beta", "gamma"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc1", "x", keywords={"alpha", "beta"}, auto_extract_keywords=False)
+        sse.add_document("doc2", "y", keywords={"beta", "gamma"}, auto_extract_keywords=False)
 
         sse.re_encrypt()
 
@@ -523,25 +503,17 @@ class TestForwardPrivateSSEReEncryption:
     def test_add_after_re_encrypt(self):
         """Test that documents added after re-encryption are found."""
         sse = ForwardPrivateSSE(forward_privacy_mode="balanced")
-        sse.add_document(
-            "doc1", "x", keywords={"alpha"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc1", "x", keywords={"alpha"}, auto_extract_keywords=False)
         sse.re_encrypt()
 
-        sse.add_document(
-            "doc2", "y", keywords={"alpha"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc2", "y", keywords={"alpha"}, auto_extract_keywords=False)
         assert sse.search("alpha") == {"doc1", "doc2"}
 
     def test_strong_mode_auto_re_encrypt(self):
         """Test that strong mode triggers automatic re-encryption."""
-        sse = ForwardPrivateSSE(
-            forward_privacy_mode="strong", re_encrypt_threshold=3
-        )
+        sse = ForwardPrivateSSE(forward_privacy_mode="strong", re_encrypt_threshold=3)
         # Add enough keywords to trigger threshold
-        sse.add_document(
-            "doc1", "x", keywords={"a", "b", "c"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc1", "x", keywords={"a", "b", "c"}, auto_extract_keywords=False)
 
         # Auto re-encryption should have fired
         stats = sse.get_index_stats()
@@ -551,9 +523,7 @@ class TestForwardPrivateSSEReEncryption:
     def test_re_encrypt_resets_counter(self):
         """Test that re_encrypt resets the update counter."""
         sse = ForwardPrivateSSE(forward_privacy_mode="balanced")
-        sse.add_document(
-            "doc1", "x", keywords={"alpha"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc1", "x", keywords={"alpha"}, auto_extract_keywords=False)
         assert sse._update_count == 1
 
         sse.re_encrypt()
@@ -587,9 +557,7 @@ class TestForwardPrivacy:
         sse = ForwardPrivateSSE(forward_privacy_mode="balanced")
 
         # Step 1: Add doc1
-        sse.add_document(
-            "doc1", "x", keywords={"fraud"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc1", "x", keywords={"fraud"}, auto_extract_keywords=False)
         tags_before_search = set(sse._auxiliary_index.keys())
         assert len(tags_before_search) == 1
 
@@ -599,9 +567,7 @@ class TestForwardPrivacy:
         assert len(sse._auxiliary_index) == 0
 
         # Step 3: Add doc2 with same keyword after re-keying
-        sse.add_document(
-            "doc2", "y", keywords={"fraud"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc2", "y", keywords={"fraud"}, auto_extract_keywords=False)
         tags_after_rekey = set(sse._auxiliary_index.keys())
         assert len(tags_after_rekey) == 1
 
@@ -622,30 +588,22 @@ class TestForwardPrivacy:
         sse = ForwardPrivateSSE(forward_privacy_mode="balanced")
 
         # Build up some history
-        sse.add_document(
-            "doc1", "x", keywords={"fraud"}, auto_extract_keywords=False
-        )
-        sse.add_document(
-            "doc2", "y", keywords={"fraud"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc1", "x", keywords={"fraud"}, auto_extract_keywords=False)
+        sse.add_document("doc2", "y", keywords={"fraud"}, auto_extract_keywords=False)
         tags_round1 = set(sse._auxiliary_index.keys())
 
         # Search reveals the chain and re-keys
         sse.search("fraud")
 
         # Add more documents
-        sse.add_document(
-            "doc3", "z", keywords={"fraud"}, auto_extract_keywords=False
-        )
-        sse.add_document(
-            "doc4", "w", keywords={"fraud"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc3", "z", keywords={"fraud"}, auto_extract_keywords=False)
+        sse.add_document("doc4", "w", keywords={"fraud"}, auto_extract_keywords=False)
         tags_round2 = set(sse._auxiliary_index.keys())
 
         # All tags from round 2 must be different from round 1
-        assert tags_round1.isdisjoint(tags_round2), (
-            "Update tags after re-keying should be unlinkable to pre-search tags"
-        )
+        assert tags_round1.isdisjoint(
+            tags_round2
+        ), "Update tags after re-keying should be unlinkable to pre-search tags"
 
         # And the new documents should still be findable
         assert sse.search("fraud") == {"doc1", "doc2", "doc3", "doc4"}
@@ -662,9 +620,7 @@ class TestForwardPrivacy:
         server_observed_tags = []
 
         # Epoch 1: Server observes update tags
-        sse.add_document(
-            "doc1", "x", keywords={"secret"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc1", "x", keywords={"secret"}, auto_extract_keywords=False)
         epoch1_tags = set(sse._auxiliary_index.keys())
         server_observed_tags.extend(epoch1_tags)
 
@@ -672,9 +628,7 @@ class TestForwardPrivacy:
         sse.search("secret")
 
         # Epoch 2: Server observes new update tags after re-key
-        sse.add_document(
-            "doc2", "y", keywords={"secret"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc2", "y", keywords={"secret"}, auto_extract_keywords=False)
         epoch2_tags = set(sse._auxiliary_index.keys())
         server_observed_tags.extend(epoch2_tags)
 
@@ -682,16 +636,14 @@ class TestForwardPrivacy:
         sse.search("secret")
 
         # Epoch 3: Another round
-        sse.add_document(
-            "doc3", "z", keywords={"secret"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc3", "z", keywords={"secret"}, auto_extract_keywords=False)
         epoch3_tags = set(sse._auxiliary_index.keys())
         server_observed_tags.extend(epoch3_tags)
 
         # All observed tags should be unique (no collisions across epochs)
-        assert len(server_observed_tags) == len(set(server_observed_tags)), (
-            "Tag collision detected across epochs - forward privacy compromised"
-        )
+        assert len(server_observed_tags) == len(
+            set(server_observed_tags)
+        ), "Tag collision detected across epochs - forward privacy compromised"
 
         # Tags from different epochs should be disjoint
         assert epoch1_tags.isdisjoint(epoch2_tags)
@@ -710,14 +662,10 @@ class TestForwardPrivacy:
         """
         sse = ForwardPrivateSSE(forward_privacy_mode="balanced")
 
-        sse.add_document(
-            "doc1", "x", keywords={"keyword"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc1", "x", keywords={"keyword"}, auto_extract_keywords=False)
         tag1 = set(sse._auxiliary_index.keys())
 
-        sse.add_document(
-            "doc2", "y", keywords={"keyword"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc2", "y", keywords={"keyword"}, auto_extract_keywords=False)
         all_tags = set(sse._auxiliary_index.keys())
 
         # Should have 2 distinct tags
@@ -733,12 +681,8 @@ class TestForwardPrivacy:
         """
         sse = ForwardPrivateSSE(forward_privacy_mode="balanced")
 
-        sse.add_document(
-            "doc1", "x", keywords={"alpha"}, auto_extract_keywords=False
-        )
-        sse.add_document(
-            "doc2", "y", keywords={"beta"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc1", "x", keywords={"alpha"}, auto_extract_keywords=False)
+        sse.add_document("doc2", "y", keywords={"beta"}, auto_extract_keywords=False)
 
         tags = list(sse._auxiliary_index.keys())
         assert len(tags) == 2
@@ -751,16 +695,12 @@ class TestForwardPrivacy:
         """
         sse = ForwardPrivateSSE(forward_privacy_mode="balanced")
 
-        sse.add_document(
-            "doc1", "x", keywords={"alpha"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc1", "x", keywords={"alpha"}, auto_extract_keywords=False)
         tags_before = set(sse._auxiliary_index.keys())
 
         sse.re_encrypt()
 
-        sse.add_document(
-            "doc2", "y", keywords={"alpha"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc2", "y", keywords={"alpha"}, auto_extract_keywords=False)
         tags_after = set(sse._auxiliary_index.keys())
 
         assert tags_before.isdisjoint(tags_after)
@@ -772,12 +712,8 @@ class TestForwardPrivacy:
         """
         sse = ForwardPrivateSSE(forward_privacy_mode="off")
 
-        sse.add_document(
-            "doc1", "x", keywords={"alpha"}, auto_extract_keywords=False
-        )
-        sse.add_document(
-            "doc2", "y", keywords={"alpha"}, auto_extract_keywords=False
-        )
+        sse.add_document("doc1", "x", keywords={"alpha"}, auto_extract_keywords=False)
+        sse.add_document("doc2", "y", keywords={"alpha"}, auto_extract_keywords=False)
 
         # In off mode, entries go to secure index with deterministic tokens
         assert len(sse._secure_index) == 1  # Same token for both docs
@@ -788,8 +724,10 @@ class TestForwardPrivacy:
         """Test that binary documents are handled correctly."""
         sse = ForwardPrivateSSE(forward_privacy_mode="balanced")
         sse.add_document(
-            "doc1", b"binary content",
-            keywords={"binary"}, auto_extract_keywords=False,
+            "doc1",
+            b"binary content",
+            keywords={"binary"},
+            auto_extract_keywords=False,
         )
 
         assert sse.search("binary") == {"doc1"}
@@ -805,20 +743,22 @@ class TestForwardPrivacy:
 
         for i in range(10):
             sse.add_document(
-                f"doc{i}", "x",
-                keywords={"keyword"}, auto_extract_keywords=False,
+                f"doc{i}",
+                "x",
+                keywords={"keyword"},
+                auto_extract_keywords=False,
             )
             current_tags = set(sse._auxiliary_index.keys())
             # New tags should never overlap with previously seen tags
-            assert all_tags_seen.isdisjoint(current_tags), (
-                f"Tag collision at epoch {i}"
-            )
+            assert all_tags_seen.isdisjoint(current_tags), f"Tag collision at epoch {i}"
             all_tags_seen.update(current_tags)
 
             sse.search("keyword")
 
         # All 10 documents should be found
         assert sse.search("keyword") == {f"doc{i}" for i in range(10)}
+
+
 class TestBackwardPrivateIndex:
     """Test backward privacy for SSE deletes.
 
@@ -931,14 +871,14 @@ class TestBackwardPrivateIndex:
         delete_tokens = set(result["delete_tokens"].values())
 
         # Delete tokens must share NO values with search tokens
-        assert delete_tokens.isdisjoint(all_search_tokens), (
-            "Delete tokens overlap with search tokens - backward privacy violated"
-        )
+        assert delete_tokens.isdisjoint(
+            all_search_tokens
+        ), "Delete tokens overlap with search tokens - backward privacy violated"
 
         # Delete tokens must share NO values with query tokens
-        assert delete_tokens.isdisjoint(query_tokens), (
-            "Delete tokens overlap with query tokens - backward privacy violated"
-        )
+        assert delete_tokens.isdisjoint(
+            query_tokens
+        ), "Delete tokens overlap with query tokens - backward privacy violated"
 
     def test_delete_tokens_differ_across_documents(self):
         """Test that delete tokens for the same keyword on different docs differ."""
@@ -1010,9 +950,9 @@ class TestBackwardPrivateIndex:
             all_tokens_after.update(tokens)
 
         # No token should survive re-encryption
-        assert all_tokens_before.isdisjoint(all_tokens_after), (
-            "Tokens survived re-encryption - fresh randomness not applied"
-        )
+        assert all_tokens_before.isdisjoint(
+            all_tokens_after
+        ), "Tokens survived re-encryption - fresh randomness not applied"
 
     def test_re_encryption_preserves_search_capability(self):
         """Test that search still works after re-encryption."""
@@ -1048,20 +988,14 @@ class TestBackwardPrivateIndex:
 
         # Should match before re-encryption
         server_view = self.bp_index.get_server_view()
-        matches_before = [
-            doc_id for doc_id, tokens in server_view.items()
-            if old_query in tokens
-        ]
+        matches_before = [doc_id for doc_id, tokens in server_view.items() if old_query in tokens]
         assert len(matches_before) > 0
 
         self.bp_index.re_encrypt()
 
         # Old query token should not match anything after re-encryption
         server_view = self.bp_index.get_server_view()
-        matches_after = [
-            doc_id for doc_id, tokens in server_view.items()
-            if old_query in tokens
-        ]
+        matches_after = [doc_id for doc_id, tokens in server_view.items() if old_query in tokens]
         assert matches_after == []
 
     def test_garbage_collection_removes_orphans(self):
@@ -1100,9 +1034,7 @@ class TestBackwardPrivateIndex:
 
         # The server tries to correlate: does any delete token match the query?
         for kw, dt in delete_tokens.items():
-            assert dt != fraud_query_token, (
-                f"Delete token for '{kw}' matches fraud query token"
-            )
+            assert dt != fraud_query_token, f"Delete token for '{kw}' matches fraud query token"
 
         # The server also tries to check if any delete token appears in
         # the remaining index (which would reveal keyword associations)
@@ -1147,9 +1079,9 @@ class TestBackwardPrivateIndex:
 
         # 4. Delete tokens cannot reconstruct the index entry
         delete_tokens = set(result["delete_tokens"].values())
-        assert delete_tokens.isdisjoint(doc2_tokens), (
-            "Delete tokens match original search tokens - backward privacy broken"
-        )
+        assert delete_tokens.isdisjoint(
+            doc2_tokens
+        ), "Delete tokens match original search tokens - backward privacy broken"
 
     def test_multiple_deletions_then_re_encryption(self):
         """Test full workflow: add, search, delete multiple, re-encrypt."""
@@ -1203,9 +1135,9 @@ class TestBackwardPrivateIndex:
         new_view = self.bp_index.get_server_view()
         for keyword, old_token in observed_queries.items():
             for _doc_id, new_tokens in new_view.items():
-                assert old_token not in new_tokens, (
-                    f"Old query token for '{keyword}' still valid after re-encryption"
-                )
+                assert (
+                    old_token not in new_tokens
+                ), f"Old query token for '{keyword}' still valid after re-encryption"
 
         # Old index state is completely different from new state
         for doc_id in old_view:

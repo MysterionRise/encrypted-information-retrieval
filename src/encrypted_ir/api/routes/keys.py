@@ -69,8 +69,7 @@ async def list_keys(
     "/rotate",
     response_model=KeyRotateResponse,
     summary="Rotate an encryption key",
-    description="Create a new version of a key and deactivate the old one. "
-    "Requires admin role.",
+    description="Create a new version of a key and deactivate the old one. " "Requires admin role.",
 )
 async def rotate_key(
     body: KeyRotateRequest,

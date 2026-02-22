@@ -28,9 +28,7 @@ class EncryptRequest(BaseModel):
 class DecryptRequest(BaseModel):
     """Request to decrypt ciphertext."""
 
-    ciphertext: str = Field(
-        ..., min_length=1, description="Base64-encoded ciphertext to decrypt"
-    )
+    ciphertext: str = Field(..., min_length=1, description="Base64-encoded ciphertext to decrypt")
     algorithm: str = Field(
         default="aes-siv",
         description="Encryption algorithm used (aes-siv, aes-gcm)",
@@ -50,9 +48,7 @@ class EqualitySearchRequest(BaseModel):
 
     value: str = Field(..., min_length=1, description="Value to search for")
     field_name: str = Field(..., min_length=1, max_length=255, description="Field to search in")
-    index_map: dict[str, str] = Field(
-        ..., description="Mapping of blind index -> record ID"
-    )
+    index_map: dict[str, str] = Field(..., description="Mapping of blind index -> record ID")
     output_length: int = Field(default=16, ge=8, le=64, description="Blind index output length")
     case_sensitive: bool = Field(default=False, description="Case-sensitive matching")
 
@@ -63,12 +59,8 @@ class RangeSearchRequest(BaseModel):
     encrypted_values: list[str] = Field(
         ..., min_length=1, description="List of base64-encoded ORE ciphertexts"
     )
-    min_value: Optional[int] = Field(
-        default=None, ge=0, description="Minimum value (inclusive)"
-    )
-    max_value: Optional[int] = Field(
-        default=None, ge=0, description="Maximum value (inclusive)"
-    )
+    min_value: Optional[int] = Field(default=None, ge=0, description="Minimum value (inclusive)")
+    max_value: Optional[int] = Field(default=None, ge=0, description="Maximum value (inclusive)")
 
     @field_validator("encrypted_values")
     @classmethod

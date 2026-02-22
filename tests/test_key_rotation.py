@@ -164,14 +164,14 @@ class TestVersionedBlob:
         assert VersionedBlob.is_versioned(blob) is True
 
     def test_is_versioned_false_short(self):
-        assert VersionedBlob.is_versioned(b"\xEB") is False
+        assert VersionedBlob.is_versioned(b"\xeb") is False
 
     def test_is_versioned_false_wrong_magic(self):
         assert VersionedBlob.is_versioned(b"\x00\x00\x00\x00\x00\x00data") is False
 
     def test_unwrap_invalid_short(self):
         with pytest.raises(ValueError, match="too short"):
-            VersionedBlob.unwrap(b"\xEB")
+            VersionedBlob.unwrap(b"\xeb")
 
     def test_unwrap_invalid_magic(self):
         with pytest.raises(ValueError, match="Invalid"):
@@ -434,9 +434,7 @@ class TestEmergencyRotation:
         re_encrypt = _make_re_encrypt_fn(succeed=True)
         records = ["rec_1", "rec_2"]
 
-        progress = rotation.emergency_rotate(
-            old_id, re_encrypt_fn=re_encrypt, record_ids=records
-        )
+        progress = rotation.emergency_rotate(old_id, re_encrypt_fn=re_encrypt, record_ids=records)
 
         assert progress.records_completed == 2
         assert progress.status == RotationStatus.COMPLETED
@@ -825,9 +823,7 @@ class TestReEncryptionExceptions:
             raise RuntimeError("Database connection lost")
 
         old_id = manager.create_key("deterministic")
-        progress = rotation.rotate_dek(
-            old_id, re_encrypt_fn=failing_fn, record_ids=["rec_1"]
-        )
+        progress = rotation.rotate_dek(old_id, re_encrypt_fn=failing_fn, record_ids=["rec_1"])
 
         assert progress.records_failed == 1
         assert "Database connection lost" in progress.error_details[0]
@@ -844,9 +840,7 @@ class TestReEncryptionExceptions:
             return True
 
         old_id = manager.create_key("deterministic")
-        progress = rotation.rotate_dek(
-            old_id, re_encrypt_fn=mixed_fn, record_ids=["a", "b", "c"]
-        )
+        progress = rotation.rotate_dek(old_id, re_encrypt_fn=mixed_fn, record_ids=["a", "b", "c"])
 
         assert progress.records_completed == 2
         assert progress.records_failed == 1
@@ -862,9 +856,7 @@ class TestKeyMetadataLifecycle:
 
     def test_default_lifecycle_state(self):
         """New metadata defaults to active lifecycle."""
-        meta = KeyMetadata(
-            key_id="test", key_type="det", created_at=datetime.now()
-        )
+        meta = KeyMetadata(key_id="test", key_type="det", created_at=datetime.now())
         assert meta.lifecycle_state == KeyLifecycleState.ACTIVE
         assert meta.version == 1
         assert meta.successor_key_id is None
@@ -875,9 +867,7 @@ class TestKeyMetadataLifecycle:
 
     def test_lifecycle_serialization(self):
         """Lifecycle fields survive to_dict/from_dict round-trip."""
-        meta = KeyMetadata(
-            key_id="test", key_type="det", created_at=datetime.now()
-        )
+        meta = KeyMetadata(key_id="test", key_type="det", created_at=datetime.now())
         meta.version = 3
         meta.lifecycle_state = KeyLifecycleState.ARCHIVED
         meta.successor_key_id = "next_key"
@@ -900,7 +890,9 @@ class TestKeyMetadataLifecycle:
     def test_needs_rotation_respects_lifecycle(self):
         """needs_rotation() returns False for non-active lifecycle states."""
         meta = KeyMetadata(
-            key_id="test", key_type="det", created_at=datetime.now(),
+            key_id="test",
+            key_type="det",
+            created_at=datetime.now(),
             rotation_period_days=1,
         )
         meta.last_rotated = datetime.now() - timedelta(days=10)

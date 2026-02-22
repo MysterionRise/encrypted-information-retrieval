@@ -25,7 +25,9 @@ class TestRequestMetrics:
         m = EncryptionMetrics()
         m.record_error("encrypt", "invalid_key")
 
-        assert m.errors_total.labels(operation="encrypt", error_type="invalid_key")._value.get() == 1.0
+        assert (
+            m.errors_total.labels(operation="encrypt", error_type="invalid_key")._value.get() == 1.0
+        )
         assert m.request_total.labels(operation="encrypt", status="error")._value.get() == 1.0
 
 
