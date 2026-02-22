@@ -9,7 +9,13 @@ from .blind_index import BlindIndexConfig, BlindIndexGenerator, BlindIndexSearch
 from .deterministic import DeterministicEncryption
 from .fpe import FF1, FormatPreservingEncryption
 from .homomorphic import BasicHomomorphicEncryption
-from .key_manager import KeyManager
+from .key_manager import KeyLifecycleState, KeyManager
+from .key_rotation import (
+    KeyRotationManager,
+    RotationPolicy,
+    RotationProgress,
+    VersionedBlob,
+)
 from .kms_provider import AWSKMSProvider, EnvelopeEncryption, KMSProvider
 from .order_preserving import OrderPreservingEncryption
 from .ore import ORE
@@ -30,6 +36,11 @@ __all__ = [
     "ORE",
     "BasicHomomorphicEncryption",
     "KeyManager",
+    "KeyLifecycleState",
+    "KeyRotationManager",
+    "RotationPolicy",
+    "RotationProgress",
+    "VersionedBlob",
     "BlindIndexGenerator",
     "BlindIndexConfig",
     "BlindIndexSearch",
