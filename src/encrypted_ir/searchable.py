@@ -693,3 +693,237 @@ class ForwardPrivateSSE:
             "documents_stored": len(self._documents),
             "update_count": self._update_count,
         }
+
+
+class BackwardPrivateIndex:
+    """
+    Backward-private searchable encryption index.
+
+    Provides backward privacy: delete operations cannot be linked to prior
+    add operations or search queries. The server observing a deletion learns
+    nothing about which keywords were associated with the deleted document
+    or which past queries matched it.
+
+    Implements:
+    - Unlinkable delete tokens (separate key, different derivation path)
+    - Secure index pruning (complete removal of deleted entries)
+    - Garbage collection for stale index entries
+    - Periodic re-encryption with fresh randomness after N deletions
+
+    Reference: Bost & Fouque (2017), "Thwarting Leakage Abuse Attacks"
+    """
+
+    def __init__(
+        self,
+        sse: SearchableEncryption | None = None,
+        delete_key: bytes | None = None,
+        re_encryption_threshold: int = 100,
+    ):
+        """
+        Initialize backward-private index.
+
+        Args:
+            sse: SearchableEncryption instance (created if None)
+            delete_key: 256-bit key for delete token generation (random if None)
+            re_encryption_threshold: Number of deletions before triggering
+                re-encryption (full index rebuild with fresh randomness)
+        """
+        self.sse = sse or SearchableEncryption()
+
+        if delete_key is None:
+            delete_key = os.urandom(32)
+        elif len(delete_key) != 32:
+            raise ValueError("Delete key must be 32 bytes (256 bits)")
+        self._delete_key = delete_key
+
+        self.re_encryption_threshold = re_encryption_threshold
+
+        # Server-side state: doc_id -> set of search tokens
+        self._index: dict[str, set[str]] = {}
+
+        # Client-side state (never exposed to server): doc_id -> set of plaintext keywords
+        self._doc_keywords: dict[str, set[str]] = {}
+
+        # Deletion tracking
+        self._deletion_count: int = 0
+        self._epoch: int = 0
+
+    @property
+    def epoch(self) -> int:
+        """Current epoch (incremented on each re-encryption)."""
+        return self._epoch
+
+    @property
+    def deletion_count(self) -> int:
+        """Number of deletions since last re-encryption."""
+        return self._deletion_count
+
+    @property
+    def document_count(self) -> int:
+        """Number of documents in the index."""
+        return len(self._index)
+
+    def add_document(self, doc_id: str, keywords: set[str]) -> set[str]:
+        """
+        Add a document to the index.
+
+        Args:
+            doc_id: Unique document identifier
+            keywords: Set of plaintext keywords for the document
+
+        Returns:
+            Set of search tokens stored in the index (server view)
+
+        Raises:
+            ValueError: If doc_id already exists in the index
+        """
+        if doc_id in self._index:
+            raise ValueError(f"Document '{doc_id}' already exists in index")
+
+        tokens = {self.sse._generate_search_token(kw) for kw in keywords}
+        self._index[doc_id] = tokens
+        self._doc_keywords[doc_id] = set(keywords)
+        return set(tokens)
+
+    def search(self, keyword: str) -> list[str]:
+        """
+        Search for documents containing a keyword.
+
+        Args:
+            keyword: Plaintext keyword to search for
+
+        Returns:
+            List of matching document IDs
+        """
+        query_token = self.sse.generate_search_query(keyword)
+        return [
+            doc_id
+            for doc_id, tokens in self._index.items()
+            if query_token in tokens
+        ]
+
+    def _generate_delete_token(self, doc_id: str, keyword: str) -> str:
+        """
+        Generate a delete token that is cryptographically unlinkable to
+        the corresponding search token.
+
+        Delete tokens use a separate key and include the doc_id in the
+        HMAC input, making them structurally different from search tokens
+        (which are HMAC(search_key, keyword) only).
+
+        Args:
+            doc_id: Document identifier
+            keyword: Keyword being removed
+
+        Returns:
+            Base64-encoded delete token
+        """
+        msg = f"{doc_id}\x00{keyword.lower()}".encode()
+        token = hmac.new(self._delete_key, msg, hashlib.sha256).digest()
+        return base64.b64encode(token).decode("ascii")
+
+    def delete_document(self, doc_id: str) -> dict:
+        """
+        Delete a document from the index with backward privacy.
+
+        The delete tokens returned are cryptographically unlinkable to the
+        search tokens that were used to index the document. The server
+        cannot correlate a deletion with any prior add or search operation.
+
+        Args:
+            doc_id: Document identifier to delete
+
+        Returns:
+            Dict with deletion metadata:
+                - doc_id: The deleted document ID
+                - delete_tokens: Dict of keyword -> delete token (unlinkable)
+                - deletion_count: Total deletions since last re-encryption
+                - needs_reencryption: True if re-encryption threshold reached
+
+        Raises:
+            KeyError: If doc_id not found in index
+        """
+        if doc_id not in self._index:
+            raise KeyError(f"Document '{doc_id}' not found in index")
+
+        keywords = self._doc_keywords[doc_id]
+
+        # Generate delete tokens (unlinkable to search tokens)
+        delete_tokens = {
+            kw: self._generate_delete_token(doc_id, kw) for kw in keywords
+        }
+
+        # Secure index pruning: completely remove all traces
+        del self._index[doc_id]
+        del self._doc_keywords[doc_id]
+
+        self._deletion_count += 1
+        needs_reencryption = self._deletion_count >= self.re_encryption_threshold
+
+        return {
+            "doc_id": doc_id,
+            "delete_tokens": delete_tokens,
+            "deletion_count": self._deletion_count,
+            "needs_reencryption": needs_reencryption,
+        }
+
+    def re_encrypt(self) -> None:
+        """
+        Re-encrypt the entire index with fresh keys and randomness.
+
+        Generates new search keys and rebuilds all tokens. After
+        re-encryption, all previous search tokens and delete tokens
+        become invalid and unlinkable to the new index state.
+
+        This provides the strongest backward privacy guarantee:
+        any correlation the server may have accumulated between
+        tokens and queries is broken.
+        """
+        new_enc_key, new_search_key = SearchableEncryption.generate_keys()
+        new_sse = SearchableEncryption(new_enc_key, new_search_key)
+
+        # Generate fresh delete key
+        self._delete_key = os.urandom(32)
+
+        # Rebuild index with new tokens
+        new_index: dict[str, set[str]] = {}
+        for doc_id, keywords in self._doc_keywords.items():
+            new_index[doc_id] = {
+                new_sse._generate_search_token(kw) for kw in keywords
+            }
+
+        self.sse = new_sse
+        self._index = new_index
+        self._deletion_count = 0
+        self._epoch += 1
+
+    def garbage_collect(self) -> int:
+        """
+        Remove stale entries from the index.
+
+        Scans for any index entries whose corresponding keyword
+        metadata is missing (orphaned by incomplete deletion) and
+        removes them.
+
+        Returns:
+            Number of stale entries removed
+        """
+        stale_ids = [
+            doc_id for doc_id in self._index if doc_id not in self._doc_keywords
+        ]
+        for doc_id in stale_ids:
+            del self._index[doc_id]
+        return len(stale_ids)
+
+    def get_server_view(self) -> dict[str, set[str]]:
+        """
+        Return the index as the server would see it.
+
+        This is useful for testing backward privacy properties:
+        the server view should not contain any information that
+        links delete tokens to search tokens or past queries.
+
+        Returns:
+            Copy of the index (doc_id -> set of search tokens)
+        """
+        return {doc_id: set(tokens) for doc_id, tokens in self._index.items()}

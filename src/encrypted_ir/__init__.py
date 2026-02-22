@@ -14,7 +14,10 @@ from .kms_provider import AWSKMSProvider, EnvelopeEncryption, KMSProvider
 from .order_preserving import OrderPreservingEncryption
 from .ore import ORE
 from .post_quantum import MLDSA, MLKEM, HybridKEM, PostQuantumEncryption
-from .searchable import BooleanQuery, ForwardPrivateSSE, SearchableEncryption
+from .searchable import BackwardPrivateIndex, BooleanQuery, ForwardPrivateSSE, SearchableEncryption
+from .audit import AuditEventType, AuditLogger
+from .logging import LoggingConfig, StructuredFormatter, get_correlation_id, new_correlation_id
+from .metrics import EncryptionMetrics
 from .storage_backend import FileStorageBackend, StorageBackend
 
 __version__ = "1.0.0"
@@ -22,6 +25,7 @@ __all__ = [
     "DeterministicEncryption",
     "SearchableEncryption",
     "BooleanQuery",
+    "BackwardPrivateIndex",
     "OrderPreservingEncryption",
     "ORE",
     "BasicHomomorphicEncryption",
@@ -41,4 +45,12 @@ __all__ = [
     "MLDSA",
     "HybridKEM",
     "PostQuantumEncryption",
+    # Observability
+    "LoggingConfig",
+    "StructuredFormatter",
+    "get_correlation_id",
+    "new_correlation_id",
+    "EncryptionMetrics",
+    "AuditLogger",
+    "AuditEventType",
 ]
