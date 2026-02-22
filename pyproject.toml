@@ -30,6 +30,9 @@ dependencies = [
     "numpy>=1.24.0",  # Required by tenseal
     "tenseal>=0.3.14",
     "pqcrypto>=0.4.0",
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "pydantic>=2.5.0",
 ]
 
 [project.optional-dependencies]
@@ -46,6 +49,7 @@ dev = [
     "bandit>=1.7.5",
     "safety>=2.3.5",
     "pre-commit>=3.3.3",
+    "httpx>=0.25.0",
 ]
 
 [project.urls]
@@ -125,6 +129,9 @@ ignore = [
     "S106",   # hardcoded passwords in test arguments
     "B017",   # broad exception in pytest.raises
     "SIM117", # nested with statements
+]
+"src/encrypted_ir/api/*" = [
+    "B008",   # function calls in default arguments (FastAPI Depends pattern)
 ]
 
 [tool.mypy]
