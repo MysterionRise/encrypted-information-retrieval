@@ -64,15 +64,14 @@ repos:
         args: ['-ll', '-r', 'src']
         exclude: '^tests/'
 
-  # Type checking (optional - can be slow)
-  # Uncomment to enable mypy pre-commit
-  # - repo: https://github.com/pre-commit/mirrors-mypy
-  #   rev: v1.7.1
-  #   hooks:
-  #     - id: mypy
-  #       name: Type check with mypy
-  #       additional_dependencies: [types-setuptools]
-  #       args: ['--ignore-missing-imports', '--no-strict-optional']
+  # Type checking
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.7.1
+    hooks:
+      - id: mypy
+        name: Type check with mypy
+        additional_dependencies: [types-setuptools]
+        args: ['--ignore-missing-imports', '--no-strict-optional']
 
 # Configuration
 default_language_version:
