@@ -14,7 +14,7 @@ from .kms_provider import AWSKMSProvider, EnvelopeEncryption, KMSProvider
 from .order_preserving import OrderPreservingEncryption
 from .ore import ORE
 from .post_quantum import MLDSA, MLKEM, HybridKEM, PostQuantumEncryption
-from .searchable import BooleanQuery, SearchableEncryption
+from .searchable import BackwardPrivateIndex, BooleanQuery, SearchableEncryption
 from .storage_backend import FileStorageBackend, StorageBackend
 
 __version__ = "1.0.0"
@@ -22,6 +22,7 @@ __all__ = [
     "DeterministicEncryption",
     "SearchableEncryption",
     "BooleanQuery",
+    "BackwardPrivateIndex",
     "OrderPreservingEncryption",
     "ORE",
     "BasicHomomorphicEncryption",

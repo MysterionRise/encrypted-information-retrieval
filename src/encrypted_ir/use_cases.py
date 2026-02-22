@@ -192,6 +192,21 @@ class DocumentSearch:
 
         return matching_docs
 
+    def delete_document(self, doc_id: str) -> bool:
+        """
+        Delete a document from the search index.
+
+        Args:
+            doc_id: Document identifier to remove
+
+        Returns:
+            True if document was found and removed, False otherwise
+        """
+        if doc_id in self.document_index:
+            del self.document_index[doc_id]
+            return True
+        return False
+
     def decrypt_document(self, encrypted_document: str) -> str:
         """
         Decrypt a document.
