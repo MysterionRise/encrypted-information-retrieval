@@ -1,5 +1,12 @@
 # Gap Analysis: Current State vs. 2025 Best Practices
 
+> **Portfolio status note (July 7, 2026):** This is historical analysis. Current
+> implementation evidence lives in `README.md`, `docs/PORTFOLIO_EVIDENCE.md`,
+> `docs/LEAKAGE_AND_ENDPOINTS.md`, and `docs/CTO_DEMO_SCRIPT.md`. Claims about
+> audit readiness, CloudTrail, FIPS-backed KMS, certification, or production
+> launch should be read as roadmap targets unless explicitly backed by current
+> evidence.
+
 **Project**: Encrypted Information Retrieval for Financial Services
 **Analysis Date**: January 11, 2025
 **Analyst**: Security Architecture Team

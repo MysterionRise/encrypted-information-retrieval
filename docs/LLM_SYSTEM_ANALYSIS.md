@@ -1,5 +1,13 @@
 # LLM-Friendly System Analysis: Encrypted Information Retrieval v1.0.0
 
+> **Portfolio status note (July 7, 2026):** This is historical analysis for code
+> assistance and planning, not current production-readiness evidence. Current
+> implementation evidence lives in `README.md`, `docs/PORTFOLIO_EVIDENCE.md`,
+> `docs/LEAKAGE_AND_ENDPOINTS.md`, and `docs/CTO_DEMO_SCRIPT.md`. Claims about
+> audit readiness, CloudTrail, FIPS-backed KMS, certification, or production
+> launch should be read as roadmap targets unless explicitly backed by current
+> evidence.
+
 **Document Purpose:** Complete technical analysis of the encrypted information retrieval system for LLM comprehension, code assistance, and architectural understanding.
 
 **Last Updated:** 2025-11-13

@@ -55,9 +55,9 @@ def reset_search_state() -> None:
 @router.post(
     "/equality",
     response_model=SearchResponse,
-    summary="Blind index equality search",
-    description="Search for records matching an exact value using blind indexes. "
-    "The value is hashed with a tenant-scoped key and compared against the index map.",
+    summary="Blind index equality search (compatibility demo)",
+    description="Compatibility/demo search over a request-supplied index map. "
+    "The durable document workflow is available under /v1/documents/search.",
 )
 async def search_equality(
     body: EqualitySearchRequest,
@@ -89,9 +89,9 @@ async def search_equality(
 @router.post(
     "/range",
     response_model=SearchResponse,
-    summary="ORE range query",
-    description="Perform range query on ORE-encrypted values. "
-    "Returns ciphertexts within the specified min/max range.",
+    summary="ORE range query (prototype demo)",
+    description="Prototype range query over request-supplied ORE ciphertexts. "
+    "Custom ORE requires review before production use.",
 )
 async def search_range(
     body: RangeSearchRequest,
@@ -126,9 +126,9 @@ async def search_range(
 @router.post(
     "/keyword",
     response_model=SearchResponse,
-    summary="SSE keyword search",
-    description="Search for documents containing a keyword using searchable "
-    "symmetric encryption tokens.",
+    summary="SSE keyword search (compatibility demo)",
+    description="Compatibility/demo search over request-supplied keyword tokens. "
+    "Use /v1/documents/search for persisted encrypted document retrieval.",
 )
 async def search_keyword(
     body: KeywordSearchRequest,

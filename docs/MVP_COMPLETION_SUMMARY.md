@@ -1,5 +1,12 @@
 # MVP Completion Summary - Phase 0: Analysis & Documentation
 
+> **Portfolio status note (July 7, 2026):** This is historical phase-summary
+> material. Current implementation evidence lives in `README.md`,
+> `docs/PORTFOLIO_EVIDENCE.md`, `docs/LEAKAGE_AND_ENDPOINTS.md`, and
+> `docs/CTO_DEMO_SCRIPT.md`. Claims about audit readiness, CloudTrail,
+> FIPS-backed KMS, certification, or production launch should be read as roadmap
+> targets unless explicitly backed by current evidence.
+
 **Session Date:** 2025-11-13
 **Branch:** `claude/python-analysis-implementation-011CUy67sRmpHKaDB6eknWbR`
 **Status:** ✅ Phase 0 Complete - Ready for Phase 1 (P0 Implementation)
@@ -192,7 +199,7 @@ This document summarizes the completion of Phase 0 (Analysis & Documentation) fo
 | **ADR-002** | Blind Indexes (HMAC-SHA256) | ✅ IMPLEMENTED | Scoped equality, tenant isolation, 2^128 security |
 | **ADR-003** | SSE for Keyword Search | ✅ ACCEPTED | Dynamic search, forward privacy needed (Issue #5) |
 | **ADR-004** | OPE → ORE Migration | 🔄 IN PROGRESS | Global order leakage unacceptable, ORE provides pairwise only |
-| **ADR-005** | TenSEAL for Homomorphic Encryption | ✅ ACCEPTED | CKKS for approximate computation, production-ready |
+| **ADR-005** | TenSEAL for Homomorphic Encryption | ✅ ACCEPTED | CKKS for approximate computation with a mature library |
 | **ADR-006** | Envelope Encryption with KMS | 🔄 IN PROGRESS | HSM protection for KEK, DEK rotation (Issue #2) |
 | **ADR-007** | TEE Integration (Nitro Enclaves) | ⏳ PLANNED | Hardware isolation for keys (Issue #8) |
 | **ADR-008** | FastAPI for REST API | ⏳ PLANNED | Modern async, OpenAPI, OAuth2 (Issue #4) |

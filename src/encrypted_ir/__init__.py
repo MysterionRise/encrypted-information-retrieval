@@ -16,8 +16,8 @@ from .differential_privacy import (
     PrivacyBudgetTracker,
     PrivacyBudgetWarning,
 )
+from .document_service import DocumentRecord, DocumentService, RetrievalCandidate
 from .fpe import FF1, FormatPreservingEncryption
-from .homomorphic import BasicHomomorphicEncryption
 from .key_manager import KeyLifecycleState, KeyManager
 from .key_rotation import (
     KeyRotationManager,
@@ -28,12 +28,21 @@ from .key_rotation import (
 from .kms_provider import AWSKMSProvider, EnvelopeEncryption, KMSProvider
 from .order_preserving import OrderPreservingEncryption
 from .ore import ORE
-from .post_quantum import MLDSA, MLKEM, HybridKEM, PostQuantumEncryption
 from .searchable import BackwardPrivateIndex, BooleanQuery, ForwardPrivateSSE, SearchableEncryption
 from .audit import AuditEventType, AuditLogger
 from .logging import LoggingConfig, StructuredFormatter, get_correlation_id, new_correlation_id
 from .metrics import EncryptionMetrics
-from .storage_backend import FileStorageBackend, StorageBackend
+from .storage_backend import DatabaseStorageBackend, FileStorageBackend, StorageBackend
+
+try:
+    from .homomorphic import BasicHomomorphicEncryption
+except ImportError:
+    BasicHomomorphicEncryption = None
+
+try:
+    from .post_quantum import MLDSA, MLKEM, HybridKEM, PostQuantumEncryption
+except ImportError:
+    MLDSA = MLKEM = HybridKEM = PostQuantumEncryption = None
 
 __version__ = "1.0.0"
 __all__ = [
@@ -55,6 +64,10 @@ __all__ = [
     "BlindIndexSearch",
     "StorageBackend",
     "FileStorageBackend",
+    "DatabaseStorageBackend",
+    "DocumentService",
+    "DocumentRecord",
+    "RetrievalCandidate",
     "KMSProvider",
     "AWSKMSProvider",
     "EnvelopeEncryption",

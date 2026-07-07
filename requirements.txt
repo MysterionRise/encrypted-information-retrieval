@@ -1,9 +1,6 @@
 # Runtime dependencies
 cryptography>=41.0.0
 pycryptodome>=3.19.0
-numpy>=1.24.0  # Required by tenseal
-tenseal>=0.3.14
-pqcrypto>=0.4.0
 
 # Observability
 prometheus-client>=0.17.0
@@ -13,3 +10,13 @@ fastapi>=0.100.0
 uvicorn>=0.23.0
 pydantic>=2.0.0
 httpx>=0.24.0
+PyJWT[crypto]>=2.8.0
+
+# Durable API persistence
+SQLAlchemy>=2.0.0
+psycopg[binary]>=3.1.0
+alembic>=1.13.0
+
+# Optional research dependencies for CKKS and post-quantum demos are listed in
+# requirements-research.txt so the API/CI path does not depend on wheel
+# availability for TenSEAL or pqcrypto.

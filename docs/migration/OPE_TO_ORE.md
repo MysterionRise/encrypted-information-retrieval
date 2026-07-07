@@ -1,5 +1,12 @@
 # Migration Guide: OPE → ORE
 
+> **Portfolio status note (July 7, 2026):** This migration guide is historical
+> planning material for reducing OPE exposure. Current implementation evidence
+> lives in `README.md`, `docs/PORTFOLIO_EVIDENCE.md`,
+> `docs/LEAKAGE_AND_ENDPOINTS.md`, and `docs/CTO_DEMO_SCRIPT.md`. Compliance and
+> audit-ready language should be read as roadmap target language unless backed
+> by current evidence.
+
 **Status:** Active — ORE module implemented (`src/encrypted_ir/ore.py`)
 **Priority:** P0 (Critical for 2025 compliance)
 
@@ -182,7 +189,7 @@ Leakage(ORE) = { compare(encrypt(a), encrypt(b)) = (a < b, a = b, a > b) }
 
 - [ ] **Day 6-7:** Archive OPE data
   - Mark OPE columns as deprecated
-  - Schedule removal for Q3 2025 (v2.0.0)
+  - Schedule removal in a future major release after compatibility migration
 
 **Deliverable:** Production system running exclusively on ORE
 
@@ -337,7 +344,7 @@ for record_id, ope_ciphertext in records:
 
 4. **Cutover** (Week 4)
    - Stop writing to OPE column
-   - Drop `amount_encrypted` column in Q3 2025
+   - Drop `amount_encrypted` column in a future major release
 
 ---
 

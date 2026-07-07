@@ -23,9 +23,13 @@ import pytest
 
 from encrypted_ir.blind_index import BlindIndexConfig, BlindIndexGenerator, BlindIndexSearch
 from encrypted_ir.deterministic import DeterministicEncryption
-from encrypted_ir.homomorphic import BasicHomomorphicEncryption
 from encrypted_ir.ore import ORE
 from encrypted_ir.searchable import SearchableEncryption
+
+try:
+    from encrypted_ir.homomorphic import BasicHomomorphicEncryption
+except ImportError:
+    BasicHomomorphicEncryption = None
 
 # ---------------------------------------------------------------------------
 # Test data generators
@@ -469,6 +473,10 @@ class TestOREBenchmarks:
 # ===========================================================================
 
 
+@pytest.mark.skipif(
+    BasicHomomorphicEncryption is None,
+    reason="TenSEAL is an optional research dependency",
+)
 class TestHomomorphicBenchmarks:
     """Benchmarks for CKKS homomorphic encryption (claimed 1000-10000x slower)."""
 
@@ -722,6 +730,10 @@ class TestUseCasesBenchmarks:
 
     # -- Credit scoring (HE-based) --
 
+    @pytest.mark.skipif(
+        BasicHomomorphicEncryption is None,
+        reason="TenSEAL is an optional research dependency",
+    )
     @pytest.mark.benchmark(group="usecase-credit")
     def test_credit_score_encrypt_data(self, benchmark):
         """Use case: encrypt financial data for credit scoring."""
@@ -730,6 +742,10 @@ class TestUseCasesBenchmarks:
         scorer = CreditScoring()
         benchmark(scorer.encrypt_financial_data, 85000.0, 25000.0, 60)
 
+    @pytest.mark.skipif(
+        BasicHomomorphicEncryption is None,
+        reason="TenSEAL is an optional research dependency",
+    )
     @pytest.mark.benchmark(group="usecase-credit")
     def test_credit_score_calculate(self, benchmark):
         """Use case: calculate credit score on encrypted data."""
@@ -739,6 +755,10 @@ class TestUseCasesBenchmarks:
         encrypted_data = scorer.encrypt_financial_data(85000.0, 25000.0, 60)
         benchmark(scorer.calculate_credit_score, encrypted_data)
 
+    @pytest.mark.skipif(
+        BasicHomomorphicEncryption is None,
+        reason="TenSEAL is an optional research dependency",
+    )
     @pytest.mark.benchmark(group="usecase-credit")
     def test_credit_score_full_pipeline(self, benchmark):
         """Use case: full credit scoring pipeline (encrypt + calculate)."""

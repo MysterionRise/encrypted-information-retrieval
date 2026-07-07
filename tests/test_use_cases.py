@@ -1,5 +1,7 @@
 """Tests for financial services use cases."""
 
+import pytest
+
 from encrypted_ir.key_manager import KeyManager
 from encrypted_ir.use_cases import (
     AccountManagement,
@@ -187,6 +189,9 @@ class TestDocumentSearch:
 
 class TestCreditScoring:
     """Test credit scoring use case."""
+
+    def setup_method(self):
+        pytest.importorskip("tenseal")
 
     def test_financial_data_encryption(self):
         """Test encryption of financial data."""

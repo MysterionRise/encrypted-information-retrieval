@@ -39,9 +39,9 @@ def reset_ciphers() -> None:
 @router.post(
     "/encrypt",
     response_model=EncryptResponse,
-    summary="Encrypt plaintext data",
-    description="Encrypt plaintext using the specified algorithm. "
-    "Returns base64-encoded ciphertext.",
+    summary="Encrypt plaintext data (compatibility demo)",
+    description="Compatibility/demo endpoint using in-memory tenant ciphers. "
+    "For durable encrypted retrieval, use /v1/documents.",
 )
 async def encrypt(
     body: EncryptRequest,
@@ -70,8 +70,9 @@ async def encrypt(
 @router.post(
     "/decrypt",
     response_model=DecryptResponse,
-    summary="Decrypt ciphertext",
-    description="Decrypt base64-encoded ciphertext using the specified algorithm.",
+    summary="Decrypt ciphertext (compatibility demo)",
+    description="Compatibility/demo endpoint using in-memory tenant ciphers. "
+    "For durable encrypted retrieval, use /v1/documents/{doc_id}.",
 )
 async def decrypt(
     body: DecryptRequest,

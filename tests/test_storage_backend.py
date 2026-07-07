@@ -7,8 +7,9 @@ from datetime import datetime
 
 import pytest
 
+from encrypted_ir.database import create_database_engine, create_database_schema
 from encrypted_ir.key_manager import KeyManager
-from encrypted_ir.storage_backend import FileStorageBackend, StorageBackend
+from encrypted_ir.storage_backend import DatabaseStorageBackend, FileStorageBackend, StorageBackend
 
 
 class TestStorageBackendInterface:
@@ -364,3 +365,60 @@ class TestKeyManagerWithFileBackend:
 
         metadata = mgr2.get_metadata(key_id)
         assert metadata.access_count == 3
+
+
+class TestDatabaseStorageBackend:
+    """Test SQL database-backed key storage."""
+
+    @pytest.fixture
+    def engine(self):
+        engine = create_database_engine("sqlite+pysqlite:///:memory:")
+        create_database_schema(engine)
+        return engine
+
+    @pytest.fixture
+    def backend(self, engine):
+        return DatabaseStorageBackend(engine, tenant_id="tenant-a")
+
+    def test_save_and_load_key(self, backend):
+        backend.save_key("key-1", b"encrypted-key", {"key_id": "key-1", "active": True})
+
+        loaded = backend.load_key("key-1")
+
+        assert loaded is not None
+        encrypted_key, metadata = loaded
+        assert encrypted_key == b"encrypted-key"
+        assert metadata["key_id"] == "key-1"
+
+    def test_tenant_isolation(self, engine):
+        tenant_a = DatabaseStorageBackend(engine, tenant_id="tenant-a")
+        tenant_b = DatabaseStorageBackend(engine, tenant_id="tenant-b")
+
+        tenant_a.save_key("shared-key-id", b"a-key", {"tenant": "a"})
+        tenant_b.save_key("shared-key-id", b"b-key", {"tenant": "b"})
+
+        assert tenant_a.load_key("shared-key-id")[0] == b"a-key"
+        assert tenant_b.load_key("shared-key-id")[0] == b"b-key"
+
+    def test_audit_log_filtering(self, backend):
+        backend.save_audit_entry({"key_id": "k1", "operation": "create"})
+        backend.save_audit_entry({"key_id": "k2", "operation": "get"})
+
+        logs = backend.load_audit_log(key_id="k1")
+
+        assert len(logs) == 1
+        assert logs[0]["key_id"] == "k1"
+
+    def test_key_manager_persists_with_database_backend(self, engine):
+        master_key = os.urandom(32)
+        backend1 = DatabaseStorageBackend(engine, tenant_id="tenant-a")
+        manager1 = KeyManager(master_key=master_key, storage_backend=backend1)
+
+        key_id = manager1.create_key("document_encryption", description="db-backed key")
+        original = manager1.get_key(key_id)
+
+        backend2 = DatabaseStorageBackend(engine, tenant_id="tenant-a")
+        manager2 = KeyManager(master_key=master_key, storage_backend=backend2)
+
+        assert manager2.get_key(key_id) == original
+        assert manager2.get_metadata(key_id).description == "db-backed key"

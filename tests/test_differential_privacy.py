@@ -15,7 +15,6 @@ from encrypted_ir.differential_privacy import (
     PrivacyBudgetWarning,
 )
 
-
 # ---------------------------------------------------------------------------
 # Laplace Mechanism
 # ---------------------------------------------------------------------------

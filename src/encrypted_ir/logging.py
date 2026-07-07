@@ -1,14 +1,13 @@
 """
 Structured Logging Module
 
-Provides production-grade structured JSON logging with correlation IDs,
+Provides structured JSON logging with correlation IDs,
 PII redaction, and configurable log levels for encrypted IR operations.
 
 Ensures that plaintext data and cryptographic keys are never logged,
 supporting DORA Art. 17, PCI DSS 10.2.2, and NYDFS 500.06 compliance.
 """
 
-from __future__ import annotations
 from __future__ import annotations
 
 import json
