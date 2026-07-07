@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "encrypted-information-retrieval"
 version = "1.0.0"
-description = "2025-grade encrypted information retrieval system with regulatory compliance"
+description = "Production-oriented prototype for privacy-preserving retrieval in regulated AI/RAG systems"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
     {name = "Encrypted IR Team"}
 ]
-keywords = ["encryption", "searchable-encryption", "homomorphic-encryption", "privacy", "DORA", "PCI-DSS", "post-quantum", "ML-KEM", "ML-DSA"]
+keywords = ["encryption", "searchable-encryption", "privacy", "rag", "regulated-ai", "postgresql", "oidc", "kms"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -27,18 +27,24 @@ classifiers = [
 dependencies = [
     "cryptography>=41.0.0",
     "pycryptodome>=3.19.0",
-    "numpy>=1.24.0",  # Required by tenseal
-    "tenseal>=0.3.14",
-    "pqcrypto>=0.4.0",
     "fastapi>=0.104.0",
     "uvicorn>=0.24.0",
     "pydantic>=2.5.0",
+    "PyJWT[crypto]>=2.8.0",
     "prometheus-client>=0.17.0",
+    "SQLAlchemy>=2.0.0",
+    "psycopg[binary]>=3.1.0",
+    "alembic>=1.13.0",
 ]
 
 [project.optional-dependencies]
 aws = [
     "boto3>=1.28.0",
+]
+research = [
+    "numpy>=1.24.0",
+    "tenseal>=0.3.14",
+    "pqcrypto>=0.4.0",
 ]
 dev = [
     "pytest>=7.4.0",

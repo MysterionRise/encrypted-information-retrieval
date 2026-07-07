@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: encrypted_ir
+      POSTGRES_USER: encrypted_ir
+      POSTGRES_PASSWORD: encrypted_ir_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - encrypted_ir_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U encrypted_ir -d encrypted_ir"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://encrypted_ir:encrypted_ir_dev_password@postgres:5432/encrypted_ir
+      ENCRYPTED_IR_MASTER_KEY_B64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      ENCRYPTED_IR_ENV: dev
+      ENCRYPTED_IR_AUTO_CREATE_TABLES: "false"
+      ENCRYPTED_IR_CORS_ORIGINS: http://localhost:3000,http://localhost:8000,http://127.0.0.1:8000
+      ENCRYPTED_IR_DEV_AUTH_ENABLED: "true"
+      ENCRYPTED_IR_DEV_API_KEY: local-demo-key
+      ENCRYPTED_IR_DEV_TENANT_ID: local-demo
+      ENCRYPTED_IR_JWT_SECRET: local-docker-demo-secret-change-me
+    ports:
+      - "8000:8000"
+
+volumes:
+  encrypted_ir_pgdata:

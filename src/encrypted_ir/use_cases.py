@@ -8,10 +8,14 @@ in financial services scenarios.
 from __future__ import annotations
 
 from .deterministic import DeterministicEncryption
-from .homomorphic import BasicHomomorphicEncryption
 from .key_manager import KeyManager
 from .order_preserving import OrderPreservingEncryption
 from .searchable import SearchableEncryption
+
+try:
+    from .homomorphic import BasicHomomorphicEncryption
+except ImportError:
+    BasicHomomorphicEncryption = None
 
 
 class AccountManagement:
@@ -228,6 +232,11 @@ class CreditScoring:
     HISTORY_CAP = 120.0  # months (10 years)
 
     def __init__(self):
+        if BasicHomomorphicEncryption is None:
+            raise ImportError(
+                "CreditScoring requires the optional TenSEAL dependency. "
+                "Install requirements-research.txt or the research extra."
+            )
         self.encryptor = BasicHomomorphicEncryption()
 
     def encrypt_financial_data(

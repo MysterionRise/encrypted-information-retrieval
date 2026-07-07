@@ -1,0 +1,5 @@
+# Optional research/demo dependencies.
+# Install these when running homomorphic encryption or post-quantum examples.
+numpy>=1.24.0
+tenseal>=0.3.14
+pqcrypto>=0.4.0

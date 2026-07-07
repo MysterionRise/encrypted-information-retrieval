@@ -1,6 +1,8 @@
 """Tests for homomorphic encryption module."""
 
-import tenseal as ts
+import pytest
+
+ts = pytest.importorskip("tenseal")
 
 from encrypted_ir.homomorphic import BasicHomomorphicEncryption
 

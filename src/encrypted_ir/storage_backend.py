@@ -19,6 +19,10 @@ import os
 from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from sqlalchemy import delete, insert, select
+from sqlalchemy.engine import Engine
+
+from .database import audit_log_table, create_database_schema, key_store_table
 
 
 class StorageBackend(abc.ABC):
@@ -256,3 +260,104 @@ class FileStorageBackend(StorageBackend):
         store = self._read_store()
         keys = {key_id: base64.b64decode(key_b64) for key_id, key_b64 in store["keys"].items()}
         return keys, store["metadata"]
+
+
+class DatabaseStorageBackend(StorageBackend):
+    """SQL database-backed key storage scoped to one tenant.
+
+    The backend stores keys encrypted by ``KeyManager`` and keeps tenant data
+    isolated by adding ``tenant_id`` to every query. It is intentionally small:
+    KMS/HSM wrapping remains the responsibility of ``KeyManager.from_kms``.
+    """
+
+    def __init__(self, engine: Engine, tenant_id: str, auto_create_tables: bool = False):
+        self._engine = engine
+        self._tenant_id = tenant_id
+        if auto_create_tables:
+            create_database_schema(engine)
+
+    @property
+    def tenant_id(self) -> str:
+        """Tenant identifier this backend is scoped to."""
+        return self._tenant_id
+
+    def save_key(self, key_id: str, encrypted_key: bytes, metadata: dict) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                delete(key_store_table).where(
+                    key_store_table.c.tenant_id == self._tenant_id,
+                    key_store_table.c.key_id == key_id,
+                )
+            )
+            conn.execute(
+                insert(key_store_table).values(
+                    tenant_id=self._tenant_id,
+                    key_id=key_id,
+                    encrypted_key=encrypted_key,
+                    metadata_json=metadata,
+                )
+            )
+
+    def load_key(self, key_id: str) -> tuple[bytes, dict] | None:
+        stmt = select(key_store_table.c.encrypted_key, key_store_table.c.metadata_json).where(
+            key_store_table.c.tenant_id == self._tenant_id,
+            key_store_table.c.key_id == key_id,
+        )
+        with self._engine.connect() as conn:
+            row = conn.execute(stmt).first()
+        if row is None:
+            return None
+        return row.encrypted_key, dict(row.metadata_json)
+
+    def delete_key(self, key_id: str) -> bool:
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                delete(key_store_table).where(
+                    key_store_table.c.tenant_id == self._tenant_id,
+                    key_store_table.c.key_id == key_id,
+                )
+            )
+        return result.rowcount > 0
+
+    def list_keys(self) -> list[str]:
+        stmt = select(key_store_table.c.key_id).where(
+            key_store_table.c.tenant_id == self._tenant_id
+        )
+        with self._engine.connect() as conn:
+            return [row.key_id for row in conn.execute(stmt)]
+
+    def save_audit_entry(self, entry: dict) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                insert(audit_log_table).values(
+                    tenant_id=self._tenant_id,
+                    key_id=entry.get("key_id"),
+                    entry_json=entry,
+                )
+            )
+
+    def load_audit_log(self, key_id: str | None = None, limit: int = 100) -> list[dict]:
+        stmt = select(audit_log_table.c.entry_json).where(
+            audit_log_table.c.tenant_id == self._tenant_id
+        )
+        if key_id is not None:
+            stmt = stmt.where(audit_log_table.c.key_id == key_id)
+        stmt = stmt.order_by(audit_log_table.c.id.desc()).limit(limit)
+
+        with self._engine.connect() as conn:
+            return [dict(row.entry_json) for row in conn.execute(stmt)]
+
+    def load_all(self) -> tuple[dict[str, bytes], dict[str, dict]]:
+        stmt = select(
+            key_store_table.c.key_id,
+            key_store_table.c.encrypted_key,
+            key_store_table.c.metadata_json,
+        ).where(key_store_table.c.tenant_id == self._tenant_id)
+
+        keys: dict[str, bytes] = {}
+        metadata: dict[str, dict] = {}
+        with self._engine.connect() as conn:
+            for row in conn.execute(stmt):
+                keys[row.key_id] = row.encrypted_key
+                metadata[row.key_id] = dict(row.metadata_json)
+        return keys, metadata

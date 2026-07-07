@@ -24,6 +24,10 @@ DEFAULT_LIMITS: dict[str, RateLimitConfig] = {
     "keyword_search": RateLimitConfig(max_requests=100, window_seconds=60),
     "encrypt": RateLimitConfig(max_requests=100, window_seconds=60),
     "decrypt": RateLimitConfig(max_requests=100, window_seconds=60),
+    "document_ingest": RateLimitConfig(max_requests=60, window_seconds=60),
+    "document_search": RateLimitConfig(max_requests=120, window_seconds=60),
+    "document_get": RateLimitConfig(max_requests=120, window_seconds=60),
+    "rag_retrieve": RateLimitConfig(max_requests=120, window_seconds=60),
     "read": RateLimitConfig(max_requests=1000, window_seconds=60),
     "key_rotate": RateLimitConfig(max_requests=5, window_seconds=60),
 }
@@ -100,7 +104,7 @@ class RateLimiter:
 _rate_limiter = RateLimiter()
 
 
-def get_rate_limiter() -> RateLimiter:
+async def get_rate_limiter() -> RateLimiter:
     """Get the global rate limiter instance."""
     return _rate_limiter
 

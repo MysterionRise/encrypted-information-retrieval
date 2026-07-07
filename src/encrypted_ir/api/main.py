@@ -10,28 +10,59 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .routes import admin, data, keys, search
+from encrypted_ir.database import create_database_engine, create_database_schema
+from encrypted_ir.document_service import DocumentService
+from encrypted_ir.master_key import resolve_master_key
+from encrypted_ir.settings import EncryptedIRSettings
+
+from .dependencies.auth import AuthConfig, OIDCVerifier
+from .routes import admin, data, documents, keys, search
 
 
-def create_app() -> FastAPI:
+def create_app(settings: EncryptedIRSettings | None = None) -> FastAPI:
     """Create and configure the FastAPI application."""
+    settings = settings or EncryptedIRSettings.from_env()
+    settings.validate()
     app = FastAPI(
         title="Encrypted Information Retrieval API",
         description=(
-            "Production-grade REST API for encrypted search and data operations. "
-            "Supports blind index equality search, ORE range queries, SSE keyword search, "
-            "and AES-SIV/AES-GCM encryption with OAuth2 JWT auth and tenant isolation."
+            "Production-oriented prototype API for encrypted search and RAG-ready "
+            "retrieval workflows. Supports blind-index equality search, prototype "
+            "ORE range queries, keyword-token document search, and AES-SIV/AES-GCM "
+            "encryption with demo auth and tenant isolation."
         ),
         version="1.0.0",
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
     )
+    app.state.settings = settings
+    app.state.auth_config = AuthConfig.from_settings(settings)
+    app.state.oidc_verifier = OIDCVerifier(app.state.auth_config)
+    app.state.database_engine = create_database_engine(settings.database_url)
+    if settings.auto_create_tables:
+        create_database_schema(app.state.database_engine)
+    master_key, master_key_source = resolve_master_key(settings)
+    app.state.master_key_source = master_key_source
+    app.state.document_service = DocumentService(
+        app.state.database_engine,
+        master_key,
+    )
+    if master_key_source == "aws-kms":
+        app.state.document_service.record_audit_event(
+            tenant_id="_system",
+            event_type="key.unwrap",
+            actor="api-startup",
+            success=True,
+            resource=settings.aws_kms_key_id or "",
+            details={"key_source": master_key_source},
+            request_id="startup",
+        )
 
     # CORS middleware
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -132,6 +163,7 @@ def create_app() -> FastAPI:
     # Register routers
     app.include_router(data.router)
     app.include_router(search.router)
+    app.include_router(documents.router)
     app.include_router(keys.router)
     app.include_router(admin.router)
 

@@ -1,5 +1,12 @@
 # GitHub Issues Backlog - Encrypted Information Retrieval MVP
 
+> **Portfolio status note (July 7, 2026):** This backlog is planning history,
+> not current certification evidence. Current implementation evidence lives in
+> `README.md`, `docs/PORTFOLIO_EVIDENCE.md`, `docs/LEAKAGE_AND_ENDPOINTS.md`,
+> and `docs/CTO_DEMO_SCRIPT.md`. Claims about audit readiness, CloudTrail,
+> FIPS-backed KMS, certification, or production launch should be read as roadmap
+> targets unless explicitly backed by current evidence.
+
 This document contains the comprehensive backlog for upgrading the encrypted information retrieval system to 2025 best practices. Issues are prioritized as P0 (critical/blockers), P1 (production hardening), and P2 (advanced features).
 
 ---
@@ -197,7 +204,7 @@ def test_blind_index_generation(benchmark):
 
 **Description:**
 
-Implement a production-grade REST API using FastAPI to expose encrypted IR capabilities as a service. This enables client-server architecture required for DORA operational resilience.
+Implement a production-oriented REST API using FastAPI to expose encrypted IR capabilities as a service. This enables client-server architecture required for DORA operational resilience demonstrations.
 
 **Functional Requirements:**
 - CRUD operations for encrypted data (create, read, update, delete)
@@ -588,7 +595,7 @@ Enhance SSE with backward privacy to prevent deleted documents from leaking info
 
 **Description:**
 
-Add production-grade logging and monitoring for security auditing and operational visibility.
+Add deployment-oriented logging and monitoring for security auditing and operational visibility.
 
 **Acceptance Criteria:**
 - [ ] Implement structured logging:
@@ -1035,7 +1042,7 @@ Create project: **"Encrypted IR — MVP to Production"**
 ### Milestones:
 - **v0.5.0 - MVP** (Target: 8 weeks from now)
   - Issues: #1, #2, #3, #4, #5, #6
-  - Deliverable: Production-ready encrypted IR with REST API, KMS, ORE, benchmarks
+  - Deliverable: Production-oriented encrypted IR prototype with REST API, KMS custody path, ORE, and benchmarks
 
 - **v1.0.0 - Production** (Target: 14 weeks from now)
   - Issues: #7, #8, #9, #10, #11, #12, #13

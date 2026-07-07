@@ -1,5 +1,12 @@
 # Architecture Decision Records (ADR)
 
+> **Portfolio status note (July 7, 2026):** These ADRs include historical target
+> architecture. Current implementation evidence lives in `README.md`,
+> `docs/PORTFOLIO_EVIDENCE.md`, `docs/LEAKAGE_AND_ENDPOINTS.md`, and
+> `docs/CTO_DEMO_SCRIPT.md`. Claims about audit readiness, CloudTrail,
+> FIPS-backed KMS, certification, or production launch should be read as roadmap
+> targets unless explicitly backed by current evidence.
+
 **Project**: Encrypted Information Retrieval for Financial Services
 **Last Updated**: January 2025
 

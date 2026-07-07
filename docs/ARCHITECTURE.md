@@ -1,8 +1,8 @@
 # System Architecture
 
 **Version**: 1.0
-**Last Updated**: January 2025
-**Status**: MVP Architecture
+**Last Updated**: July 2026
+**Status**: Portfolio Prototype Architecture
 
 ## Table of Contents
 
@@ -19,7 +19,15 @@
 
 ## Overview
 
-The Encrypted Information Retrieval (IR) system provides **practical encrypted search and computation** for financial services applications. It implements a **hybrid cryptographic architecture** combining multiple encryption techniques optimized for different access patterns.
+The Encrypted Information Retrieval (IR) system is a **production-oriented prototype** for privacy-preserving retrieval in regulated AI/RAG and financial-services applications. It implements a hybrid architecture that combines standard cryptographic libraries, prototype research constructions, tenant-scoped key management, and a durable PostgreSQL-backed document retrieval workflow.
+
+This architecture is intended to demonstrate CTO-level engineering judgment, not to claim audited production cryptography. Custom ORE/SSE implementations require independent review before use with sensitive production data.
+
+The HSM/KMS elements in the diagrams represent the production hardening target.
+The default portfolio demo uses Docker Compose, PostgreSQL, local dev auth, and
+a raw local app master key. AWS KMS and real OIDC/JWKS are implemented as
+configuration paths and covered by mocked tests, but live cloud validation is
+optional and not required for the local evidence run.
 
 ### Design Principles
 
@@ -41,12 +49,13 @@ graph TB
     subgraph "API Layer"
         REST[FastAPI REST API]
         AUTH[Authentication/Authorization]
+        RAG[RAG Retrieval API]
     end
 
     subgraph "Encryption Services"
         DET[Deterministic Encryption<br/>AES-SIV]
-        SSE[Searchable Encryption<br/>DSSE]
-        RANGE[Range Queries<br/>ORE/Structured]
+        SSE[Keyword Tokens<br/>SSE Prototype]
+        RANGE[Range Queries<br/>ORE Prototype/Structured]
         HE[Homomorphic Encryption<br/>CKKS/BFV]
     end
 
@@ -57,18 +66,20 @@ graph TB
     end
 
     subgraph "Data Storage"
-        DB[(Encrypted Database)]
-        INDEX[(Search Indexes)]
+        DB[(PostgreSQL<br/>Encrypted Documents)]
+        INDEX[(Keyword Token Indexes)]
         BLOB[Blob Storage]
     end
 
     APP --> SDK
     SDK --> REST
     REST --> AUTH
+    REST --> RAG
     AUTH --> DET
     AUTH --> SSE
     AUTH --> RANGE
     AUTH --> HE
+    RAG --> SSE
 
     DET --> KMS
     SSE --> KMS
@@ -82,6 +93,8 @@ graph TB
     SSE --> INDEX
     RANGE --> DB
     HE --> BLOB
+    SSE --> DB
+    SSE --> INDEX
 
     style DET fill:#e1f5ff
     style SSE fill:#e1f5ff
@@ -94,6 +107,17 @@ graph TB
 ---
 
 ## System Components
+
+### Durable RAG Retrieval Workflow
+
+The API now includes a PostgreSQL-backed workflow for portfolio demonstrations:
+
+1. `POST /v1/documents` authenticates a tenant, encrypts document content with AES-GCM, stores ciphertext in PostgreSQL, extracts or accepts keywords, and persists deterministic HMAC search tokens.
+2. `POST /v1/documents/search` regenerates tenant-scoped query tokens and returns matching document IDs plus metadata and token-match score.
+3. `GET /v1/documents/{doc_id}` decrypts one authorized tenant-owned document for retrieval pipelines.
+4. `POST /v1/rag/retrieve` returns ranked candidates for downstream RAG context assembly. It performs no embedding generation and no LLM calls.
+
+The service persists encrypted documents, token indexes, key metadata, and audit entries. It is realistic enough to survive API restarts in Docker Compose, while still being labeled a prototype because auth, deployment controls, and custom crypto paths are not production-hardened.
 
 ### 1. Encryption Modules
 

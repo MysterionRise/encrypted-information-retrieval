@@ -2,6 +2,8 @@
 
 import pytest
 
+pytest.importorskip("pqcrypto")
+
 from encrypted_ir.post_quantum import MLDSA, MLKEM, HybridKEM, PostQuantumEncryption
 
 # ---------------------------------------------------------------------------

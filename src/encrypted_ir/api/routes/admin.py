@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request, Response, status
 
-from ..models.responses import HealthResponse, MetricsResponse
+from encrypted_ir.migrations import database_connects, migration_status
+
+from ..models.responses import HealthResponse, MetricsResponse, ReadinessResponse
 
 router = APIRouter(tags=["admin"])
 
@@ -61,6 +63,51 @@ async def health_check() -> HealthResponse:
         version="1.0.0",
         uptime_seconds=round(time.time() - _start_time, 2),
     )
+
+
+@router.get(
+    "/ready",
+    response_model=ReadinessResponse,
+    summary="Readiness check",
+    description="Verifies database, migrations, auth posture, and key-provider configuration.",
+)
+async def readiness_check(request: Request, response: Response) -> ReadinessResponse:
+    settings = request.app.state.settings
+    engine = request.app.state.database_engine
+    checks: dict[str, object] = {}
+
+    try:
+        checks["database"] = {"ok": database_connects(engine)}
+    except Exception as e:
+        checks["database"] = {"ok": False, "error": str(e)}
+
+    if settings.auto_create_tables:
+        checks["migrations"] = {"ok": True, "mode": "auto_create_tables"}
+    else:
+        try:
+            migration_info = migration_status(engine, settings.database_url)
+            checks["migrations"] = {"ok": bool(migration_info["at_head"]), **migration_info}
+        except Exception as e:
+            checks["migrations"] = {"ok": False, "error": str(e)}
+
+    auth_ok = settings.dev_auth_enabled or bool(
+        settings.oidc_issuer and settings.oidc_audience and settings.oidc_jwks_url
+    )
+    checks["auth"] = {
+        "ok": auth_ok and not (settings.is_production and settings.dev_auth_enabled),
+        "mode": "dev" if settings.dev_auth_enabled else "oidc",
+    }
+
+    key_source = getattr(request.app.state, "master_key_source", "unknown")
+    checks["key_provider"] = {
+        "ok": (key_source == "aws-kms") if settings.is_production else key_source != "unknown",
+        "source": key_source,
+    }
+
+    ready = all(bool(value.get("ok")) for value in checks.values() if isinstance(value, dict))
+    if not ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return ReadinessResponse(status="ready" if ready else "not_ready", checks=checks)
 
 
 @router.get(

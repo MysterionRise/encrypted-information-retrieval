@@ -1,0 +1,14 @@
+# Dependencies needed by the FastAPI document/RAG service container.
+# Optional research modules such as TenSEAL are intentionally excluded so the
+# Docker smoke path works on platforms where those wheels are unavailable.
+cryptography>=41.0.0
+pycryptodome>=3.19.0
+prometheus-client>=0.17.0
+fastapi>=0.100.0
+uvicorn>=0.23.0
+pydantic>=2.0.0
+httpx>=0.24.0
+PyJWT[crypto]>=2.8.0
+SQLAlchemy>=2.0.0
+psycopg[binary]>=3.1.0
+alembic>=1.13.0

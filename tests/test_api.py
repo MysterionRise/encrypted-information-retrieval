@@ -554,6 +554,112 @@ class TestKeywordSearch:
 
 
 # =============================================================================
+# Durable Document Retrieval / RAG
+# =============================================================================
+
+
+class TestDurableDocuments:
+    def test_document_ingest_search_and_get_roundtrip(self, client, auth_headers):
+        ingest = client.post(
+            "/v1/documents",
+            json={
+                "doc_id": "risk-report-1",
+                "content": "Quarterly fraud risk report for regulated AI retrieval",
+                "metadata": {"source": "portfolio-demo", "tier": "confidential"},
+            },
+            headers=auth_headers,
+        )
+        assert ingest.status_code == 200
+        ingest_data = ingest.json()
+        assert ingest_data["doc_id"] == "risk-report-1"
+        assert ingest_data["algorithm"] == "aes-gcm"
+        assert ingest_data["indexed_token_count"] > 0
+
+        search = client.post(
+            "/v1/documents/search",
+            json={"query": "fraud risk", "operator": "AND", "limit": 5},
+            headers=auth_headers,
+        )
+        assert search.status_code == 200
+        search_data = search.json()
+        assert search_data["count"] == 1
+        assert search_data["matches"][0]["doc_id"] == "risk-report-1"
+        assert search_data["matches"][0]["metadata"]["source"] == "portfolio-demo"
+
+        get_resp = client.get("/v1/documents/risk-report-1", headers=auth_headers)
+        assert get_resp.status_code == 200
+        assert get_resp.json()["plaintext"] == (
+            "Quarterly fraud risk report for regulated AI retrieval"
+        )
+
+    def test_rag_retrieve_can_include_plaintext(self, client, auth_headers):
+        client.post(
+            "/v1/documents",
+            json={
+                "doc_id": "aml-note-1",
+                "content": "AML investigation notes mention suspicious transfer patterns",
+                "metadata": {"case": "aml"},
+            },
+            headers=auth_headers,
+        )
+
+        resp = client.post(
+            "/v1/rag/retrieve",
+            json={"query": "suspicious transfer", "top_k": 3, "include_plaintext": True},
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 1
+        assert data["candidates"][0]["doc_id"] == "aml-note-1"
+        assert "suspicious transfer" in data["candidates"][0]["plaintext"]
+
+    def test_duplicate_document_id_rejected(self, client, auth_headers):
+        body = {"doc_id": "dup-doc", "content": "first content"}
+        first = client.post("/v1/documents", json=body, headers=auth_headers)
+        second = client.post("/v1/documents", json=body, headers=auth_headers)
+
+        assert first.status_code == 200
+        assert second.status_code == 400
+
+    def test_document_tenant_isolation(self, client, auth_headers):
+        tenant_b = TenantInfo(
+            tenant_id="tenant-b",
+            roles=[Role.ADMIN, Role.WRITE, Role.READ],
+            subject="tenant-b-user",
+        )
+        register_api_key("tenant-b-key", tenant_b)
+        tenant_b_headers = {"X-API-Key": "tenant-b-key"}
+
+        client.post(
+            "/v1/documents",
+            json={"doc_id": "tenant-a-doc", "content": "private fraud investigation"},
+            headers=auth_headers,
+        )
+
+        search_b = client.post(
+            "/v1/documents/search",
+            json={"query": "fraud"},
+            headers=tenant_b_headers,
+        )
+        get_b = client.get("/v1/documents/tenant-a-doc", headers=tenant_b_headers)
+
+        assert search_b.status_code == 200
+        assert search_b.json()["count"] == 0
+        assert get_b.status_code == 404
+
+    def test_document_ingest_requires_write_role(self, client, read_only_headers):
+        resp = client.post(
+            "/v1/documents",
+            json={"doc_id": "read-only-doc", "content": "cannot write"},
+            headers=read_only_headers,
+        )
+
+        assert resp.status_code == 403
+
+
+# =============================================================================
 # Key Management
 # =============================================================================
 

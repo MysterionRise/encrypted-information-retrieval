@@ -1,15 +1,30 @@
 # Security Policy
 
+## Project Security Posture
+
+This repository is a portfolio-grade, production-oriented prototype for
+privacy-preserving retrieval. It contains real cryptographic building blocks
+and extensive tests, but it is **not** externally audited and should not be
+treated as a production cryptography product without independent review,
+operational hardening, and threat-specific validation.
+
+The Docker Compose workflow is intended for local evaluation of encrypted
+document retrieval and RAG-ready API behavior. Demo authentication, local
+master keys, and auto-created tables are deliberately convenient defaults,
+not production controls.
+
 ## Supported Versions
 
-We take security seriously and provide security updates for the following versions:
+Security fixes are tracked for the following prototype versions:
 
 | Version | Supported          | Status |
 | ------- | ------------------ | ------ |
-| 1.0.x   | :white_check_mark: | Current stable release |
+| 1.0.x   | :white_check_mark: | Current prototype release |
 | < 1.0   | :x:                | Development versions not supported |
 
-**Note:** After v2.0.0 release (Q3 2025), OPE (Order-Preserving Encryption) will be removed. Please migrate to ORE before then.
+**Note:** OPE (Order-Preserving Encryption) is retained for compatibility demos
+and should not be used for sensitive range queries. Prefer the ORE prototype or
+a vetted structured-encryption/TEE design after review.
 
 ---
 
@@ -131,7 +146,7 @@ Published security advisories will be available at:
 
 #### 1. OPE (Order-Preserving Encryption) - DEPRECATED
 
-**Status:** Deprecated, removal in v2.0.0 (Q3 2025)
+**Status:** Deprecated, retained only for compatibility demos
 
 **Issue:** Current OPE implementation leaks global order and frequency information.
 
@@ -151,9 +166,12 @@ Published security advisories will be available at:
 
 #### 2. SSE (Searchable Symmetric Encryption) - Forward Privacy
 
-**Status:** In progress (Issue #5)
+**Status:** Prototype implementations available
 
-**Issue:** Current SSE lacks explicit forward privacy guarantees.
+**Issue:** The legacy `SearchableEncryption` facade is a simple AES-GCM +
+deterministic HMAC-token index. `ForwardPrivateSSE` and `BackwardPrivateIndex`
+demonstrate stronger designs, but they are prototype implementations and have
+not been externally audited.
 
 **Impact:**
 - Server may link new document additions to past search queries
@@ -169,20 +187,25 @@ Published security advisories will be available at:
 
 #### 3. Key Management - Envelope Encryption
 
-**Status:** Planned (Issue #2)
+**Status:** Prototype AWS KMS custody path implemented
 
-**Issue:** Current implementation uses direct encryption with master keys (no HSM/KMS integration).
+**Issue:** The API can unwrap an application master key through AWS KMS at
+startup, and production mode rejects raw master-key configuration. This is a
+serious custody improvement, but it is not yet a fully operated key-management
+program: IAM policies, CloudTrail retention, key rotation runbooks, break-glass
+procedures, and external review remain outside this repository.
 
 **Impact:**
-- Key compromise risk if server storage is compromised
-- No FIPS 140-3 Level 3 protection
-- Manual key rotation required
+- Raw key exposure is reduced in production mode
+- Runtime plaintext master-key residency still needs operational controls
+- Rotation and incident-response evidence still need deployment runbooks
 
 **Mitigation:**
-- Store master keys in secure key storage (e.g., environment variables with restricted access)
-- Enable disk encryption for key storage
-- Implement key rotation procedures
-- **Fix coming:** Issue #2 (KMS integration - 2 weeks)
+- Use `ENCRYPTED_IR_KMS_PROVIDER=aws` with `ENCRYPTED_IR_ENCRYPTED_MASTER_KEY_B64`
+- Deny raw `ENCRYPTED_IR_MASTER_KEY_B64` in production
+- Restrict KMS decrypt permissions to the API runtime role
+- Enable CloudTrail and alert on unexpected KMS decrypt events
+- Add a deployment-specific key rotation and recovery runbook before production use
 
 **References:**
 - Architecture: `docs/ARCHITECTURE.md#key-management`
@@ -307,12 +330,14 @@ For security researchers and auditors:
 
 ## External Security Audit
 
-**Status:** Planned for Q2 2025 (Issue #16)
+**Status:** Not completed
 
-We plan to engage an external security firm for:
+This repository has not completed an external cryptographic review,
+penetration test, or compliance audit. Before any production use, engage an
+independent security firm for:
 - Comprehensive cryptographic review
 - Penetration testing
-- Compliance assessment (DORA, PCI DSS, NYDFS)
+- Compliance assessment for the specific regulatory scope
 
 Interested security firms can contact: security@example.com
 
@@ -344,9 +369,9 @@ We recognize security researchers who responsibly disclose vulnerabilities:
 | Date       | Change |
 |------------|--------|
 | 2025-11-13 | Initial SECURITY.md created |
-| TBD        | Security audit results (Q2 2025) |
+| 2026-07-07 | Repositioned as portfolio-grade prototype; clarified unaudited status |
 
 ---
 
-**Last Updated:** 2025-11-13
-**Next Review:** Q1 2025 (before external audit)
+**Last Updated:** 2026-07-07
+**Next Review:** Before any production deployment or live cloud demo

@@ -1,5 +1,12 @@
 # Threat Model & Leakage Budget
 
+> **Portfolio status note (July 7, 2026):** This threat model includes target
+> controls and roadmap assumptions. Current implementation evidence lives in
+> `README.md`, `docs/PORTFOLIO_EVIDENCE.md`, `docs/LEAKAGE_AND_ENDPOINTS.md`,
+> and `docs/CTO_DEMO_SCRIPT.md`. Claims about audit readiness, CloudTrail,
+> FIPS-backed KMS, certification, or production launch should be read as roadmap
+> targets unless explicitly backed by current evidence.
+
 **Version**: 1.0
 **Last Updated**: January 2025
 **Scope**: Encrypted Information Retrieval System for Financial Services

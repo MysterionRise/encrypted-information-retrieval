@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -62,6 +64,64 @@ class KeyRotateResponse(BaseModel):
     request_id: str = Field(..., description="Request trace ID")
 
 
+class DocumentIngestResponse(BaseModel):
+    """Response after storing an encrypted document."""
+
+    doc_id: str = Field(..., description="Document identifier")
+    tenant_id: str = Field(..., description="Tenant that owns the document")
+    algorithm: str = Field(..., description="Document encryption algorithm")
+    key_id: str = Field(..., description="Encryption key ID used for the document")
+    indexed_token_count: int = Field(..., description="Number of search tokens stored")
+    request_id: str = Field(..., description="Request trace ID")
+
+
+class DocumentMatch(BaseModel):
+    """Search match for encrypted document retrieval."""
+
+    doc_id: str = Field(..., description="Document identifier")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Stored metadata")
+    score: int = Field(..., description="Number of matched keyword tokens")
+
+
+class DocumentSearchResponse(BaseModel):
+    """Response for durable encrypted document search."""
+
+    matches: list[DocumentMatch] = Field(default_factory=list, description="Matching documents")
+    count: int = Field(..., description="Number of matches")
+    request_id: str = Field(..., description="Request trace ID")
+
+
+class DocumentGetResponse(BaseModel):
+    """Response containing one decrypted document."""
+
+    doc_id: str = Field(..., description="Document identifier")
+    tenant_id: str = Field(..., description="Tenant that owns the document")
+    plaintext: str = Field(..., description="Decrypted document content")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Stored metadata")
+    key_id: str = Field(..., description="Encryption key ID used for decryption")
+    request_id: str = Field(..., description="Request trace ID")
+
+
+class RagCandidate(BaseModel):
+    """Candidate returned to a downstream RAG system."""
+
+    doc_id: str = Field(..., description="Document identifier")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Stored metadata")
+    score: int = Field(..., description="Keyword-token match score")
+    plaintext: str | None = Field(
+        default=None,
+        description="Optional decrypted content for authorized RAG context assembly",
+    )
+
+
+class RagRetrieveResponse(BaseModel):
+    """RAG-ready retrieval response."""
+
+    candidates: list[RagCandidate] = Field(default_factory=list, description="Ranked candidates")
+    count: int = Field(..., description="Number of candidates")
+    request_id: str = Field(..., description="Request trace ID")
+
+
 class HealthResponse(BaseModel):
     """Health check response."""
 
@@ -80,6 +140,13 @@ class MetricsResponse(BaseModel):
         default_factory=dict, description="Request counts per endpoint"
     )
     avg_latency_ms: float = Field(default=0.0, description="Average latency in ms")
+
+
+class ReadinessResponse(BaseModel):
+    """Readiness check response."""
+
+    status: str = Field(..., description="ready or not_ready")
+    checks: dict[str, Any] = Field(default_factory=dict, description="Readiness check details")
 
 
 class ErrorDetail(BaseModel):

@@ -1,6 +1,27 @@
-# Encrypted Information Retrieval for Financial Services
+# Privacy-Preserving Retrieval Prototype for Regulated AI/RAG
 
-A comprehensive Python implementation of encrypted information retrieval techniques suitable for financial services applications. This library provides practical implementations of various encryption schemes that enable searching and computing on encrypted data.
+A portfolio-grade Python prototype for encrypted information retrieval in regulated AI and financial-services settings. The project demonstrates how equality search, keyword retrieval, range queries, key lifecycle controls, and encrypted computation can be composed into RAG-ready privacy infrastructure.
+
+This is **not** an audited production cryptography product. It is a production-oriented implementation demo with explicit leakage notes, tests, Docker Compose, and a durable PostgreSQL-backed retrieval workflow.
+
+## What is Real vs Demo
+
+**Real, working implementation**
+
+- AES-SIV deterministic encryption for equality-search demonstrations
+- HMAC blind indexes with tenant-scoped keys
+- AES-GCM encrypted document storage with deterministic keyword tokens
+- PostgreSQL-backed document/key/audit persistence for the API workflow
+- Key lifecycle primitives, file/database storage backends, and AWS KMS abstraction
+- TenSEAL-based CKKS examples for encrypted arithmetic
+- FastAPI endpoints, Docker Compose, CI, and a broad pytest suite
+
+**Prototype/demo boundaries**
+
+- Custom ORE and forward/private SSE paths are research-backed prototypes, not externally audited cryptographic implementations.
+- The local auth layer is suitable for demos and tests; production deployments need real identity, policy, and secret management.
+- RAG support is retrieval-only: no embeddings, vector database, or LLM calls are included.
+- Legacy `/v1/encrypt`, `/v1/decrypt`, and `/v1/search/*` routes remain compatibility demos; the durable workflow is under `/v1/documents` and `/v1/rag/retrieve`.
 
 ## Overview
 
@@ -14,13 +35,82 @@ Based on the comprehensive analysis in [ANALYSIS.md](ANALYSIS.md), this library 
 
 ## Features
 
-- 🔒 **Production-ready encryption**: Uses industry-standard cryptographic libraries
+- 🔒 **Production-oriented crypto demo**: Uses standard libraries where practical and labels prototype primitives explicitly
 - 🔍 **Search capabilities**: Search encrypted data without decryption
 - 📊 **Range queries**: Query numeric data while maintaining encryption
 - 🧮 **Encrypted computation**: Perform calculations on encrypted values
 - 🔑 **Key management**: Comprehensive key lifecycle management with audit logging
-- 💼 **Financial use cases**: Pre-built implementations for common FS scenarios
+- 🧾 **Durable RAG retrieval**: PostgreSQL-backed encrypted document ingestion and keyword-token retrieval
+- 💼 **Financial use cases**: Pre-built implementations for common financial-services scenarios
 - ✅ **Well-tested**: Comprehensive test suite with >95% coverage
+
+## Docker Compose Demo
+
+Run the PostgreSQL-backed API workflow:
+
+```bash
+docker compose up --build
+```
+
+Open the API docs at <http://localhost:8000/docs>.
+
+The Compose stack configures:
+
+- `api`: FastAPI app using `uvicorn encrypted_ir.api.main:create_app --factory`
+- `postgres`: durable PostgreSQL database for encrypted documents, keyword tokens, key metadata, and audit entries
+- `DATABASE_URL`, `ENCRYPTED_IR_MASTER_KEY_B64`, `ENCRYPTED_IR_ENV`, `ENCRYPTED_IR_AUTO_CREATE_TABLES`, `ENCRYPTED_IR_CORS_ORIGINS`, and demo auth environment variables
+- Alembic migrations run before the API starts
+
+Example RAG-ready retrieval flow:
+
+```bash
+curl -X POST http://localhost:8000/v1/documents \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: local-demo-key' \
+  -d '{"doc_id":"risk-001","content":"Quarterly fraud risk report for regulated RAG retrieval","metadata":{"source":"demo"}}'
+
+curl -X POST http://localhost:8000/v1/rag/retrieve \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: local-demo-key' \
+  -d '{"query":"fraud risk","top_k":3,"include_plaintext":true}'
+```
+
+The Compose stack enables `local-demo-key` through the dev-only auth path. Disable `ENCRYPTED_IR_DEV_AUTH_ENABLED` and configure real identity before treating the API as anything beyond a local demo.
+
+See [docs/DOCKER_COMPOSE_SMOKE_TEST.md](docs/DOCKER_COMPOSE_SMOKE_TEST.md) for a restart-persistence smoke test.
+
+## CTO Hardening Interfaces
+
+Production-oriented configuration is intentionally stricter than the local demo:
+
+- `ENCRYPTED_IR_ENV=dev|test|prod`
+- `ENCRYPTED_IR_OIDC_ISSUER`
+- `ENCRYPTED_IR_OIDC_AUDIENCE`
+- `ENCRYPTED_IR_OIDC_JWKS_URL`
+- `ENCRYPTED_IR_TENANT_CLAIM=tenant_id`
+- `ENCRYPTED_IR_ROLES_CLAIM=roles`
+- `ENCRYPTED_IR_KMS_PROVIDER=aws`
+- `ENCRYPTED_IR_AWS_KMS_KEY_ID`
+- `ENCRYPTED_IR_ENCRYPTED_MASTER_KEY_B64`
+
+Useful commands:
+
+```bash
+python -m encrypted_ir.tools.generate_kms_master_key \
+  --kms-key-id alias/encrypted-ir \
+  --region us-east-1
+
+alembic upgrade head
+
+python -m encrypted_ir.tools.benchmark_retrieval \
+  --database-url sqlite+pysqlite:///:memory: \
+  --documents 1000 \
+  --report benchmarks/reports/latest_retrieval.md
+```
+
+See [docs/PORTFOLIO_EVIDENCE.md](docs/PORTFOLIO_EVIDENCE.md),
+[docs/LEAKAGE_AND_ENDPOINTS.md](docs/LEAKAGE_AND_ENDPOINTS.md), and
+[docs/CTO_DEMO_SCRIPT.md](docs/CTO_DEMO_SCRIPT.md) for the security narrative.
 
 ## Installation
 
@@ -29,8 +119,11 @@ Based on the comprehensive analysis in [ANALYSIS.md](ANALYSIS.md), this library 
 git clone https://github.com/yourusername/encrypted-information-retrieval.git
 cd encrypted-information-retrieval
 
-# Install dependencies
+# Install API/core dependencies
 pip install -r requirements.txt
+
+# Optional research demos: CKKS homomorphic encryption and post-quantum crypto
+pip install -r requirements-research.txt
 
 # Install the package
 pip install -e .
@@ -356,18 +449,19 @@ Based on the analysis, here are typical performance characteristics:
 
 ## Compliance
 
-This implementation supports compliance with:
+This prototype demonstrates technical controls that can support future
+compliance work, but it is not certified or audit-ready by itself:
 
 - **PCI DSS 4.0**: Cardholder data encryption
 - **GDPR**: Data minimization and privacy by design
 - **SOX**: Data integrity controls
-- **DORA**: Operational resilience requirements
+- **DORA**: Operational resilience design inputs
 
 ## Roadmap
 
 - [x] Post-quantum cryptography support (ML-KEM, ML-DSA)
 - [ ] Hardware acceleration (GPU/FPGA support)
-- [x] Cloud KMS integration (AWS KMS, Azure Key Vault, GCP KMS)
+- [x] AWS KMS-wrapped app master key path
 - [x] Advanced searchable encryption (conjunctive queries)
 - [ ] Encrypted machine learning support
 - [x] Format-preserving encryption (FF1, NIST SP 800-38G)
