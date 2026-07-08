@@ -12,7 +12,8 @@ It is not externally audited and is not production-certified cryptography.
 
 | Check | Result |
 | --- | --- |
-| Full pytest suite | `770 passed, 1 skipped, 11 warnings in 73.95s` |
+| Full pytest suite, Python 3.11 | `774 passed, 1 skipped, 11 warnings in 69.89s` |
+| Full pytest suite, Python 3.12 | `774 passed, 1 skipped, 17 warnings in 73.58s` |
 | Focused API/security/storage suite | `104 passed in 2.19s` |
 | Alembic migration smoke | `upgrade -> 20260706_0001` succeeded |
 | Docker Compose build/start | Passed |

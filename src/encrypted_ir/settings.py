@@ -68,7 +68,7 @@ class EncryptedIRSettings:
     def uses_kms(self) -> bool:
         return self.kms_provider is not None
 
-    def validate(self) -> None:
+    def validate(self) -> None:  # noqa: C901
         """Validate environment-specific safety rules."""
         if self.environment not in {"dev", "test", "prod"}:
             raise ValueError("ENCRYPTED_IR_ENV must be one of: dev, test, prod")

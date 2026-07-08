@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import base64
 import os
+from typing import cast
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
@@ -119,7 +120,7 @@ class MLKEM:
         """
         mod = _KEM_PARAMS[security_level]
         ciphertext, shared_secret = mod.encrypt(public_key)
-        return shared_secret, ciphertext
+        return cast(bytes, shared_secret), cast(bytes, ciphertext)
 
     def decapsulate(self, ciphertext: bytes) -> bytes:
         """
@@ -136,7 +137,7 @@ class MLKEM:
         """
         if self._secret_key is None:
             raise RuntimeError("No secret key — call generate_keypair() or load_secret_key() first")
-        return self._mod.decrypt(self._secret_key, ciphertext)
+        return cast(bytes, self._mod.decrypt(self._secret_key, ciphertext))
 
     def get_public_key(self) -> bytes:
         """Return the public key bytes."""
@@ -239,7 +240,7 @@ class MLDSA:
         """
         if self._secret_key is None:
             raise RuntimeError("No secret key — call generate_keypair() or load_secret_key() first")
-        return self._mod.sign(self._secret_key, message)
+        return cast(bytes, self._mod.sign(self._secret_key, message))
 
     @staticmethod
     def verify(
@@ -258,7 +259,7 @@ class MLDSA:
             True if the signature is valid, False otherwise.
         """
         mod = _DSA_PARAMS[security_level]
-        return mod.verify(public_key, message, signature)
+        return bool(mod.verify(public_key, message, signature))
 
     def get_public_key(self) -> bytes:
         """Return the public key bytes."""
@@ -546,7 +547,7 @@ class PostQuantumEncryption:
 
         # Decrypt with AES-256-GCM
         aesgcm = AESGCM(shared_secret)
-        return aesgcm.decrypt(nonce, ciphertext, None)
+        return cast(bytes, aesgcm.decrypt(nonce, ciphertext, None))
 
     def sign_document(self, document: bytes) -> bytes:
         """
@@ -589,4 +590,4 @@ def _combine_secrets(kem_secret: bytes, x25519_secret: bytes) -> bytes:
     digest = hashes.Hash(hashes.SHA256())
     digest.update(kem_secret)
     digest.update(x25519_secret)
-    return digest.finalize()
+    return cast(bytes, digest.finalize())

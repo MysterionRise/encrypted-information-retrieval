@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import abc
 import base64
+from typing import Any, cast
 
 
 class KMSProvider(abc.ABC):
@@ -121,7 +122,7 @@ class AWSKMSProvider(KMSProvider):
         self,
         key_id: str,
         region: str | None = None,
-        boto3_session: object | None = None,
+        boto3_session: Any | None = None,
     ):
         try:
             import boto3
@@ -154,7 +155,7 @@ class AWSKMSProvider(KMSProvider):
             KeyId=self._key_id,
             KeySpec=key_spec,
         )
-        return response["Plaintext"], response["CiphertextBlob"]
+        return cast(bytes, response["Plaintext"]), cast(bytes, response["CiphertextBlob"])
 
     def encrypt(self, plaintext: bytes) -> bytes:
         """Encrypt data using AWS KMS Encrypt API.
@@ -176,7 +177,7 @@ class AWSKMSProvider(KMSProvider):
             KeyId=self._key_id,
             Plaintext=plaintext,
         )
-        return response["CiphertextBlob"]
+        return cast(bytes, response["CiphertextBlob"])
 
     def decrypt(self, ciphertext: bytes) -> bytes:
         """Decrypt data using AWS KMS Decrypt API.
@@ -194,7 +195,7 @@ class AWSKMSProvider(KMSProvider):
         response = self._client.decrypt(
             CiphertextBlob=ciphertext,
         )
-        return response["Plaintext"]
+        return cast(bytes, response["Plaintext"])
 
     def get_key_id(self) -> str:
         """Get the configured AWS KMS key identifier."""
@@ -211,7 +212,7 @@ class AWSKMSProvider(KMSProvider):
         try:
             response = self._client.describe_key(KeyId=self._key_id)
             key_metadata = response["KeyMetadata"]
-            return key_metadata["Enabled"] and key_metadata["KeyState"] == "Enabled"
+            return bool(key_metadata["Enabled"] and key_metadata["KeyState"] == "Enabled")
         except Exception:
             return False
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from typing import TypeAlias, cast
 
 from fastapi import APIRouter, Depends, Request
 
@@ -16,11 +17,13 @@ from ..models.responses import DecryptResponse, EncryptResponse
 
 router = APIRouter(prefix="/v1", tags=["data"])
 
+CipherInstance: TypeAlias = DeterministicEncryption | SearchableEncryption
+
 # Per-tenant cipher instances (in production, keys come from KeyManager/KMS)
-_tenant_ciphers: dict[str, dict] = {}
+_tenant_ciphers: dict[str, CipherInstance] = {}
 
 
-def _get_cipher(tenant_id: str, algorithm: str):
+def _get_cipher(tenant_id: str, algorithm: str) -> CipherInstance:
     """Get or create a cipher instance for a tenant."""
     key = f"{tenant_id}:{algorithm}"
     if key not in _tenant_ciphers:
@@ -54,10 +57,12 @@ async def encrypt(
     cipher = _get_cipher(tenant.tenant_id, body.algorithm)
 
     if body.algorithm == "aes-siv":
-        ciphertext_bytes = cipher.encrypt(body.plaintext)
+        deterministic_cipher = cast(DeterministicEncryption, cipher)
+        ciphertext_bytes = deterministic_cipher.encrypt(body.plaintext)
         ciphertext_b64 = base64.b64encode(ciphertext_bytes).decode("ascii")
     else:
-        encrypted_doc, _ = cipher.encrypt_document(body.plaintext)
+        searchable_cipher = cast(SearchableEncryption, cipher)
+        encrypted_doc, _ = searchable_cipher.encrypt_document(body.plaintext)
         ciphertext_b64 = base64.b64encode(encrypted_doc).decode("ascii")
 
     return EncryptResponse(
@@ -86,9 +91,11 @@ async def decrypt(
     ciphertext_bytes = base64.b64decode(body.ciphertext)
 
     if body.algorithm == "aes-siv":
-        plaintext_bytes = cipher.decrypt(ciphertext_bytes)
+        deterministic_cipher = cast(DeterministicEncryption, cipher)
+        plaintext_bytes = deterministic_cipher.decrypt(ciphertext_bytes)
     else:
-        plaintext_bytes = cipher.decrypt_document(ciphertext_bytes)
+        searchable_cipher = cast(SearchableEncryption, cipher)
+        plaintext_bytes = searchable_cipher.decrypt_document(ciphertext_bytes)
 
     return DecryptResponse(
         plaintext=plaintext_bytes.decode("utf-8"),

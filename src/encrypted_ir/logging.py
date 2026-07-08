@@ -97,9 +97,9 @@ def _redact_value(key: str, value: Any) -> Any:
     return value
 
 
-def _sanitize_dict(data: dict) -> dict:
+def _sanitize_dict(data: dict[str, Any]) -> dict[str, Any]:
     """Recursively sanitize a dictionary, redacting sensitive values."""
-    sanitized = {}
+    sanitized: dict[str, Any] = {}
     for k, v in data.items():
         if isinstance(v, dict):
             sanitized[k] = _sanitize_dict(v)
@@ -144,9 +144,9 @@ class StructuredFormatter(logging.Formatter):
 
         return json.dumps(log_entry, default=str)
 
-    def formatTime(
+    def formatTime(  # noqa: N802
         self, record: logging.LogRecord, datefmt: str | None = None
-    ) -> str:  # noqa: N802
+    ) -> str:
         """ISO-8601 timestamp with millisecond precision."""
         ct = self.converter(record.created)
         if datefmt:

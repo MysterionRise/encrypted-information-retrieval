@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import os
+from typing import cast
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes
@@ -45,7 +46,7 @@ class DeterministicEncryption:
     @staticmethod
     def generate_key() -> bytes:
         """Generate a new 512-bit key for AES-SIV."""
-        return AESSIV.generate_key(bit_length=512)
+        return cast(bytes, AESSIV.generate_key(bit_length=512))
 
     @staticmethod
     def derive_key(password: str, salt: bytes = None) -> tuple[bytes, bytes]:
@@ -88,7 +89,7 @@ class DeterministicEncryption:
         if associated_data is None:
             associated_data = []
 
-        ciphertext = self._cipher.encrypt(plaintext, associated_data)
+        ciphertext = cast(bytes, self._cipher.encrypt(plaintext, associated_data))
         return ciphertext
 
     def decrypt(self, ciphertext: bytes, associated_data: list[bytes] = None) -> bytes:
@@ -109,7 +110,7 @@ class DeterministicEncryption:
             associated_data = []
 
         try:
-            plaintext = self._cipher.decrypt(ciphertext, associated_data)
+            plaintext = cast(bytes, self._cipher.decrypt(ciphertext, associated_data))
             return plaintext
         except InvalidTag as e:
             raise ValueError("Decryption failed - invalid key or corrupted data") from e

@@ -5,10 +5,14 @@ from __future__ import annotations
 import argparse
 import statistics
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import TypeVar
 
 from encrypted_ir.database import create_database_engine, create_database_schema
 from encrypted_ir.document_service import DocumentService
+
+T = TypeVar("T")
 
 
 def _doc_content(i: int) -> str:
@@ -19,13 +23,15 @@ def _doc_content(i: int) -> str:
     )
 
 
-def _measure(fn, rounds: int = 1) -> tuple[float, object]:
+def _measure(fn: Callable[[], T], rounds: int = 1) -> tuple[float, T]:
     durations = []
-    result = None
+    result: T | None = None
     for _ in range(rounds):
         start = time.perf_counter()
         result = fn()
         durations.append((time.perf_counter() - start) * 1000)
+    if result is None:
+        raise RuntimeError("benchmark measure did not execute")
     return statistics.mean(durations), result
 
 

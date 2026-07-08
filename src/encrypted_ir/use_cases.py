@@ -7,15 +7,18 @@ in financial services scenarios.
 
 from __future__ import annotations
 
+from typing import Any
+
 from .deterministic import DeterministicEncryption
 from .key_manager import KeyManager
 from .order_preserving import OrderPreservingEncryption
 from .searchable import SearchableEncryption
 
+_BasicHomomorphicEncryption: Any
 try:
-    from .homomorphic import BasicHomomorphicEncryption
+    from .homomorphic import BasicHomomorphicEncryption as _BasicHomomorphicEncryption
 except ImportError:
-    BasicHomomorphicEncryption = None
+    _BasicHomomorphicEncryption = None
 
 
 class AccountManagement:
@@ -232,12 +235,12 @@ class CreditScoring:
     HISTORY_CAP = 120.0  # months (10 years)
 
     def __init__(self):
-        if BasicHomomorphicEncryption is None:
+        if _BasicHomomorphicEncryption is None:
             raise ImportError(
                 "CreditScoring requires the optional TenSEAL dependency. "
                 "Install requirements-research.txt or the research extra."
             )
-        self.encryptor = BasicHomomorphicEncryption()
+        self.encryptor = _BasicHomomorphicEncryption()
 
     def encrypt_financial_data(
         self, income: float, debt: float, credit_history_months: int
@@ -292,7 +295,7 @@ class CreditScoring:
             return float("inf")
 
         debt_val = self.encryptor.decrypt_value(enc_debt)
-        return debt_val / income_val
+        return float(debt_val / income_val)
 
     def calculate_credit_score(
         self, encrypted_data: dict[str, str], weights: dict[str, float] = None
@@ -350,7 +353,7 @@ class CreditScoring:
 
         # Scale to 300-850 range and clamp
         credit_score = 300 + (raw_score * 550)
-        return max(300, min(850, credit_score))
+        return float(max(300, min(850, credit_score)))
 
 
 class FraudDetection:
@@ -377,7 +380,7 @@ class FraudDetection:
         det_key = key_manager.get_key(self.det_key_id)
         self.det_encryptor = DeterministicEncryption(det_key)
 
-    def encrypt_transaction(self, account_id: str, amount: float, merchant: str) -> dict[str, any]:
+    def encrypt_transaction(self, account_id: str, amount: float, merchant: str) -> dict[str, Any]:
         """
         Encrypt transaction data.
 

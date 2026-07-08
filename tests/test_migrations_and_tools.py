@@ -5,9 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from alembic import command
-
-from encrypted_ir.migrations import alembic_config, migration_head, migration_status
 from encrypted_ir.database import create_database_engine
+from encrypted_ir.migrations import alembic_config, migration_head, migration_status
 from encrypted_ir.tools import benchmark_retrieval
 
 
@@ -43,3 +42,14 @@ def test_retrieval_benchmark_writes_report(tmp_path, monkeypatch):
     text = Path(report_path).read_text()
     assert "Retrieval Benchmark Report" in text
     assert "Documents: 5" in text
+
+
+def test_makefile_uses_configured_python_variable():
+    makefile = Path("Makefile").read_text()
+
+    assert "PYTHON ?= python3.11" in makefile
+    assert "PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest" in makefile
+    assert "$(PYTHON) -m black" in makefile
+    assert "$(PYTHON) -m ruff" in makefile
+    assert "$(PYTHON) -m bandit" in makefile
+    assert "PYTHONPATH=src:$$PYTHONPATH python -m pytest" not in makefile

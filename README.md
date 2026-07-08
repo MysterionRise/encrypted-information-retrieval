@@ -26,6 +26,18 @@ This repo is strongest as a CTO portfolio artifact: real enough to run locally w
 
 ## Run The Portfolio Demo
 
+For a fast, dependency-light demo that exercises library APIs only:
+
+```bash
+PYTHONPATH=src python3.11 examples/portfolio_demo.py
+```
+
+The script prints deterministic JSON covering tenant-scoped blind indexes,
+encrypted document search, ORE range query, key/audit lifecycle, and the RAG
+retrieval privacy boundary.
+
+For the API and PostgreSQL workflow:
+
 ```bash
 docker compose up --build
 ```
@@ -56,7 +68,7 @@ curl -X POST http://localhost:8000/v1/rag/retrieve \
 
 The Compose stack enables `local-demo-key` through explicit dev-only auth. Disable `ENCRYPTED_IR_DEV_AUTH_ENABLED` and configure OIDC/JWKS before treating the API as anything beyond a local demo.
 
-See [docs/CTO_DEMO_SCRIPT.md](docs/CTO_DEMO_SCRIPT.md) and [docs/DOCKER_COMPOSE_SMOKE_TEST.md](docs/DOCKER_COMPOSE_SMOKE_TEST.md) for the review flow.
+See [docs/CTO_DEMO_SCRIPT.md](docs/CTO_DEMO_SCRIPT.md) and [docs/DOCKER_COMPOSE_SMOKE_TEST.md](docs/DOCKER_COMPOSE_SMOKE_TEST.md) for the full review flow.
 
 ## Install Locally
 
@@ -78,9 +90,9 @@ python3.11 -m pip install -r requirements-research.txt
 
 ```bash
 PYTHONPATH=src python3.11 -m pytest -q -W ignore::DeprecationWarning
-python3.11 -m black --check src tests
-python3.11 -m ruff check src tests
-PYTHONPATH=src python3.11 -m mypy src/encrypted_ir --ignore-missing-imports --no-strict-optional
+python3.11 -m black --check src tests examples
+python3.11 -m ruff check src tests examples
+PYTHONPATH=src python3.11 -m mypy --disable-error-code redundant-cast src/encrypted_ir --ignore-missing-imports --no-strict-optional
 python3.11 -m bandit -r src -ll -f screen
 python3.11 -m build
 python3.11 -m twine check dist/*
@@ -108,6 +120,8 @@ python -m encrypted_ir.tools.benchmark_retrieval \
 Read these first:
 
 - [docs/PORTFOLIO_EVIDENCE.md](docs/PORTFOLIO_EVIDENCE.md): latest portfolio evidence and verification summary.
+- [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md): current implementation status, commands, limitations, and production gaps.
+- [docs/PORTFOLIO_CASE_STUDY.md](docs/PORTFOLIO_CASE_STUDY.md): CTO-facing case study and roadmap framing.
 - [docs/CTO_DEMO_SCRIPT.md](docs/CTO_DEMO_SCRIPT.md): five-minute review script.
 - [docs/LEAKAGE_AND_ENDPOINTS.md](docs/LEAKAGE_AND_ENDPOINTS.md): API leakage map and production boundary.
 - [docs/DOCKER_COMPOSE_SMOKE_TEST.md](docs/DOCKER_COMPOSE_SMOKE_TEST.md): persistence smoke test.

@@ -27,6 +27,9 @@ import hmac
 import os
 import unicodedata
 from dataclasses import dataclass
+from typing import Literal, cast
+
+UnicodeNormalization = Literal["NFC", "NFD", "NFKC", "NFKD"]
 
 
 @dataclass
@@ -123,7 +126,8 @@ class BlindIndexGenerator:
 
         # Unicode normalization (e.g., decompose accented characters)
         if config.unicode_normalize:
-            normalized = unicodedata.normalize(config.unicode_normalize, normalized)
+            normalization = cast(UnicodeNormalization, config.unicode_normalize)
+            normalized = unicodedata.normalize(normalization, normalized)
 
         # Case normalization
         if not config.case_sensitive:

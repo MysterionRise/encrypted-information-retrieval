@@ -11,6 +11,7 @@ secure multi-party analytics, regulatory reporting on encrypted data.
 from __future__ import annotations
 
 import base64
+from typing import cast
 
 import tenseal as ts
 
@@ -112,7 +113,7 @@ class BasicHomomorphicEncryption:
             Decrypted value (float)
         """
         decrypted = encrypted_value.decrypt()
-        return decrypted[0] if isinstance(decrypted, list) else decrypted
+        return float(decrypted[0] if isinstance(decrypted, list) else decrypted)
 
     def decrypt_vector(self, encrypted_vector: ts.CKKSVector) -> list[float]:
         """
@@ -124,7 +125,7 @@ class BasicHomomorphicEncryption:
         Returns:
             List of decrypted values
         """
-        return encrypted_vector.decrypt()
+        return cast(list[float], encrypted_vector.decrypt())
 
     def add_encrypted(self, enc1: ts.CKKSVector, enc2: ts.CKKSVector) -> ts.CKKSVector:
         """
@@ -269,7 +270,7 @@ class BasicHomomorphicEncryption:
         Returns:
             Serialized bytes
         """
-        return encrypted.serialize()
+        return cast(bytes, encrypted.serialize())
 
     def deserialize_encrypted(self, data: bytes) -> ts.CKKSVector:
         """
@@ -316,7 +317,7 @@ class BasicHomomorphicEncryption:
         Returns:
             Serialized context
         """
-        return self.context.serialize(save_secret_key=True)
+        return cast(bytes, self.context.serialize(save_secret_key=True))
 
     def export_public_context(self) -> bytes:
         """
@@ -325,7 +326,7 @@ class BasicHomomorphicEncryption:
         Returns:
             Serialized public context
         """
-        return self.context.serialize(save_secret_key=False)
+        return cast(bytes, self.context.serialize(save_secret_key=False))
 
     def export_context_to_base64(self) -> str:
         """

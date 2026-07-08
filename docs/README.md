@@ -8,6 +8,8 @@ This repo contains both current portfolio evidence and older planning/reference 
 | --- | --- |
 | [../README.md](../README.md) | Concise project entry point, demo path, boundaries, and commands. |
 | [PORTFOLIO_EVIDENCE.md](PORTFOLIO_EVIDENCE.md) | Current portfolio evidence and verification summary. |
+| [CURRENT_STATUS.md](CURRENT_STATUS.md) | Current implementation status, quality commands, known limitations, and production gaps. |
+| [PORTFOLIO_CASE_STUDY.md](PORTFOLIO_CASE_STUDY.md) | CTO-facing case study for the regulated AI/RAG retrieval prototype. |
 | [CTO_DEMO_SCRIPT.md](CTO_DEMO_SCRIPT.md) | Five-minute demo script for CTO review. |
 | [LEAKAGE_AND_ENDPOINTS.md](LEAKAGE_AND_ENDPOINTS.md) | Endpoint-to-leakage map and production boundary. |
 | [DOCKER_COMPOSE_SMOKE_TEST.md](DOCKER_COMPOSE_SMOKE_TEST.md) | Local restart-persistence smoke test. |

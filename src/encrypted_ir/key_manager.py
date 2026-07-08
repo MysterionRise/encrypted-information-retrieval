@@ -19,7 +19,7 @@ import hashlib
 import json
 import os
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -262,14 +262,14 @@ class KeyManager:
         aesgcm = AESGCM(self.master_key)
         nonce = os.urandom(12)
         ciphertext = aesgcm.encrypt(nonce, key, None)
-        return nonce + ciphertext
+        return cast(bytes, nonce + ciphertext)
 
     def _decrypt_key(self, encrypted_key: bytes) -> bytes:
         """Decrypt a key using the master key."""
         aesgcm = AESGCM(self.master_key)
         nonce = encrypted_key[:12]
         ciphertext = encrypted_key[12:]
-        return aesgcm.decrypt(nonce, ciphertext, None)
+        return cast(bytes, aesgcm.decrypt(nonce, ciphertext, None))
 
     def _generate_key_id(self, key_type: str) -> str:
         """Generate a unique key ID."""
@@ -534,7 +534,7 @@ class KeyManager:
         export_key, salt = self.derive_master_key(password)
 
         # Prepare data to export
-        export_data = {"keys": {}, "metadata": {}, "version": "1.0"}
+        export_data: dict[str, Any] = {"keys": {}, "metadata": {}, "version": "1.0"}
 
         for key_id, key in self._keys.items():
             export_data["keys"][key_id] = base64.b64encode(key).decode("ascii")

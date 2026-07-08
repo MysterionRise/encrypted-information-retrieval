@@ -15,6 +15,7 @@ import base64
 import hashlib
 import hmac
 import os
+from typing import cast
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
@@ -207,7 +208,7 @@ class SearchableEncryption:
 
         try:
             plaintext = decryptor.update(ciphertext) + decryptor.finalize()
-            return plaintext
+            return cast(bytes, plaintext)
         except Exception as e:
             raise ValueError("Decryption failed - invalid key or corrupted data") from e
 
@@ -493,7 +494,7 @@ class ForwardPrivateSSE:
         cipher = Cipher(algorithms.AES(entry_key), modes.GCM(iv))
         encryptor = cipher.encryptor()
         ct = encryptor.update(doc_id.encode("utf-8")) + encryptor.finalize()
-        return salt + iv + encryptor.tag + ct
+        return cast(bytes, salt + iv + encryptor.tag + ct)
 
     def _decrypt_entry(self, state: bytes, encrypted_entry: bytes) -> str:
         """Decrypt a document ID from an encrypted entry."""
@@ -504,7 +505,7 @@ class ForwardPrivateSSE:
         entry_key = self._derive_entry_key(state, salt)
         cipher = Cipher(algorithms.AES(entry_key), modes.GCM(iv, tag))
         decryptor = cipher.decryptor()
-        return (decryptor.update(ct) + decryptor.finalize()).decode("utf-8")
+        return cast(str, (decryptor.update(ct) + decryptor.finalize()).decode("utf-8"))
 
     def add_document(
         self,

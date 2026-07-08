@@ -5,16 +5,18 @@ from __future__ import annotations
 import os
 import warnings
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Optional
+from enum import StrEnum
+from typing import Any, cast
 
 from fastapi import Depends, HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 
 from encrypted_ir.settings import EncryptedIRSettings
 
+DEFAULT_DEV_JWT_SECRET = "dev-secret-change-in-production-32b"  # noqa: S105
 
-class Role(str, Enum):
+
+class Role(StrEnum):
     """User roles for RBAC."""
 
     ADMIN = "admin"
@@ -37,7 +39,7 @@ class AuthConfig:
 
     environment: str = "dev"
     dev_auth_enabled: bool = True
-    jwt_secret: str = "dev-secret-change-in-production"
+    jwt_secret: str = DEFAULT_DEV_JWT_SECRET
     oidc_issuer: str | None = None
     oidc_audience: str | None = None
     oidc_jwks_url: str | None = None
@@ -91,12 +93,15 @@ class OIDCVerifier:
             import jwt
 
             signing_key = self._client().get_signing_key_from_jwt(token)
-            return jwt.decode(
-                token,
-                signing_key.key,
-                algorithms=["RS256"],
-                audience=self._config.oidc_audience,
-                issuer=self._config.oidc_issuer,
+            return cast(
+                dict[str, Any],
+                jwt.decode(
+                    token,
+                    signing_key.key,
+                    algorithms=["RS256"],
+                    audience=self._config.oidc_audience,
+                    issuer=self._config.oidc_issuer,
+                ),
             )
         except Exception as e:
             raise HTTPException(
@@ -110,7 +115,7 @@ bearer_scheme = HTTPBearer(auto_error=False)
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 # Secret key for JWT verification - must be set via environment variable in production
-JWT_SECRET = os.environ.get("ENCRYPTED_IR_JWT_SECRET", "dev-secret-change-in-production")
+JWT_SECRET = os.environ.get("ENCRYPTED_IR_JWT_SECRET", DEFAULT_DEV_JWT_SECRET)
 JWT_ALGORITHM = "HS256"
 DEV_AUTH_ENABLED = os.environ.get("ENCRYPTED_IR_DEV_AUTH_ENABLED", "true").lower() in {
     "1",
@@ -121,7 +126,7 @@ DEV_AUTH_ENABLED = os.environ.get("ENCRYPTED_IR_DEV_AUTH_ENABLED", "true").lower
 DEV_API_KEY = os.environ.get("ENCRYPTED_IR_DEV_API_KEY", "local-demo-key")
 DEV_TENANT_ID = os.environ.get("ENCRYPTED_IR_DEV_TENANT_ID", "local-demo")
 
-if JWT_SECRET == "dev-secret-change-in-production":
+if JWT_SECRET == DEFAULT_DEV_JWT_SECRET:
     if not DEV_AUTH_ENABLED:
         raise RuntimeError(
             "ENCRYPTED_IR_JWT_SECRET must be set when ENCRYPTED_IR_DEV_AUTH_ENABLED=false"
@@ -156,55 +161,33 @@ def _decode_dev_jwt(token: str, config: AuthConfig) -> dict:
         HTTPException: If the token is invalid or expired.
     """
 
-    def _decode_unsigned_dev_payload() -> dict:
-        import base64
-        import json
-
-        parts = token.split(".")
-        if len(parts) != 3:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token format",
-            )
-        payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
-        return json.loads(base64.urlsafe_b64decode(payload_b64))
-
     try:
         import jwt
 
-        payload = jwt.decode(token, config.jwt_secret, algorithms=[JWT_ALGORITHM])
+        payload = cast(
+            dict[str, Any], jwt.decode(token, config.jwt_secret, algorithms=[JWT_ALGORITHM])
+        )
         return payload
-    except ImportError:
-        if not config.dev_auth_enabled:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="PyJWT is required when development auth is disabled",
-            )
-        try:
-            return _decode_unsigned_dev_payload()
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token",
-            ) from e
+    except ImportError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="PyJWT is required for JWT authentication",
+        ) from e
     except jwt.ExpiredSignatureError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired",
         ) from e
     except jwt.InvalidTokenError as e:
-        if config.dev_auth_enabled:
-            try:
-                return _decode_unsigned_dev_payload()
-            except Exception:
-                pass
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token: {e}",
         ) from e
 
 
-def _extract_tenant_from_jwt(payload: dict, config: AuthConfig | None = None) -> TenantInfo:
+def _extract_tenant_from_jwt(  # noqa: C901
+    payload: dict, config: AuthConfig | None = None
+) -> TenantInfo:
     """Extract tenant information from JWT payload."""
     config = config or AuthConfig()
     tenant_id = payload.get(config.tenant_claim)
@@ -266,8 +249,8 @@ def _extract_tenant_from_jwt(payload: dict, config: AuthConfig | None = None) ->
 
 async def get_current_tenant(
     request: Request,
-    bearer: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_header),
+    bearer: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
+    api_key: str | None = Security(api_key_header),
 ) -> TenantInfo:
     """Extract and validate the current tenant from auth credentials.
 

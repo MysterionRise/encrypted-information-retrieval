@@ -209,7 +209,7 @@ class VersionedBlob:
     def _hash_key_id(key_id: str) -> int:
         """Hash a key ID to a 32-bit integer for compact storage."""
         digest = hashlib.sha256(key_id.encode()).digest()
-        return struct.unpack(">I", digest[:4])[0]
+        return int(struct.unpack(">I", digest[:4])[0])
 
     @staticmethod
     def find_key_id(blob: bytes, candidate_key_ids: list[str]) -> str | None:

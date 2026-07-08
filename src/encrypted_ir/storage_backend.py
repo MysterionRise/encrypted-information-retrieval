@@ -17,6 +17,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+from typing import Any, cast
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from sqlalchemy import delete, insert, select
@@ -149,16 +150,16 @@ class FileStorageBackend(StorageBackend):
         aesgcm = AESGCM(self._encryption_key)
         nonce = os.urandom(12)
         ciphertext = aesgcm.encrypt(nonce, data, None)
-        return nonce + ciphertext
+        return cast(bytes, nonce + ciphertext)
 
     def _decrypt_data(self, data: bytes) -> bytes:
         """Decrypt data encrypted with _encrypt_data."""
         aesgcm = AESGCM(self._encryption_key)
         nonce = data[:12]
         ciphertext = data[12:]
-        return aesgcm.decrypt(nonce, ciphertext, None)
+        return cast(bytes, aesgcm.decrypt(nonce, ciphertext, None))
 
-    def _read_store(self) -> dict:
+    def _read_store(self) -> dict[str, Any]:
         """Read and decrypt the key store file.
 
         Returns:
@@ -176,7 +177,7 @@ class FileStorageBackend(StorageBackend):
                 fcntl.flock(f, fcntl.LOCK_UN)
 
         plaintext = self._decrypt_data(encrypted)
-        return json.loads(plaintext.decode("utf-8"))
+        return cast(dict[str, Any], json.loads(plaintext.decode("utf-8")))
 
     def _write_store(self, store: dict) -> None:
         """Encrypt and write the key store file atomically.
@@ -317,7 +318,7 @@ class DatabaseStorageBackend(StorageBackend):
                     key_store_table.c.key_id == key_id,
                 )
             )
-        return result.rowcount > 0
+        return bool(result.rowcount > 0)
 
     def list_keys(self) -> list[str]:
         stmt = select(key_store_table.c.key_id).where(

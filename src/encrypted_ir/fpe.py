@@ -29,6 +29,7 @@ from __future__ import annotations
 import base64
 import math
 import os
+from typing import cast
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
@@ -83,7 +84,7 @@ class FF1:
         """Encrypt a single 16-byte block with AES-ECB."""
         cipher = Cipher(algorithms.AES(self.key), modes.ECB())  # nosec B305
         enc = cipher.encryptor()
-        return enc.update(block) + enc.finalize()
+        return cast(bytes, enc.update(block) + enc.finalize())
 
     def _prf(self, data: bytes) -> bytes:
         """
@@ -94,7 +95,7 @@ class FF1:
         iv = b"\x00" * 16
         cipher = Cipher(algorithms.AES(self.key), modes.CBC(iv))
         enc = cipher.encryptor()
-        ct = enc.update(data) + enc.finalize()
+        ct = cast(bytes, enc.update(data) + enc.finalize())
         return ct[-16:]
 
     @staticmethod

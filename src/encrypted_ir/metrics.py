@@ -9,11 +9,11 @@ Designed for integration with Prometheus/Grafana monitoring stacks.
 """
 
 from __future__ import annotations
-from __future__ import annotations
 
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
+from typing import cast
 
 try:
     from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, generate_latest
@@ -219,4 +219,4 @@ class EncryptionMetrics:
             Bytes in Prometheus text exposition format, suitable for
             serving on a /metrics endpoint.
         """
-        return generate_latest(self.registry)
+        return cast(bytes, generate_latest(self.registry))

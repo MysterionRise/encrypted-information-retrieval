@@ -323,4 +323,4 @@ class DocumentService:
                     documents_table.c.doc_id == doc_id,
                 )
             )
-        return result.rowcount > 0
+        return bool(result.rowcount > 0)

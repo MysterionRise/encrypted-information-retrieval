@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from typing import TypedDict
 
 from fastapi import APIRouter, Request, Response, status
 
@@ -14,11 +15,20 @@ router = APIRouter(tags=["admin"])
 
 _start_time: float = time.time()
 
+
+class MetricsState(TypedDict):
+    request_count: int
+    error_count: int
+    active_tenants: set[str]
+    requests_by_endpoint: dict[str, int]
+    total_latency_ms: float
+
+
 # Simple in-memory metrics counters
-_metrics = {
+_metrics: MetricsState = {
     "request_count": 0,
     "error_count": 0,
-    "active_tenants": set(),
+    "active_tenants": set[str](),
     "requests_by_endpoint": {},
     "total_latency_ms": 0.0,
 }
@@ -46,7 +56,7 @@ def reset_metrics() -> None:
     _start_time = time.time()
     _metrics["request_count"] = 0
     _metrics["error_count"] = 0
-    _metrics["active_tenants"] = set()
+    _metrics["active_tenants"] = set[str]()
     _metrics["requests_by_endpoint"] = {}
     _metrics["total_latency_ms"] = 0.0
 

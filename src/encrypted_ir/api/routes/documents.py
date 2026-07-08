@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from contextlib import suppress
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Request
 
@@ -31,7 +32,7 @@ def _service(request: Request) -> DocumentService:
     service = getattr(request.app.state, "document_service", None)
     if service is None:
         raise RuntimeError("Document service is not configured")
-    return service
+    return cast(DocumentService, service)
 
 
 def _actor(request: Request) -> str:
@@ -48,7 +49,7 @@ def _record_failure(
 ) -> None:
     """Best-effort sanitized failure audit for authorized document workflows."""
     audit_details = {"error_type": exc.__class__.__name__, **(details or {})}
-    try:
+    with suppress(Exception):
         _service(request).record_audit_event(
             tenant_id=tenant.tenant_id,
             event_type=event_type,
@@ -58,9 +59,6 @@ def _record_failure(
             details=audit_details,
             request_id=request.state.request_id,
         )
-    except Exception:
-        # Preserve the original endpoint failure if audit storage is unavailable.
-        pass
 
 
 @router.post(

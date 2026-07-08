@@ -87,7 +87,7 @@ class OrderPreservingEncryption:
         self.ciphertext_max = (1 << ciphertext_bits) - 1
 
         # Initialize mapping cache
-        self._mapping_cache = {}
+        self._mapping_cache: dict[int, int] = {}
 
     @staticmethod
     def generate_key() -> bytes:
@@ -111,7 +111,7 @@ class OrderPreservingEncryption:
 
         # Check cache
         if plaintext in self._mapping_cache:
-            return self._mapping_cache[plaintext]
+            return int(self._mapping_cache[plaintext])
 
         # Use HMAC as PRF to generate deterministic but unpredictable mapping
         # We create a mapping that preserves order
@@ -271,7 +271,7 @@ class OrderPreservingEncryption:
         Returns:
             Encrypted integer value
         """
-        return struct.unpack(">Q", ciphertext)[0]
+        return int(struct.unpack(">Q", ciphertext)[0])
 
     @staticmethod
     def decrypt_int_from_base64(ciphertext_b64: str) -> int:

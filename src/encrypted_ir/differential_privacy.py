@@ -28,7 +28,8 @@ import os
 import struct
 import threading
 import warnings
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 
 class PrivacyBudgetExhaustedError(Exception):
@@ -44,7 +45,7 @@ def _secure_random_float() -> float:
     # Use os.urandom for cryptographic randomness
     random_bytes = os.urandom(8)
     random_int = struct.unpack("<Q", random_bytes)[0]
-    return (random_int >> 11) * (2**-53)  # IEEE 754 double precision
+    return float((random_int >> 11) * (2**-53))  # IEEE 754 double precision
 
 
 def _secure_uniform(low: float, high: float) -> float:

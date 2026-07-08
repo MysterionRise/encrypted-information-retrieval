@@ -70,7 +70,7 @@ class ORE:
         self.key = key
         self._k_left = hmac.new(key, b"ore-lewi-wu-left", hashlib.sha256).digest()
         self._k_right = hmac.new(key, b"ore-lewi-wu-right", hashlib.sha256).digest()
-        self._cache = {}
+        self._cache: dict[int, bytes] = {}
 
     @staticmethod
     def generate_key() -> bytes:

@@ -3,6 +3,9 @@
 # Default target
 .DEFAULT_GOAL := help
 
+PYTHON ?= python3.11
+PIP ?= $(PYTHON) -m pip
+
 # Colors for output
 BLUE := \033[0;34m
 GREEN := \033[0;32m
@@ -27,9 +30,9 @@ help: ## Show this help message
 
 setup: ## Install dependencies and set up development environment
 	@echo "$(BLUE)Setting up development environment...$(NC)"
-	pip install --upgrade pip setuptools wheel
-	pip install -r requirements.txt
-	pip install -r requirements-dev.txt
+	$(PIP) install --upgrade pip setuptools wheel
+	$(PIP) install -r requirements.txt
+	$(PIP) install -r requirements-dev.txt
 	@echo "$(GREEN)✓ Dependencies installed$(NC)"
 	@echo "$(BLUE)Installing pre-commit hooks...$(NC)"
 	pre-commit install
@@ -43,21 +46,21 @@ setup: ## Install dependencies and set up development environment
 
 install-dev: ## Install development dependencies only
 	@echo "$(BLUE)Installing development dependencies...$(NC)"
-	pip install pytest pytest-cov pytest-benchmark black ruff mypy bandit safety pre-commit
+	$(PIP) install pytest pytest-cov pytest-benchmark black ruff mypy bandit safety pre-commit
 	@echo "$(GREEN)✓ Dev dependencies installed$(NC)"
 
 test: ## Run all tests
 	@echo "$(BLUE)Running tests...$(NC)"
-	PYTHONPATH=src:$$PYTHONPATH python -m pytest -v -W ignore::DeprecationWarning
+	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest -v -W ignore::DeprecationWarning
 	@echo "$(GREEN)✓ All tests passed$(NC)"
 
 test-verbose: ## Run tests with verbose output
 	@echo "$(BLUE)Running tests (verbose)...$(NC)"
-	PYTHONPATH=src:$$PYTHONPATH python -m pytest -vv --tb=long
+	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest -vv --tb=long
 
 test-coverage: ## Run tests with coverage report
 	@echo "$(BLUE)Running tests with coverage...$(NC)"
-	PYTHONPATH=src:$$PYTHONPATH python -m pytest \
+	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest \
 		--cov=src/encrypted_ir \
 		--cov-report=term-missing \
 		--cov-report=html \
@@ -69,7 +72,7 @@ test-coverage: ## Run tests with coverage report
 bench: ## Run performance benchmarks
 	@echo "$(BLUE)Running benchmarks...$(NC)"
 	@mkdir -p benchmarks/results
-	PYTHONPATH=src:$$PYTHONPATH python -m pytest \
+	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest \
 		tests/ \
 		--benchmark-only \
 		--benchmark-json=benchmarks/results/latest.json \
@@ -78,32 +81,32 @@ bench: ## Run performance benchmarks
 lint: ## Run all code quality checks (ruff, bandit, mypy)
 	@echo "$(BLUE)Running code quality checks...$(NC)"
 	@echo "$(BLUE)1. Checking code style with ruff...$(NC)"
-	ruff check src tests || true
+	$(PYTHON) -m ruff check src tests examples
 	@echo "$(BLUE)2. Checking security with bandit...$(NC)"
-	bandit -r src -ll -f screen || true
+	$(PYTHON) -m bandit -r src -ll -f screen
 	@echo "$(BLUE)3. Checking types with mypy...$(NC)"
-	PYTHONPATH=src:$$PYTHONPATH mypy src/encrypted_ir --ignore-missing-imports --no-strict-optional || echo "$(YELLOW)⚠ Type checking has warnings (non-blocking)$(NC)"
+	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m mypy --disable-error-code redundant-cast src/encrypted_ir --ignore-missing-imports --no-strict-optional
 	@echo "$(GREEN)✓ Linting complete$(NC)"
 
 format: ## Auto-format code with black and ruff
 	@echo "$(BLUE)Formatting code...$(NC)"
 	@echo "$(BLUE)1. Running black...$(NC)"
-	black src tests
+	$(PYTHON) -m black src tests examples
 	@echo "$(BLUE)2. Running ruff auto-fix...$(NC)"
-	ruff check --fix src tests || true
+	$(PYTHON) -m ruff check --fix src tests examples
 	@echo "$(GREEN)✓ Code formatted$(NC)"
 
 type-check: ## Run type checking with mypy
 	@echo "$(BLUE)Running type checker...$(NC)"
-	PYTHONPATH=src:$$PYTHONPATH mypy src/encrypted_ir --ignore-missing-imports --no-strict-optional
+	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m mypy --disable-error-code redundant-cast src/encrypted_ir --ignore-missing-imports --no-strict-optional
 	@echo "$(GREEN)✓ Type checking complete$(NC)"
 
 security: ## Run security checks (bandit + safety)
 	@echo "$(BLUE)Running security checks...$(NC)"
 	@echo "$(BLUE)1. Scanning code for security issues (bandit)...$(NC)"
-	bandit -r src -ll -f screen
+	$(PYTHON) -m bandit -r src -ll -f screen
 	@echo "$(BLUE)2. Checking dependencies for vulnerabilities (safety)...$(NC)"
-	safety check --json || echo "$(YELLOW)⚠ Safety check requires internet connection$(NC)"
+	$(PYTHON) -m safety check --json || echo "$(YELLOW)⚠ Safety check requires internet connection$(NC)"
 	@echo "$(GREEN)✓ Security checks complete$(NC)"
 
 clean: ## Clean build artifacts and cache
@@ -144,22 +147,22 @@ ci: lint test-coverage security ## Run CI checks (lint, test with coverage, secu
 pre-commit-check: ## Quick checks before committing
 	@echo "$(BLUE)Running pre-commit checks...$(NC)"
 	@echo "$(BLUE)1. Formatting check...$(NC)"
-	black --check src tests
+	$(PYTHON) -m black --check src tests examples
 	@echo "$(BLUE)2. Linting...$(NC)"
-	ruff check src tests
+	$(PYTHON) -m ruff check src tests examples
 	@echo "$(BLUE)3. Quick tests...$(NC)"
-	PYTHONPATH=src:$$PYTHONPATH python -m pytest -q -W ignore::DeprecationWarning
+	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest -q -W ignore::DeprecationWarning
 	@echo "$(GREEN)✓ Pre-commit checks passed$(NC)"
 
 # Development workflow helpers
 watch-test: ## Watch for changes and run tests automatically
 	@echo "$(BLUE)Watching for changes...$(NC)"
-	@echo "$(YELLOW)Note: Requires 'pip install pytest-watch'$(NC)"
+	@echo "$(YELLOW)Note: Requires '$(PIP) install pytest-watch'$(NC)"
 	PYTHONPATH=src:$$PYTHONPATH ptw -- -v -W ignore::DeprecationWarning
 
 requirements: ## Generate requirements.txt from current environment
 	@echo "$(BLUE)Generating requirements.txt...$(NC)"
-	pip freeze > requirements-frozen.txt
+	$(PYTHON) -m pip freeze > requirements-frozen.txt
 	@echo "$(GREEN)✓ Generated requirements-frozen.txt$(NC)"
 
 # Project info
@@ -167,9 +170,9 @@ info: ## Show project information
 	@echo "$(BLUE)Project Information$(NC)"
 	@echo "$(GREEN)Name:$(NC)         Encrypted Information Retrieval"
 	@echo "$(GREEN)Version:$(NC)      1.0.0"
-	@echo "$(GREEN)Python:$(NC)       $$(python --version)"
-	@echo "$(GREEN)Tests:$(NC)        145 tests"
-	@echo "$(GREEN)Coverage:$(NC)     ~85% (target: 95%)"
+	@echo "$(GREEN)Python:$(NC)       $$($(PYTHON) --version)"
+	@echo "$(GREEN)Tests:$(NC)        see docs/PORTFOLIO_EVIDENCE.md"
+	@echo "$(GREEN)Coverage:$(NC)     run 'make test-coverage' for the current report"
 	@echo ""
 	@echo "$(BLUE)Module Statistics$(NC)"
 	@find src -name '*.py' | xargs wc -l | tail -1 | awk '{printf "$(GREEN)Source Lines:$(NC)  %s\n", $$1}'

@@ -17,10 +17,13 @@ from __future__ import annotations
 import base64
 import json
 
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 
 from encrypted_ir.api.dependencies.auth import (
+    JWT_ALGORITHM,
+    JWT_SECRET,
     Role,
     TenantInfo,
     clear_api_keys,
@@ -96,7 +99,12 @@ def admin_headers():
 
 
 def _make_jwt(payload: dict) -> str:
-    """Create a simple unsigned JWT for testing (base64-encoded payload)."""
+    """Create a signed JWT for testing."""
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def _make_unsigned_jwt(payload: dict) -> str:
+    """Create an unsigned JWT to verify alg:none tokens are rejected."""
     header = base64.urlsafe_b64encode(json.dumps({"alg": "none", "typ": "JWT"}).encode()).rstrip(
         b"="
     )
@@ -183,6 +191,15 @@ class TestAuth:
 
     def test_jwt_missing_tenant_id_returns_401(self, client):
         token = _make_jwt({"sub": "user1", "roles": ["write"]})
+        resp = client.post(
+            "/v1/encrypt",
+            json={"plaintext": "hello"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 401
+
+    def test_unsigned_jwt_returns_401(self, client):
+        token = _make_unsigned_jwt({"tenant_id": "jwt-tenant", "roles": ["write"]})
         resp = client.post(
             "/v1/encrypt",
             json={"plaintext": "hello"},

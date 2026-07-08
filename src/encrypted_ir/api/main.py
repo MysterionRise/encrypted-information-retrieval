@@ -19,7 +19,7 @@ from .dependencies.auth import AuthConfig, OIDCVerifier
 from .routes import admin, data, documents, keys, search
 
 
-def create_app(settings: EncryptedIRSettings | None = None) -> FastAPI:
+def create_app(settings: EncryptedIRSettings | None = None) -> FastAPI:  # noqa: C901
     """Create and configure the FastAPI application."""
     settings = settings or EncryptedIRSettings.from_env()
     settings.validate()

@@ -5,6 +5,9 @@ This package provides implementations of various encrypted information retrieval
 techniques suitable for financial services applications.
 """
 
+from typing import Any as _Any
+
+from .audit import AuditEventType, AuditLogger
 from .blind_index import BlindIndexConfig, BlindIndexGenerator, BlindIndexSearch
 from .deterministic import DeterministicEncryption
 from .differential_privacy import (
@@ -26,19 +29,23 @@ from .key_rotation import (
     VersionedBlob,
 )
 from .kms_provider import AWSKMSProvider, EnvelopeEncryption, KMSProvider
+from .logging import LoggingConfig, StructuredFormatter, get_correlation_id, new_correlation_id
+from .metrics import EncryptionMetrics
 from .order_preserving import OrderPreservingEncryption
 from .ore import ORE
 from .searchable import BackwardPrivateIndex, BooleanQuery, ForwardPrivateSSE, SearchableEncryption
-from .audit import AuditEventType, AuditLogger
-from .logging import LoggingConfig, StructuredFormatter, get_correlation_id, new_correlation_id
-from .metrics import EncryptionMetrics
 from .storage_backend import DatabaseStorageBackend, FileStorageBackend, StorageBackend
 
+BasicHomomorphicEncryption: _Any
 try:
-    from .homomorphic import BasicHomomorphicEncryption
+    from .homomorphic import BasicHomomorphicEncryption as BasicHomomorphicEncryption
 except ImportError:
     BasicHomomorphicEncryption = None
 
+MLDSA: _Any
+MLKEM: _Any
+HybridKEM: _Any
+PostQuantumEncryption: _Any
 try:
     from .post_quantum import MLDSA, MLKEM, HybridKEM, PostQuantumEncryption
 except ImportError:

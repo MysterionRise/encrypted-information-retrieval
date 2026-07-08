@@ -180,7 +180,7 @@ class TestExponentialMechanism:
         """With large epsilon, should almost always pick the best candidate."""
         candidates = ["bad", "ok", "good", "best"]
         scores = {"bad": 0, "ok": 1, "good": 2, "best": 10}
-        counts = {c: 0 for c in candidates}
+        counts = dict.fromkeys(candidates, 0)
 
         for _ in range(1000):
             result = ExponentialMechanism.select(
@@ -194,7 +194,7 @@ class TestExponentialMechanism:
     def test_uniform_with_equal_utility(self):
         """Equal utility should give roughly uniform selection."""
         candidates = ["a", "b", "c", "d"]
-        counts = {c: 0 for c in candidates}
+        counts = dict.fromkeys(candidates, 0)
 
         for _ in range(4000):
             result = ExponentialMechanism.select(
@@ -483,7 +483,7 @@ class TestDPQueryInterface:
         dp = DPQueryInterface(budget_tracker=PrivacyBudgetTracker(total_epsilon=50000.0))
         candidates = ["low", "medium", "high"]
         scores = {"low": 0, "medium": 5, "high": 10}
-        counts = {c: 0 for c in candidates}
+        counts = dict.fromkeys(candidates, 0)
 
         for _ in range(1000):
             result = dp.dp_select(
@@ -596,7 +596,7 @@ class TestPrivacyGuarantees:
         per_query_eps = 0.5
         k = 20  # 20 queries × 0.5 = 10.0 total
 
-        for i in range(k):
+        for _ in range(k):
             tracker.consume("t1", per_query_eps)
 
         assert tracker.consumed("t1") == pytest.approx(10.0)

@@ -10,7 +10,6 @@ audit trails, and NYDFS 500.06 audit trail requirements.
 """
 
 from __future__ import annotations
-from __future__ import annotations
 
 import json
 import logging
@@ -104,7 +103,7 @@ class AuditLogger:
         Returns:
             The sanitized audit record dict (useful for testing).
         """
-        record = {
+        record: dict[str, Any] = {
             "audit": True,
             "event_type": event_type.value,
             "timestamp": time.time(),
@@ -116,7 +115,7 @@ class AuditLogger:
         }
 
         if details:
-            sanitized = {}
+            sanitized: dict[str, Any] = {}
             for k, v in details.items():
                 if isinstance(v, str):
                     sanitized[k] = redact_pii(v)
