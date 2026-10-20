@@ -7,6 +7,7 @@ from typing import TypedDict
 
 from fastapi import APIRouter, Request, Response, status
 
+from encrypted_ir import __version__
 from encrypted_ir.migrations import database_connects, migration_status
 
 from ..models.responses import HealthResponse, MetricsResponse, ReadinessResponse
@@ -70,7 +71,7 @@ def reset_metrics() -> None:
 async def health_check() -> HealthResponse:
     return HealthResponse(
         status="healthy",
-        version="1.0.0",
+        version=__version__,
         uptime_seconds=round(time.time() - _start_time, 2),
     )
 

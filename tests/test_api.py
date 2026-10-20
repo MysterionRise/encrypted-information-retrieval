@@ -21,6 +21,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
+from encrypted_ir import __version__
 from encrypted_ir.api.dependencies.auth import (
     JWT_ALGORITHM,
     JWT_SECRET,
@@ -124,7 +125,7 @@ class TestHealthCheck:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "healthy"
-        assert data["version"] == "1.0.0"
+        assert data["version"] == __version__
         assert data["uptime_seconds"] >= 0
 
     def test_health_response_has_request_id(self, client):
@@ -947,7 +948,7 @@ class TestOpenAPI:
         assert resp.status_code == 200
         spec = resp.json()
         assert spec["info"]["title"] == "Encrypted Information Retrieval API"
-        assert spec["info"]["version"] == "1.0.0"
+        assert spec["info"]["version"] == __version__
 
     def test_docs_available(self, client):
         resp = client.get("/docs")

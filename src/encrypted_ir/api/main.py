@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from encrypted_ir import __version__
 from encrypted_ir.database import create_database_engine, create_database_schema
 from encrypted_ir.document_service import DocumentService
 from encrypted_ir.master_key import resolve_master_key
@@ -31,7 +32,7 @@ def create_app(settings: EncryptedIRSettings | None = None) -> FastAPI:  # noqa:
             "ORE range queries, keyword-token document search, and AES-SIV/AES-GCM "
             "encryption with demo auth and tenant isolation."
         ),
-        version="1.0.0",
+        version=__version__,
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",

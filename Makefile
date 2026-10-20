@@ -169,7 +169,7 @@ requirements: ## Generate requirements.txt from current environment
 info: ## Show project information
 	@echo "$(BLUE)Project Information$(NC)"
 	@echo "$(GREEN)Name:$(NC)         Encrypted Information Retrieval"
-	@echo "$(GREEN)Version:$(NC)      1.0.0"
+	@echo "$(GREEN)Version:$(NC)      $$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/encrypted_ir/__init__.py)"
 	@echo "$(GREEN)Python:$(NC)       $$($(PYTHON) --version)"
 	@echo "$(GREEN)Tests:$(NC)        see docs/PORTFOLIO_EVIDENCE.md"
 	@echo "$(GREEN)Coverage:$(NC)     run 'make test-coverage' for the current report"
