@@ -5,7 +5,7 @@
 [#26 Phase 0](https://github.com/MysterionRise/encrypted-information-retrieval/issues/26),
 [#27 Phase 1](https://github.com/MysterionRise/encrypted-information-retrieval/issues/27),
 [#28 Phase 2](https://github.com/MysterionRise/encrypted-information-retrieval/issues/28).
-**Supersedes:** `GITHUB_ISSUES.md` (retired), the roadmap bullets formerly in `README.md`, `CURRENT_STATUS.md` and `PORTFOLIO_CASE_STUDY.md`.
+**Supersedes:** `archive/GITHUB_ISSUES.md` (retired), and the roadmap bullets formerly in `README.md`, the former `CURRENT_STATUS.md`, and `PORTFOLIO_CASE_STUDY.md`.
 
 ## Why this roadmap exists
 
@@ -110,7 +110,10 @@ These stay out of scope so that no document implies they exist. Each would be a 
 ## Appendix: findings behind this roadmap
 
 Line numbers refer to commit `d52d63d` (master on October 20, 2026). They will drift as the phases land; the
-issues carry the same references.
+issues carry the same references. Since then, #33 moved `COMPLIANCE_NOTES.md`, `GAP_ANALYSIS.md`,
+`GITHUB_ISSUES.md`, `MVP_COMPLETION_SUMMARY.md`, `LLM_SYSTEM_ANALYSIS.md`, `migration/OPE_TO_ORE.md` and the root
+`ANALYSIS.md` to `docs/archive/`. It also rewrote `THREAT_MODEL.md` and split `ARCHITECTURE.md` into as-built and
+target-state sections.
 
 ### GitHub and process state
 

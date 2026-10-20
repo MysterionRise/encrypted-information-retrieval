@@ -1,498 +1,127 @@
-# Threat Model & Leakage Budget
-
-> **Portfolio status note (July 7, 2026):** This threat model includes target
-> controls and roadmap assumptions. Current implementation evidence lives in
-> `README.md`, `docs/PORTFOLIO_EVIDENCE.md`, `docs/LEAKAGE_AND_ENDPOINTS.md`,
-> and `docs/CTO_DEMO_SCRIPT.md`. Claims about audit readiness, CloudTrail,
-> FIPS-backed KMS, certification, or production launch should be read as roadmap
-> targets unless explicitly backed by current evidence.
-
-**Version**: 1.0
-**Last Updated**: January 2025
-**Scope**: Encrypted Information Retrieval System for Financial Services
-
-## Table of Contents
-
-1. [Executive Summary](#executive-summary)
-2. [Assets & Protection Goals](#assets--protection-goals)
-3. [Adversary Model](#adversary-model)
-4. [Cryptographic Primitives & Leakage Profile](#cryptographic-primitives--leakage-profile)
-5. [Attack Vectors & Mitigations](#attack-vectors--mitigations)
-6. [Leakage Budget by Feature](#leakage-budget-by-feature)
-7. [Operational Security Controls](#operational-security-controls)
-8. [Residual Risks & Compensating Controls](#residual-risks--compensating-controls)
-
----
-
-## Executive Summary
-
-This threat model defines the security boundaries, adversary capabilities, and explicit leakage profile of the Encrypted IR system. The system provides **practical encrypted search and computation** for financial services while acknowledging and quantifying unavoidable information leakage.
-
-**Key Security Properties:**
-- ✅ **Ciphertext confidentiality**: AES-256 with misuse-resistant AEADs (AES-SIV, AES-GCM)
-- ✅ **Authenticity**: All ciphertexts authenticated via MACs/AEAD tags
-- ⚠️ **Controlled leakage**: Equality patterns, ordering (where needed), access patterns documented
-- ✅ **Key isolation**: Envelope encryption with KMS-backed KEKs
-- ⚠️ **Forward/backward privacy**: SSE provides forward privacy; backward privacy roadmapped
-
-**Out of Scope:**
-- Perfect access pattern hiding (use PIR/ORAM for zero-leakage requirements)
-- Protection against quantum adversaries (PQC hybrid mode planned for 2025 H2)
-- Side-channel attacks on client devices
-- DDoS/availability attacks
-
----
-
-## Assets & Protection Goals
-
-### Primary Assets
-
-| Asset | Sensitivity | Protection Goal | Current State |
-|-------|-------------|-----------------|---------------|
-| **Customer PII** (SSN, account numbers) | **CRITICAL** | Confidentiality + controlled equality leakage | ✅ AES-SIV with blind indexes |
-| **Transaction data** (amounts, dates) | **HIGH** | Confidentiality + controlled order leakage | ⚠️ OPE (upgrading to ORE/structured) |
-| **Financial documents** (contracts, reports) | **HIGH** | Confidentiality + keyword searchability | ✅ DSSE with forward privacy |
-| **Credit scoring models** | **MEDIUM** | Confidentiality + encrypted computation | ✅ CKKS/BFV homomorphic encryption |
-| **Encryption keys** (DEKs, KEKs) | **CRITICAL** | Confidentiality + auditability | ✅ Envelope encryption + KMS |
-| **Search indexes** | **MEDIUM** | Access pattern minimization | ⚠️ SSE leakage documented |
-
-### Protection Goals Hierarchy
-
-1. **MUST protect**: Plaintext of encrypted data at rest and in transit
-2. **SHOULD minimize**: Equality/order/access pattern leakage
-3. **NICE TO HAVE**: Zero-leakage query privacy (PIR), side-channel resistance
-
----
-
-## Adversary Model
-
-### Adversary Capabilities
-
-We consider adversaries with the following powers:
-
-#### A1: Honest-but-Curious Server (Database/Cloud Provider)
-
-**Capabilities:**
-- Full access to encrypted database and indexes
-- Observes all queries and access patterns over time
-- Cannot break AES-256 or compromise KMS
-- Can perform frequency analysis, correlation attacks
-
-**Real-World Analogs:** Cloud service providers (AWS, Azure, GCP), compromised DBA, malicious insider with database access
-
-**Defenses:**
-- Encrypted data with AES-SIV/AES-GCM
-- Blind indexes (HMAC-based) for equality
-- SSE with forward privacy
-- Padding and dummy queries (optional, performance trade-off)
-
-#### A2: External Attacker (Network Adversary)
-
-**Capabilities:**
-- Intercepts network traffic between client and server
-- Can replay, drop, or reorder packets
-- Cannot break TLS 1.3 or AEAD encryption
-
-**Real-World Analogs:** Nation-state actors, APT groups, ransomware gangs
-
-**Defenses:**
-- TLS 1.3 for all client-server communication
-- AEAD for all encrypted payloads
-- Replay protection via nonces/timestamps in SSE
-
-#### A3: Malicious Insider (Privileged User)
-
-**Capabilities:**
-- Legitimate access to some plaintext data
-- Can issue queries and observe results
-- May attempt to exfiltrate bulk data or keys
-
-**Real-World Analogs:** Rogue employee, compromised admin account, vendor with excessive privileges
-
-**Defenses:**
-- Principle of least privilege (RBAC)
-- Audit logging of all decrypt/encrypt operations
-- Key access policies (KMS conditions, attestation)
-- Rate limiting and anomaly detection
-
-#### A4: Future Quantum Adversary (Harvest Now, Decrypt Later)
-
-**Capabilities:**
-- Stores encrypted data today
-- Will have large-scale quantum computer (2030+)
-- Can break RSA-2048, ECDSA P-256
-
-**Real-World Analogs:** Adversaries targeting long-lived data (mortgages, medical records, state secrets)
-
-**Defenses (Planned):**
-- **2025 H2**: Hybrid PQC key establishment (Kyber + X25519)
-- **2026**: Migration to FIPS 203/204/205 algorithms
-- **Now**: Crypto-agile design; algorithm identifiers in ciphertext headers
-
----
-
-## Cryptographic Primitives & Leakage Profile
-
-### 1. AES-SIV (Deterministic AEAD) - **Equality Searches**
-
-**Primitive:** AES-256-SIV (RFC 5297)
-**Library:** `cryptography` v43+
-**Use Case:** Account numbers, customer IDs, SSN/Tax IDs
-
-**Security Properties:**
-- ✅ **IND-CPA** for random plaintexts
-- ✅ **Misuse-resistant**: Nonce reuse safe
-- ✅ **Authenticated**: Built-in MAC
-- ⚠️ **Deterministic**: Same plaintext → same ciphertext
-
-**Explicit Leakage:**
-- **Equality patterns**: `Enc(x) = Enc(y)` reveals `x = y`
-- **Frequency**: Distribution of plaintexts visible in ciphertext distribution
-- **Bounded inference**: Adversary with auxiliary data can mount inference attacks
-
-**Leakage Mitigation:**
-- Use **blind indexes** (HMAC with per-tenant salt/pepper) instead of direct deterministic encryption for most equality searches
-- Normalize inputs (case, whitespace, Unicode NFKC) to reduce spurious matches
-- Periodic index key rotation (90 days) to limit long-term frequency analysis
-
-**Attack Resistance:**
-| Attack Type | Resistance | Notes |
-|-------------|-----------|-------|
-| Brute force | ✅ Strong | 256-bit key |
-| Frequency analysis | ⚠️ Moderate | Mitigated by blind indexes + salting |
-| Inference (w/ aux data) | ⚠️ Weak-Moderate | Depends on plaintext entropy |
-| Nonce reuse | ✅ Strong | SIV mode safe |
-
-### 2. Blind Indexes (HMAC-SHA256) - **Equality Searches (Preferred)**
-
-**Primitive:** HMAC-SHA256 with per-tenant salt
-**Use Case:** Equality search without revealing full ciphertext determinism
-
-**Security Properties:**
-- ✅ **Collision-resistant** (2^128 security for truncated HMAC-256-128)
-- ✅ **Preimage-resistant**
-- ⚠️ **Equality-revealing**: `HMAC(x) = HMAC(y)` reveals `x = y` within scope
-
-**Explicit Leakage:**
-- **Equality within tenant**: Indexes collision only within same tenant scope
-- **Frequency (scoped)**: Limited to tenant's dataset, not global
-- **No order information**: Unlike OPE, reveals only equality
-
-**Leakage Mitigation:**
-- Per-tenant salt/pepper (stored in KMS)
-- Input normalization (canonical form)
-- Optional: Keyed hash per field type (account_index_key ≠ SSN_index_key)
-
-### 3. Dynamic SSE (Searchable Symmetric Encryption) - **Keyword Search**
-
-**Primitive:** DSSE with forward privacy (based on Σoφoς-like constructions)
-**Library:** Custom implementation over HMAC + AES-GCM
-**Use Case:** Document management, email archives, knowledge bases
-
-**Security Properties:**
-- ✅ **Forward privacy**: New document additions unlinkable to past queries
-- ⚠️ **Backward privacy**: Deletes leak (roadmapped for P1)
-- ✅ **Replay protection**: Nonce-based freshness
-
-**Explicit Leakage:**
-- **Search pattern**: Which queries repeat over time
-- **Access pattern**: Which documents match a query
-- **Result size**: Number of matching documents
-- **Update pattern**: Timing and frequency of index updates
-
-**Leakage Mitigation:**
-- Padding (optional): Pad result sets to fixed sizes (e.g., next power of 2)
-- Dummy queries: Client issues random cover queries (performance vs. privacy trade-off)
-- **PIR mode** (feature flag): Use Private Information Retrieval for zero-leakage queries at 10-100x latency cost
-
-**Attack Resistance:**
-| Attack Type | Resistance | Notes |
-|-------------|-----------|-------|
-| Keyword guessing | ⚠️ Moderate | Adversary with query logs + aux data can infer keywords |
-| Query recovery | ⚠️ Weak-Moderate | File-injection attacks (IKK, LEAP-style) possible if adversary controls documents |
-| Forward privacy | ✅ Strong | Updates unlinkable to past queries |
-| Backward privacy | ❌ Weak | Deletes currently leak (P1 upgrade) |
-
-**Known Attacks & References:**
-- **IKK attack** (Islam et al., NDSS 2012): File-injection attack on static SSE
-- **LEAP attack** (Cash et al., CCS 2015): Leakage abuse on dynamic SSE
-- **Mitigation**: Our DSSE provides forward privacy; recommend PIR mode for high-sensitivity collections
-
-### 4. Order-Revealing Encryption (ORE) - **Range Queries** [UPGRADE IN PROGRESS]
-
-**Current:** Simplified OPE (PRF-based linear mapping)
-**Target:** Lewi-Wu ORE or structured encryption with bucketed B-trees
-**Use Case:** Transaction amounts, dates, account balances
-
-**Security Properties (Current OPE):**
-- ⚠️ **Order-revealing**: `Enc(a) < Enc(b)` reveals `a < b`
-- ⚠️ **Frequency-leaking**: Distribution visible
-- ⚠️ **Inference-vulnerable**: Adversary can recover approximate plaintexts via sorting attacks
-
-**Explicit Leakage (Current):**
-- **Full order**: Complete plaintext ordering revealed
-- **Distribution**: Ciphertext distribution mirrors plaintext distribution
-- **Inference**: Sorting attack + auxiliary data → plaintext recovery
-
-**UPGRADE PLAN (P0):**
-Replace with:
-1. **Lewi-Wu ORE**: Leaks only order, not approximate values
-2. **Structured Encryption**: Bucketed range trees with padding + client-side post-filtering
-3. **TEE-assisted**: Decrypt ranges inside AWS Nitro Enclave for zero-leakage alternative
-
-**Leakage Mitigation (Post-Upgrade):**
-- ORE: Leaks order but not distribution shape
-- Structured encryption: Leaks bucket access, not individual comparisons
-- TEE: Zero server-side leakage; attested key release
-
-**Attack Resistance (Post-ORE Upgrade):**
-| Attack Type | Resistance | Notes |
-|-------------|-----------|-------|
-| Sorting attack | ⚠️ Moderate | ORE leaks order; mitigated by coarse buckets |
-| Frequency analysis | ⚠️ Moderate | ORE improves over OPE; bucketing further reduces |
-| Range reconstruction | ⚠️ Weak | Adversary can estimate distribution |
-
-### 5. Homomorphic Encryption (CKKS/BFV) - **Encrypted Computation**
-
-**Primitive:** CKKS (approx. arithmetic), BFV (exact integers)
-**Library:** TenSEAL (Microsoft SEAL wrapper)
-**Use Case:** Credit scoring, risk analytics, encrypted ML inference
-
-**Security Properties:**
-- ✅ **IND-CPA**: Semantic security under RLWE/LWE assumptions
-- ✅ **Zero server-side leakage**: Server never sees plaintext
-- ⚠️ **Ciphertext size**: Large (100KB+ per encrypted vector)
-- ⚠️ **Computation structure**: Server learns model topology
-
-**Explicit Leakage:**
-- **Model structure**: Number/type of operations (add, mult) visible
-- **Computation timing**: Depth of circuit leaks via latency
-- **Result size**: Output ciphertext size hints at result magnitude
-
-**Leakage Mitigation:**
-- **Constant-time operations**: Use fixed-depth circuits where possible
-- **Ciphertext packing**: Batch multiple values per ciphertext (SIMD)
-- **Rate limiting**: Prevent timing analysis via repeated queries
-- **TEE option**: Decrypt results inside enclave for sensitive outputs
-
-**Attack Resistance:**
-| Attack Type | Resistance | Notes |
-|-------------|-----------|-------|
-| Ciphertext-only | ✅ Strong | IND-CPA under RLWE |
-| Side-channel (timing) | ⚠️ Moderate | Constant-time library; circuit depth may leak |
-| Model extraction | ⚠️ Moderate | Topology visible; weights encrypted |
-
----
-
-## Attack Vectors & Mitigations
-
-### AV1: Frequency Analysis on Deterministic Ciphertexts
-
-**Attack:** Adversary builds histogram of ciphertext frequencies, correlates with known plaintext distribution.
-
-**Likelihood:** HIGH (honest-but-curious server)
-**Impact:** MEDIUM (reveals common values)
-
-**Mitigations:**
-1. ✅ **Use blind indexes** instead of direct deterministic encryption
-2. ✅ Per-tenant salts (limits correlation across tenants)
-3. ⚠️ Plaintext padding (adds complexity; roadmapped)
-4. ✅ Periodic index key rotation (breaks long-term frequency tracking)
-
-**Residual Risk:** LOW-MEDIUM (post-mitigation)
-
-### AV2: Access Pattern Analysis on SSE Queries
-
-**Attack:** Adversary logs which documents are accessed for each query, builds co-occurrence graph to infer keywords.
-
-**Likelihood:** MEDIUM-HIGH (honest-but-curious server)
-**Impact:** MEDIUM-HIGH (can reveal query keywords with auxiliary data)
-
-**Mitigations:**
-1. ✅ **Forward privacy**: New documents unlinkable to past queries
-2. ⚠️ Dummy queries (optional, performance cost)
-3. ⚠️ Padding result sets (roadmapped for P1)
-4. ✅ **PIR mode** (feature flag): Zero-leakage alternative for sensitive collections
-
-**Residual Risk:** MEDIUM (SSE mode), LOW (PIR mode)
-
-**References:**
-- Cash et al., "Leakage-Abuse Attacks Against Searchable Encryption", CCS 2015
-- Islam et al., "Access Pattern Disclosure on Searchable Encryption", NDSS 2012
-
-### AV3: Inference Attacks on Order-Preserving Encryption
-
-**Attack:** Adversary sorts encrypted values, uses auxiliary data (e.g., income distributions) to recover approximate plaintexts.
-
-**Likelihood:** MEDIUM (requires auxiliary data)
-**Impact:** HIGH (plaintext recovery)
-
-**Mitigations:**
-1. 🔄 **UPGRADE to ORE** (P0): Reduces leakage vs. classical OPE
-2. 🔄 **Structured encryption** (P0): Bucketed range trees with padding
-3. ⚠️ **TEE-assisted** (P1): Decrypt ranges inside Nitro Enclave
-
-**Residual Risk:** HIGH (current OPE), MEDIUM (post-ORE upgrade)
-
-**References:**
-- Naveed et al., "Inference Attacks on Property-Preserving Encrypted Databases", CCS 2015
-- Grubbs et al., "Leakage-Abuse Attacks Against Order-Revealing Encryption", S&P 2017
-
-### AV4: Key Compromise (DEK/KEK)
-
-**Attack:** Adversary exfiltrates data encryption keys or KMS master keys.
-
-**Likelihood:** LOW (with proper KMS policies)
-**Impact:** CRITICAL (full plaintext recovery)
-
-**Mitigations:**
-1. ✅ **Envelope encryption**: DEKs encrypted by KMS-backed KEKs
-2. ✅ **HSM-backed KEKs**: FIPS 140-3 Level 3 modules (AWS KMS, CloudHSM)
-3. ✅ **Key access policies**: IAM conditions, attestation (TEE), MFA
-4. ✅ **Audit logging**: CloudTrail for all KMS operations
-5. ✅ **Rotation**: DEK rotation every 90 days; KEK rotation annually
-6. ✅ **Principle of least privilege**: Separate keys per tenant/dataset
-
-**Residual Risk:** LOW (with controls)
-
-### AV5: Side-Channel Attacks (Timing, Cache)
-
-**Attack:** Adversary infers plaintext via timing differences in crypto operations or cache access patterns.
-
-**Likelihood:** LOW (requires co-location or local access)
-**Impact:** MEDIUM (key bit leakage)
-
-**Mitigations:**
-1. ✅ **Constant-time libraries**: `cryptography` uses constant-time AES
-2. ⚠️ **HE timing**: SEAL operations not constant-time; fix via padding/dummy ops (roadmapped)
-3. ⚠️ **Input validation**: Prevent timing oracles via length/format checks
-
-**Residual Risk:** LOW (AES/HMAC), MEDIUM (HE)
-
-### AV6: Quantum Attacks (Harvest Now, Decrypt Later)
-
-**Attack:** Adversary stores encrypted data today, decrypts with quantum computer post-2030.
-
-**Likelihood:** LOW (short-term), MEDIUM (10+ years)
-**Impact:** CRITICAL (for long-lived data)
-
-**Mitigations:**
-1. 🔄 **Hybrid PQC** (2025 H2): Kyber + X25519 key establishment
-2. 🔄 **FIPS 203/204/205** (2026): Migration to NIST-approved PQC
-3. ✅ **Crypto-agility**: Algorithm IDs in ciphertext headers; versioned keys
-
-**Residual Risk:** MEDIUM (pre-PQC), LOW (post-PQC hybrid)
-
----
-
-## Leakage Budget by Feature
-
-| Feature | Leaked Information | Leakage Severity | Mitigation | Residual Risk |
-|---------|-------------------|------------------|------------|---------------|
-| **Equality (blind index)** | Equality within tenant, scoped frequency | MEDIUM | Per-tenant salts, rotation | LOW-MEDIUM |
-| **Keyword search (SSE)** | Query repetition, access patterns, result sizes | MEDIUM-HIGH | Forward privacy, PIR mode | MEDIUM (SSE), LOW (PIR) |
-| **Range queries (OPE→ORE)** | Full order (OPE) → order only (ORE) | HIGH (OPE) → MEDIUM (ORE) | Upgrade to ORE/buckets, TEE | HIGH (now), MEDIUM (post-upgrade) |
-| **HE computation** | Model structure, timing, result sizes | LOW-MEDIUM | Constant-time, TEE decryption | LOW |
-| **Key management** | Key access timestamps, rotation events | LOW | Audit logging, anomaly detection | LOW |
-
----
-
-## Operational Security Controls
-
-### 1. Key Management (NIST SP 800-57 Part 1 Rev. 5)
-
-- ✅ **KEK**: Stored in AWS KMS/CloudHSM (FIPS 140-3 Level 3)
-- ✅ **DEK**: Per-tenant, per-dataset; re-wrapped on rotation
-- ✅ **Rotation**: DEK every 90 days, KEK annually
-- ✅ **Audit**: CloudTrail logs all Encrypt/Decrypt/GenerateDataKey calls
-- ✅ **Access control**: IAM policies with MFA, attestation conditions (for TEE)
-
-### 2. Network Security
-
-- ✅ **TLS 1.3**: All client-server communication
-- ✅ **Certificate pinning**: Mitigate MITM
-- 🔄 **mTLS** (P1): Mutual authentication for API clients
-
-### 3. Audit & Monitoring
-
-- ✅ **Audit trail**: Every encrypt/decrypt logged with (timestamp, user, key_id, operation)
-- ✅ **Anomaly detection**: Rate limits; alert on unusual key access patterns
-- ⚠️ **Immutable ledger** (P2): QLDB for tamper-proof audit logs
-
-### 4. Access Control (RBAC)
-
-- ✅ **Principle of least privilege**: Users/services get minimal necessary permissions
-- ✅ **Tenant isolation**: Keys and indexes separated per tenant
-- ✅ **MFA**: Required for key management operations
-
-### 5. Incident Response
-
-- ✅ **Crypto-shredding**: Delete keys → data unrecoverable
-- ✅ **Rotation on breach**: Emergency DEK rotation procedure documented
-- ⚠️ **Breach notification** (P1): Automated compliance reporting (GDPR, DORA)
-
----
-
-## Residual Risks & Compensating Controls
-
-### High-Priority Residual Risks
-
-1. **OPE Inference Attacks** (until P0 upgrade completes)
-   - **Compensating Controls**: Use only for non-sensitive ranges (dates, timestamps), not financial amounts
-   - **Monitoring**: Alert on unusual range query patterns
-   - **Timeline**: ORE upgrade by 2025-Q1
-
-2. **SSE Access Pattern Leakage**
-   - **Compensating Controls**: PIR mode for high-sensitivity collections; dummy queries
-   - **Monitoring**: Rate-limit queries; detect scraping attempts
-   - **Accept Risk**: For non-PII documents (public filings, marketing materials)
-
-3. **Quantum Threats to Current AES-256**
-   - **Compensating Controls**: Prioritize PQC for long-lived data (mortgages, contracts)
-   - **Timeline**: Hybrid PQC by 2025-Q3; full migration by 2026-Q2
-   - **Accept Risk**: AES-256 secure against classical adversaries; quantum threats >10 years out
-
-### Accepted Risks (With Justification)
-
-1. **Side-channel attacks**: Low likelihood without co-location; monitoring for anomalous latencies
-2. **DDoS/availability**: Out-of-scope; handled by infrastructure layer (WAF, rate limiting)
-3. **Malicious client**: Cannot prevent authorized users from exfiltrating data they can decrypt; rely on DLP, CASB
-
----
-
-## Compliance Mapping
-
-| Regulation | Requirement | Implementation | Gap |
-|------------|-------------|----------------|-----|
-| **PCI DSS v4.0** | Encrypt cardholder data at rest | ✅ AES-256-GCM/SIV | None |
-| **PCI DSS v4.0** | Key rotation (3.6.4) | ✅ 90-day DEK rotation | None |
-| **GDPR Art. 32** | State-of-the-art encryption | ✅ AEAD, 256-bit keys | None |
-| **GDPR Art. 32** | Pseudonymization | ✅ Blind indexes | None |
-| **DORA Art. 9** | ICT risk management | ✅ Threat model, audit logs | ⚠️ Incident response automation (P1) |
-| **NYDFS 23 NYCRR § 500.15** | Encryption of nonpublic info | ✅ AES-256 | None |
-| **NIST SP 800-57** | Key management best practices | ✅ Envelope encryption, HSM | None |
-
----
-
-## Revision History
-
-| Version | Date | Author | Changes |
-|---------|------|--------|---------|
-| 1.0 | 2025-01-11 | Security Architecture Team | Initial threat model for MVP |
-
----
+# Threat Model
+
+**Describes:** the code in this repository as of October 2026. It does not describe a target
+architecture. Planned work is in [ROADMAP.md](ROADMAP.md), and the per-endpoint leakage table is
+in [LEAKAGE_AND_ENDPOINTS.md](LEAKAGE_AND_ENDPOINTS.md).
+
+**Status:** prototype, not externally audited. Every gap listed here has a public tracking issue.
+
+## Assets
+
+| Asset | Where it lives |
+| --- | --- |
+| Document plaintext | Only in memory during ingest and authorized retrieval |
+| Per-tenant document encryption keys and search keys | `encrypted_ir_keys` table, wrapped under the app master key |
+| App master key | Process memory. It is loaded from an environment variable (dev), or unwrapped once through AWS KMS at startup (production path). |
+| Query keywords | Request bodies; never stored or audited in plaintext |
+| Audit trail | `encrypted_ir_audit_log` table |
+
+## Adversaries
+
+| Adversary | What they can see | What protects the assets |
+| --- | --- | --- |
+| **A1. Database or backup reader** (honest-but-curious DBA, stolen backup, cloud storage operator) | Document ciphertexts, keyword tokens, plaintext `metadata_json`, wrapped tenant keys, audit rows, row counts and timestamps | AES-256-GCM on document bodies. Tenant keys are wrapped under a master key that is not stored in the database. Keyword tokens are HMACs under per-tenant keys. |
+| **A2. Authenticated client of tenant A** | Its own tenant's documents and search results | Every query filters by the tenant from the authenticated identity. Cross-tenant tests exist for the document routes. |
+| **A3. Operator with access to the API host** | The master key in memory, and therefore everything | Not mitigated in this repository. AWS KMS keeps the master key out of configuration at rest, not out of memory. |
+| **A4. Network attacker** | Traffic, if TLS is not terminated in front of the API | Not provided. The repository ships no TLS termination; a deployment must add it. |
+| **A5. Future quantum adversary** (harvest now, decrypt later) | Stored ciphertexts | Data at rest uses AES-256 and HMAC-SHA256, which are not broken by known quantum attacks at these sizes. JWT signatures (RS256) authenticate requests; they do not protect stored data. |
+
+## The durable path: what protects what
+
+This is the code behind `POST /v1/documents`, `POST /v1/documents/search`,
+`GET /v1/documents/{doc_id}` and `POST /v1/rag/retrieve`.
+
+| Data | Protection | Code |
+| --- | --- | --- |
+| Document content | AES-256-GCM with a random 96-bit nonce under a per-tenant key. No associated data binds the ciphertext to its tenant or document ([#40]). | `SearchableEncryption.encrypt_document` in `src/encrypted_ir/searchable.py` |
+| Keyword index | `HMAC-SHA256(per-tenant search key, lowercased keyword)`, one row per keyword per document. Deterministic. | `SearchableEncryption`, `DocumentService` |
+| Document metadata | Stored as plaintext JSON ([#40]). | `encrypted_ir_documents.metadata_json` |
+| Tenant keys | AES-GCM wrapped under the app master key, with no associated data ([#40]). | `src/encrypted_ir/key_manager.py` |
+| App master key | Environment variable, or AWS KMS `Decrypt` at startup. The KMS path is tested with mocks only; live validation is [#49]. | `src/encrypted_ir/master_key.py`, `src/encrypted_ir/kms_provider.py` |
+| Authentication | Production mode requires OIDC with RS256 tokens verified against a JWKS. Outside production, a dev API key and dev HS256 JWTs with a public default secret are enabled by default ([#41]). | `src/encrypted_ir/api/dependencies/auth.py`, `src/encrypted_ir/settings.py` |
+| Audit | Database rows. Plaintext, queries, tokens and key material are dropped before writing. The rows are not tamper-evident and cannot be exported ([#44]). | `DocumentService.record_audit_event` |
+| Rate limiting | In-memory and per process, so it is not shared across workers or replicas ([#47]). | `src/encrypted_ir/api/dependencies/rate_limiter.py` |
+
+### Leakage on the durable path
+
+Leakage to A1, the database reader:
+
+- **Keyword equality and frequency within a tenant.** The same keyword produces the same token in
+  every document of a tenant, so token counts mirror keyword frequencies.
+- **Document length**, approximately, from ciphertext length.
+- **Metadata**, in full, because it is plaintext.
+
+Leakage to anyone who observes queries (A1 with query logs, or a host operator):
+
+- **Query repetition**, because a repeated query produces the same tokens.
+- **Result sets and sizes, and the access pattern**, because matching document IDs are visible.
+
+With auxiliary knowledge of the corpus, these leakages enable known leakage-abuse attacks on
+keyword search (Islam, Kuzu and Kantarcioglu 2012; Cash, Grubbs, Perry and Ristenpart 2015).
+The design accepts that trade-off for a prototype and documents it per endpoint in
+[LEAKAGE_AND_ENDPOINTS.md](LEAKAGE_AND_ENDPOINTS.md).
+
+## Library and research primitives
+
+None of these are used by the durable path. Some back the demo routes, whose removal is tracked
+in [#36]. The research modules are slated for quarantine under `encrypted_ir.research` ([#37]).
+
+| Primitive | Construction | Leakage and known issues | Tracking |
+| --- | --- | --- | --- |
+| Deterministic encryption (`deterministic.py`) | AES-SIV (RFC 5297) from `cryptography` | Equality of plaintexts under the same key. Callers pass no associated data. | [#36] |
+| Blind index (`blind_index.py`) | HMAC-SHA256 truncated to 128 bits, per-tenant and per-field derived keys | Equality within tenant and field. About 2^64 collision resistance. The key-derivation context `tenant:field` is ambiguous, and `index_records` keeps one record per value. | [#37] |
+| ORE (`ore.py`) | CLWW-style prefix ORE over 32-bit integers, **not** Lewi-Wu | `compare()` needs no key, so whoever holds the ciphertexts learns their **total order**, the same as OPE. Also leaks plaintext byte differences, the most significant byte given one known pair, and equality. `encrypt_float` truncates instead of rounding. | [#34], [#37], [#38] |
+| OPE (`order_preserving.py`) | Home-grown linear mapping plus HMAC noise | **Decryptable without the key** (`p = ct // (2^32 + 1)`). Deprecated, but still used by the demo use cases. | [#37] |
+| Forward-private SSE (`ForwardPrivateSSE`) | Custom hash chain, not Sophos | `"strong"` mode moves entries into a deterministic index, which leaks keyword co-occurrence for keywords never searched. State cannot be persisted. | [#38] |
+| "Backward-private" index (`BackwardPrivateIndex`) | Token-set index keyed by `doc_id` | Provides **no** backward privacy. Deletes are fully visible, and the returned delete tokens are unused. | [#38] |
+| FF1 format-preserving encryption (`fpe.py`) | NIST SP 800-38G FF1 | Passes the nine NIST sample vectors when run by hand; the vectors are not in the test suite yet. Helpers default to an empty tweak. | [#38] |
+| CKKS (`homomorphic.py`) | TenSEAL, N=8192 | The aggregate helpers decrypt and finish in plaintext. The secret key can be exported in the clear. | [#38] |
+| ML-KEM, ML-DSA and hybrid KEM (`post_quantum.py`) | pqcrypto 0.4 bindings, plus a custom `SHA256(kem_ss ‖ x25519_ss)` combiner | The combiner is not X-Wing and binds no public keys. Signature checking is skipped when no signature is passed. Needs pqcrypto below 1.0. | [#38] |
+| Differential privacy (`differential_privacy.py`) | Textbook Laplace, Gaussian and exponential mechanisms | Uses floating-point noise (Mironov 2012). The classical Gaussian bound is not checked for ε < 1. The budget can be reset by re-registering a tenant. | [#38] |
+
+## Residual risks
+
+| Risk | Effect | Tracking |
+| --- | --- | --- |
+| Ciphertexts and wrapped keys are not bound to their context | A database writer can swap ciphertexts between rows or tenants without detection. | [#40] |
+| AND search with more than one search key | Returns no results after a search-key rotation. | [#39] |
+| Key cache is not shared across workers | A multi-worker deployment can create duplicate tenant keys and fail reads. | [#39] |
+| Key reads write to the database | Every decrypt rewrites the key row and inserts an audit row. Concurrent reads can conflict. | [#39] |
+| Rotation does not re-encrypt documents | Retiring a compromised key leaves its documents under that key. | [#42] |
+| JWT `exp` not required; exception text in error bodies | Tokens without an expiry never expire. Internals leak in 401 responses and `/ready`. | [#41] |
+| `/metrics` unauthenticated and keyed by raw path | Document IDs are visible to anyone who can reach the endpoint. | [#43] |
+| Audit rows not tamper-evident | A database writer can alter or remove audit history. | [#44] |
+| Docker image lacks boto3 | The KMS production path cannot start from the shipped image. | [#45] |
+
+## Explicitly not provided
+
+This repository has no PIR, ORAM, trusted execution environment, HSM integration, TLS
+termination, immutable or external audit sink, or external security review. Older documents
+listed some of these as mitigations; those documents are in [archive/](archive/README.md). The
+roadmap's "Not planned" section explains why each is out of scope for now.
 
 ## References
 
-1. NIST SP 800-57 Part 1 Rev. 5, "Recommendation for Key Management"
-2. RFC 5297, "Synthetic Initialization Vector (SIV) Authenticated Encryption"
-3. Cash et al., "Leakage-Abuse Attacks Against Searchable Encryption", CCS 2015
-4. Naveed et al., "Inference Attacks on Property-Preserving Encrypted Databases", CCS 2015
-5. NIST FIPS 203/204/205, "Module-Lattice-Based Key-Encapsulation/Digital Signature Standards", 2024
-6. EU Regulation 2022/2554 (DORA), "Digital Operational Resilience Act"
-7. PCI Security Standards Council, "PCI DSS v4.0.1", 2024
+- Cash, Grubbs, Perry and Ristenpart, "Leakage-Abuse Attacks Against Searchable Encryption", CCS 2015.
+- Islam, Kuzu and Kantarcioglu, "Access Pattern Disclosure on Searchable Encryption", NDSS 2012.
+- Naveed, Kamara and Wright, "Inference Attacks on Property-Preserving Encrypted Databases", CCS 2015.
+- Chenette, Lewi, Weis and Wu, "Practical Order-Revealing Encryption with Limited Leakage", FSE 2016.
+- Lewi and Wu, "Order-Revealing Encryption: New Constructions, Applications, and Lower Bounds", CCS 2016.
+- Bost, "Sophos: Forward Secure Searchable Encryption", CCS 2016.
+- Bost, Minaud and Ohrimenko, "Forward and Backward Private Searchable Encryption from Constrained Cryptographic Primitives", CCS 2017.
+- Mironov, "On Significance of the Least Significant Bits for Differential Privacy", CCS 2012.
+- RFC 5297 (AES-SIV); NIST SP 800-38G (FF1); FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), FIPS 205 (SLH-DSA).
 
----
-
-**Classification**: Internal Use Only
-**Contact**: security-architecture@company.com
+[#34]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/34
+[#36]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/36
+[#37]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/37
+[#38]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/38
+[#39]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/39
+[#40]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/40
+[#41]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/41
+[#42]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/42
+[#43]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/43
+[#44]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/44
+[#45]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/45
+[#47]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/47
+[#49]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/49

@@ -19,9 +19,11 @@ DEPRECATION NOTICE:
     - Vulnerable to inference attacks in multi-tenant environments
 
     Migration Path:
-    - Use ORE (Order-Revealing Encryption) with Lewi-Wu construction instead
-    - See docs/migration/OPE_TO_ORE.md for migration guide
-    - ORE provides pairwise comparison without global order leakage
+    - This OPE is decryptable without the key; do not use it for real data.
+    - There is no secure drop-in replacement in this repository: the ORE prototype
+      (ore.py) also leaks total order to anyone holding its ciphertexts.
+      See docs/THREAT_MODEL.md.
+    - Removal is tracked in issue #37.
 
     Timeline:
     - Deprecation: v1.0.0 (now)
@@ -59,18 +61,16 @@ class OrderPreservingEncryption:
             ciphertext_bits: Bit size of ciphertext values (default: 64)
 
         .. deprecated:: 1.0.0
-            OrderPreservingEncryption is deprecated and will be removed in a future
-            major release.
-            Use ORE (Order-Revealing Encryption) instead for improved security.
-            See docs/migration/OPE_TO_ORE.md for migration guide.
+            OrderPreservingEncryption is deprecated and will be removed (issue #37).
+            It is decryptable without the key. The ORE prototype is not a secure
+            replacement; see docs/THREAT_MODEL.md.
         """
         # Emit deprecation warning
         warnings.warn(
             "OrderPreservingEncryption is deprecated and retained only for compatibility demos. "
-            "Current OPE leaks global order across all encrypted values, which fails "
-            "modern regulated-data security expectations. "
-            "Migrate to ORE (Order-Revealing Encryption) with Lewi-Wu construction for "
-            "improved security. See docs/migration/OPE_TO_ORE.md for migration guide.",
+            "It is decryptable without the key (plaintext = ciphertext // (2**32 + 1)) and "
+            "must not be used for real data. It will be removed (issue #37). "
+            "See docs/THREAT_MODEL.md.",
             DeprecationWarning,
             stacklevel=2,
         )
