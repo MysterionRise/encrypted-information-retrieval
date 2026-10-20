@@ -43,7 +43,7 @@ aws = [
 research = [
     "numpy>=1.24.0",
     "tenseal>=0.3.14",
-    "pqcrypto>=0.4.0",
+    "pqcrypto>=0.4.0,<1.0",  # 1.0 renamed the API; port tracked in #38
 ]
 dev = [
     "pytest>=7.4.0",
@@ -53,7 +53,7 @@ dev = [
     "ruff>=0.0.285",
     "mypy>=1.5.0",
     "bandit>=1.7.5",
-    "safety>=2.3.5",
+    "pip-audit>=2.7.0",
     "pre-commit>=3.3.3",
     "httpx>=0.25.0",
 ]

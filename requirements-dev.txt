@@ -16,7 +16,7 @@ mypy>=1.5.0
 
 # Security
 bandit>=1.7.5
-safety>=2.3.5
+pip-audit>=2.7.0
 
 # Pre-commit
 pre-commit>=3.3.3
