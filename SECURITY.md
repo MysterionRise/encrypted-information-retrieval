@@ -1,377 +1,142 @@
 # Security Policy
 
-## Project Security Posture
+## Project security posture
+
+This repository is a prototype for privacy-preserving retrieval in regulated AI/RAG systems. It
+contains real cryptographic building blocks and an extensive test suite, but it is **not**
+externally audited. Do not treat it as a production cryptography product without independent
+review, operational hardening, and threat-specific validation.
+
+The Docker Compose workflow is for local evaluation of encrypted document retrieval and the
+RAG-ready API. Its demo authentication, demo master key and demo database password are
+deliberately convenient defaults, not production controls.
+
+## Supported versions
+
+| Version | Supported | Notes |
+| ------- | --------- | ----- |
+| `master` | Yes | Fixes land here first. |
+| `0.9.x` | Yes | First tagged release; see `CHANGELOG.md`. |
+| Anything earlier | No | No earlier version was tagged or released. |
+
+## Reporting a vulnerability
+
+Please **do not** open a public issue, discussion or pull request for a suspected vulnerability.
+
+Report it privately through GitHub:
+**[Report a vulnerability](https://github.com/MysterionRise/encrypted-information-retrieval/security/advisories/new)**.
+This uses GitHub's private vulnerability reporting, so only you and the maintainer can see it.
+
+If that link returns 404, private reporting has not been enabled on the repository yet. In that
+case, open a public issue titled "Security contact request" **without any details**. The
+maintainer will reply with a private channel.
+
+### What to include
+
+- What is affected: module, endpoint, or workflow, plus version or commit.
+- The impact you expect, for example cross-tenant data access, key exposure, or authentication
+  bypass.
+- Steps to reproduce, ideally a minimal script or test.
+- Whether the issue is new leakage or contradicts what
+  [`docs/LEAKAGE_AND_ENDPOINTS.md`](docs/LEAKAGE_AND_ENDPOINTS.md) says the system leaks.
+- How you would like to be credited, if at all.
+
+### What to expect
+
+This is a single-maintainer project, so responses are best effort:
+
+- **Acknowledgement:** within 7 days.
+- **Assessment:** an assessment and a proposed fix or mitigation timeline, agreed with you.
+- **Fix and disclosure:**
+  - The fix is developed in a private fork attached to the advisory.
+  - It is released, and then the GitHub Security Advisory is published, with credit if you want it.
+  - For significant issues, a CVE is requested through GitHub.
+
+## Scope
+
+**In scope:**
+- The durable API path: `/v1/documents*`, `/v1/rag/retrieve`, authentication, key management,
+  storage, migrations and audit.
+- The library modules under `src/encrypted_ir`, including the research modules. Those are
+  unaudited prototypes, but reports about them are still welcome.
+- The CI and release workflows.
+
+**Out of scope:**
+- Demo credentials in `docker-compose.yml`. They are documented demo values.
+- Leakage that [`docs/LEAKAGE_AND_ENDPOINTS.md`](docs/LEAKAGE_AND_ENDPOINTS.md) already documents,
+  unless the actual leakage is larger than documented.
+- Vulnerabilities in third-party dependencies. Please report those upstream; `pip-audit` runs in
+  CI to catch known ones.
+
+## Known limitations
+
+These are tracked publicly. They are not secrets, and you do not need to report them again.
+
+| Area | Limitation | Tracking |
+| ---- | ---------- | -------- |
+| Retrieval leakage | Keyword tokens and blind indexes leak equality, query repetition, result sizes and access patterns by design. | [`docs/LEAKAGE_AND_ENDPOINTS.md`](docs/LEAKAGE_AND_ENDPOINTS.md) |
+| ORE prototype | `ORE.compare()` needs no key, so anyone holding the ciphertexts learns their total order. Ciphertexts also leak partial plaintext bytes. It is not the Lewi-Wu construction its docstring names. | [#34](https://github.com/MysterionRise/encrypted-information-retrieval/issues/34), [#37](https://github.com/MysterionRise/encrypted-information-retrieval/issues/37) |
+| OPE | Deprecated and decryptable without the key. Still used by the demo use cases. | [#37](https://github.com/MysterionRise/encrypted-information-retrieval/issues/37) |
+| Research modules | FPE, CKKS, post-quantum, differential privacy and the forward/backward-private SSE classes are unaudited prototypes with known defects. | [#37](https://github.com/MysterionRise/encrypted-information-retrieval/issues/37), [#38](https://github.com/MysterionRise/encrypted-information-retrieval/issues/38) |
+| Ciphertext binding | Document ciphertexts and wrapped tenant keys are not bound to their tenant, document or key ID through associated data. | [#40](https://github.com/MysterionRise/encrypted-information-retrieval/issues/40) |
+| Authentication | Dev auth is on by default with a public HS256 secret outside production mode. JWT `exp` is not required. Error responses can include exception text. | [#41](https://github.com/MysterionRise/encrypted-information-retrieval/issues/41) |
+| Key rotation | Rotation does not re-encrypt stored documents. | [#42](https://github.com/MysterionRise/encrypted-information-retrieval/issues/42) |
+| Durable path | AND search breaks once a tenant has more than one search key. The per-tenant key cache does not reload across workers. | [#39](https://github.com/MysterionRise/encrypted-information-retrieval/issues/39) |
+| Observability | `/metrics` is unauthenticated and keyed by raw request path, which can expose document IDs. | [#43](https://github.com/MysterionRise/encrypted-information-retrieval/issues/43) |
+| Audit | Audit rows are ordinary database rows, not tamper-evident, and have no export. | [#44](https://github.com/MysterionRise/encrypted-information-retrieval/issues/44) |
+
+The roadmap epics order this work: [#26](https://github.com/MysterionRise/encrypted-information-retrieval/issues/26) (Phase 0), [#27](https://github.com/MysterionRise/encrypted-information-retrieval/issues/27) (Phase 1) and [#28](https://github.com/MysterionRise/encrypted-information-retrieval/issues/28) (Phase 2).
+
+## Security checks in this repository
+
+**CI** (`.github/workflows/ci.yml`) runs on every push and pull request:
+- **bandit** static analysis of `src/`.
+- **ruff**, including the flake8-bandit `S` rules.
+- **pip-audit** over `requirements.txt`, `requirements-api.txt` and `requirements-research.txt`.
+  This step is blocking.
+- The full test suite on Python 3.11 and 3.12, with a PostgreSQL service.
+- A research job that runs the tests needing the optional TenSEAL and pqcrypto extras.
+- A Docker Compose smoke test.
+
+**Locally:**
 
-This repository is a portfolio-grade, production-oriented prototype for
-privacy-preserving retrieval. It contains real cryptographic building blocks
-and extensive tests, but it is **not** externally audited and should not be
-treated as a production cryptography product without independent review,
-operational hardening, and threat-specific validation.
-
-The Docker Compose workflow is intended for local evaluation of encrypted
-document retrieval and RAG-ready API behavior. Demo authentication, local
-master keys, and auto-created tables are deliberately convenient defaults,
-not production controls.
-
-## Supported Versions
-
-Security fixes are tracked for the following prototype versions:
-
-| Version | Supported          | Status |
-| ------- | ------------------ | ------ |
-| 1.0.x   | :white_check_mark: | Current prototype release |
-| < 1.0   | :x:                | Development versions not supported |
-
-**Note:** OPE (Order-Preserving Encryption) is retained for compatibility demos
-and should not be used for sensitive range queries. Prefer the ORE prototype or
-a vetted structured-encryption/TEE design after review.
-
----
-
-## Reporting a Vulnerability
-
-We appreciate your help in making this project more secure! If you discover a security vulnerability, please follow these steps:
-
-### 🔒 Private Disclosure Process
-
-**DO NOT** open a public GitHub issue for security vulnerabilities. Instead:
-
-1. **Email:** Send vulnerability details to **security@example.com** (update with actual email)
-2. **PGP Encryption (Recommended):** Encrypt sensitive details with our PGP key:
-   ```
-   Fingerprint: XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX XXXX
-   Key available at: https://keybase.io/encrypted_ir_team
-   ```
-3. **Subject Line:** `[SECURITY] Brief description of vulnerability`
-
-### 📋 What to Include in Your Report
-
-A good security report should include:
-
-- **Description:** Clear description of the vulnerability
-- **Impact:** Potential impact (data leakage, unauthorized access, etc.)
-- **Affected Versions:** Which versions are vulnerable
-- **Reproduction Steps:** Detailed steps to reproduce the issue
-- **Proof of Concept:** Code snippet or example (if applicable)
-- **Suggested Fix:** Proposed remediation (optional but helpful)
-- **Credit:** How you'd like to be credited in the advisory (optional)
-
-### 📧 Email Template
-
-```
-Subject: [SECURITY] Cryptographic vulnerability in blind index module
-
-Description:
-[Clear description of the vulnerability]
-
-Impact:
-[Potential security impact - e.g., "Allows tenant isolation bypass"]
-
-Affected Versions:
-[e.g., "All versions prior to 1.0.5"]
-
-Reproduction Steps:
-1. [Step 1]
-2. [Step 2]
-3. [Observe vulnerability]
-
-Proof of Concept:
-```python
-# Example code demonstrating the vulnerability
-```
-
-Suggested Fix:
-[Optional - your proposed remediation]
-
-Credit:
-[How you'd like to be credited]
-```
-
----
-
-## Response Timeline
-
-We are committed to addressing security vulnerabilities promptly:
-
-| Severity    | Response Time | Fix Target  | Public Disclosure |
-|-------------|---------------|-------------|-------------------|
-| **Critical** | 24 hours     | 7 days      | After patch release |
-| **High**     | 48 hours     | 14 days     | After patch release |
-| **Medium**   | 7 days       | 30 days     | After patch release |
-| **Low**      | 14 days      | 60 days     | After patch release |
-
-### Severity Definitions
-
-- **Critical:** Remote code execution, key compromise, complete authentication bypass
-- **High:** Privilege escalation, significant data leakage, cryptographic weakness
-- **Medium:** Partial information disclosure, denial of service, side-channel attacks
-- **Low:** Security-relevant bugs with low exploitability
-
----
-
-## Security Update Process
-
-When we receive a valid security report:
-
-1. **Acknowledgment:** We'll confirm receipt within the response timeline
-2. **Validation:** Our security team will validate the vulnerability
-3. **Assessment:** We'll assess severity and exploitability
-4. **Fix Development:** We'll develop and test a fix
-5. **Coordinated Disclosure:** We'll work with you on disclosure timing
-6. **Patch Release:** We'll release a security patch
-7. **Public Advisory:** We'll publish a security advisory (with credit)
-8. **CVE Assignment:** For high/critical issues, we'll request a CVE
-
-### Communication
-
-We'll keep you updated throughout the process:
-- Confirmation of receipt (within response timeline)
-- Validation results (within 5 business days)
-- Fix timeline estimate (within 7 business days)
-- Pre-release notification (24 hours before public disclosure)
-
----
-
-## Security Advisories
-
-Published security advisories will be available at:
-- **GitHub Security Advisories:** https://github.com/MysterionRise/encrypted-information-retrieval/security/advisories
-- **SECURITY_ADVISORIES.md:** Historical log of all advisories
-
----
-
-## Known Security Considerations
-
-### ⚠️ Current Limitations (v1.0.x)
-
-#### 1. OPE (Order-Preserving Encryption) - DEPRECATED
-
-**Status:** Deprecated, retained only for compatibility demos
-
-**Issue:** Current OPE implementation leaks global order and frequency information.
-
-**Impact:**
-- Honest-but-curious server can infer plaintext distribution
-- Vulnerable to frequency analysis attacks
-- Cross-tenant information leakage in multi-tenant deployments
-
-**Mitigation:**
-- **Immediate:** Avoid using OPE for sensitive data
-- **Short-term:** Migrate to blind indexes for equality search
-- **Long-term:** Migrate to ORE (Lewi-Wu construction) - see Issue #1
-
-**References:**
-- Migration guide: `docs/migration/OPE_TO_ORE.md`
-- Threat model: `docs/THREAT_MODEL.md#ope-order-preserving-encryption`
-
-#### 2. SSE (Searchable Symmetric Encryption) - Forward Privacy
-
-**Status:** Prototype implementations available
-
-**Issue:** The legacy `SearchableEncryption` facade is a simple AES-GCM +
-deterministic HMAC-token index. `ForwardPrivateSSE` and `BackwardPrivateIndex`
-demonstrate stronger designs, but they are prototype implementations and have
-not been externally audited.
-
-**Impact:**
-- Server may link new document additions to past search queries
-- Potential for statistical inference attacks on dynamic datasets
-
-**Mitigation:**
-- Use SSE only for semi-static datasets
-- Periodic re-encryption of search indexes
-- **Fix coming:** Issue #5 (Forward privacy enhancement - 1 week)
-
-**References:**
-- Threat model: `docs/THREAT_MODEL.md#sse-searchable-symmetric-encryption`
-
-#### 3. Key Management - Envelope Encryption
-
-**Status:** Prototype AWS KMS custody path implemented
-
-**Issue:** The API can unwrap an application master key through AWS KMS at
-startup, and production mode rejects raw master-key configuration. This is a
-serious custody improvement, but it is not yet a fully operated key-management
-program: IAM policies, CloudTrail retention, key rotation runbooks, break-glass
-procedures, and external review remain outside this repository.
-
-**Impact:**
-- Raw key exposure is reduced in production mode
-- Runtime plaintext master-key residency still needs operational controls
-- Rotation and incident-response evidence still need deployment runbooks
-
-**Mitigation:**
-- Use `ENCRYPTED_IR_KMS_PROVIDER=aws` with `ENCRYPTED_IR_ENCRYPTED_MASTER_KEY_B64`
-- Deny raw `ENCRYPTED_IR_MASTER_KEY_B64` in production
-- Restrict KMS decrypt permissions to the API runtime role
-- Enable CloudTrail and alert on unexpected KMS decrypt events
-- Add a deployment-specific key rotation and recovery runbook before production use
-
-**References:**
-- Architecture: `docs/ARCHITECTURE.md#key-management`
-
----
-
-## Security Best Practices
-
-### For Users of This Library
-
-#### 1. Key Management
-
-✅ **DO:**
-- Generate keys using cryptographically secure random number generators (`os.urandom(32)`)
-- Store keys separately from encrypted data
-- Use per-tenant keys for multi-tenant deployments
-- Rotate keys according to your compliance requirements (e.g., 90 days for DEKs)
-- Use environment variables or secret management services (AWS Secrets Manager, HashiCorp Vault)
-
-❌ **DON'T:**
-- Hard-code keys in source code
-- Store keys in version control
-- Reuse keys across different environments (dev/staging/prod)
-- Share keys between tenants
-
-#### 2. Encryption Scheme Selection
-
-✅ **DO:**
-- Use **blind indexes** for equality search (tenant-isolated, secure)
-- Use **ORE** (after Issue #1) for range queries (pairwise comparison only)
-- Use **AES-SIV** for deterministic encryption (misuse-resistant)
-- Use **SSE** for keyword search (with forward privacy after Issue #5)
-- Use **HE** for computations on encrypted data (CKKS for approximate, BFV for exact)
-
-❌ **DON'T:**
-- Use OPE for new deployments (deprecated, global order leakage)
-- Use deterministic encryption for high-entropy data without additional protection
-- Mix encryption schemes without understanding leakage implications
-
-#### 3. Deployment Security
-
-✅ **DO:**
-- Enable TLS/HTTPS for all API communication (after Issue #4)
-- Implement rate limiting to prevent brute-force attacks
-- Use per-tenant authentication and authorization
-- Enable audit logging for all cryptographic operations
-- Run security scans regularly (`make security`)
-
-❌ **DON'T:**
-- Expose encryption keys in API responses or logs
-- Allow unauthenticated access to encrypted data
-- Disable security features in production
-
-### For Contributors
-
-✅ **DO:**
-- Run `make security` before committing (bandit + safety checks)
-- Use pre-commit hooks (`pre-commit install`)
-- Follow secure coding guidelines (OWASP Top 10)
-- Add security tests for new cryptographic features
-- Document security implications in code comments
-
-❌ **DON'T:**
-- Introduce hardcoded credentials or keys
-- Use insecure random number generators (`random.random()` - use `os.urandom()`)
-- Bypass pre-commit hooks (`--no-verify`)
-
----
-
-## Compliance & Regulatory Context
-
-This project targets compliance with:
-
-- **DORA (EU 2022/2554):** Digital Operational Resilience Act - Effective Jan 17, 2025
-- **PCI DSS v4.0.1:** Future-dated requirements mandatory Mar 31, 2025
-- **NYDFS 23 NYCRR Part 500:** Cybersecurity requirements for financial services
-- **GDPR:** General Data Protection Regulation (Art. 25, 32)
-
-Security considerations are documented in:
-- `docs/COMPLIANCE_NOTES.md` - Regulatory mapping
-- `docs/THREAT_MODEL.md` - Security analysis
-- `docs/ARCHITECTURE.md` - Security architecture
-
----
-
-## Security Testing
-
-### Automated Security Checks
-
-Our CI/CD pipeline includes:
-
-- **Bandit:** Static security analysis for Python code
-- **Safety:** Dependency vulnerability scanning
-- **Ruff:** Security-focused linting rules
-- **Pre-commit hooks:** Detect private keys, large files, merge conflicts
-
-Run locally:
 ```bash
-make security    # Full security scan
-make lint        # Code quality + security checks
-make ci          # Complete CI pipeline locally
+make security            # bandit + pip-audit, same as CI
+pre-commit install       # optional local hooks; CI does not run pre-commit
 ```
 
-### Manual Security Testing
+**Starting points for reviewers:**
+- **Tenant isolation:**
+  - `tests/test_blind_index.py::TestSecurityProperties::test_tenant_isolation`
+  - `tests/test_api.py::TestDurableDocuments::test_document_tenant_isolation`
+  - `tests/test_api.py::TestTenantIsolation::test_tenant_cannot_decrypt_other_tenant_data`
+  - `tests/test_storage_backend.py::TestDatabaseStorageBackend::test_tenant_isolation`
+- **Audit rows contain no plaintext, queries, tokens or key material:**
+  - `tests/test_security_hardening.py::test_document_operations_write_sanitized_audit_rows`
+  - `tests/test_security_hardening.py::test_document_operation_failures_write_sanitized_audit_rows`
+- **Production settings validation:**
+  - `tests/test_security_hardening.py::test_settings_prod_rejects_dev_auth_and_raw_master_key`
+  - `tests/test_security_hardening.py::test_settings_prod_requires_oidc_and_kms`
+- **Constant-time comparison:** `BlindIndexGenerator.verify_index` in `src/encrypted_ir/blind_index.py`
+  uses `hmac.compare_digest`.
 
-For security researchers and auditors:
+## External security audit
 
-1. **Cryptographic Testing:**
-   ```bash
-   PYTHONPATH=src:$PYTHONPATH python -m pytest tests/test_blind_index.py -v
-   PYTHONPATH=src:$PYTHONPATH python -m pytest tests/test_deterministic.py -v
-   ```
+**Status: not completed.**
 
-2. **Leakage Analysis:**
-   - See `docs/THREAT_MODEL.md` for explicit leakage profiles
-   - Test tenant isolation: `tests/test_blind_index.py::test_tenant_isolation`
+No external cryptographic review, penetration test or compliance audit has been performed. Before
+any production use, engage an independent security firm for:
+- a cryptographic review,
+- an application penetration test,
+- an assessment against the specific regulatory scope.
 
-3. **Timing Attack Resistance:**
-   - Constant-time verification: `BlindIndexSearch.verify_match()` uses `hmac.compare_digest()`
+Any regulatory mapping in this repository is discussion material. It is not an audit result,
+legal opinion or certification.
 
----
+## Changes to this policy
 
-## External Security Audit
-
-**Status:** Not completed
-
-This repository has not completed an external cryptographic review,
-penetration test, or compliance audit. Before any production use, engage an
-independent security firm for:
-- Comprehensive cryptographic review
-- Penetration testing
-- Compliance assessment for the specific regulatory scope
-
-Interested security firms can contact: security@example.com
-
----
-
-## Hall of Fame
-
-We recognize security researchers who responsibly disclose vulnerabilities:
-
-### 2025
-- *No vulnerabilities reported yet* (v1.0.0 release)
-
-### Future
-- Your name here? Report a vulnerability!
-
----
-
-## Contact
-
-- **Security Email:** security@example.com
-- **PGP Key:** https://keybase.io/encrypted_ir_team
-- **GitHub Security:** https://github.com/MysterionRise/encrypted-information-retrieval/security
-- **General Issues:** https://github.com/MysterionRise/encrypted-information-retrieval/issues (non-security only)
-
----
-
-## Changelog
-
-| Date       | Change |
-|------------|--------|
-| 2025-11-13 | Initial SECURITY.md created |
-| 2026-07-07 | Repositioned as portfolio-grade prototype; clarified unaudited status |
-
----
-
-**Last Updated:** 2026-07-07
-**Next Review:** Before any production deployment or live cloud demo
+| Date | Change |
+| ---- | ------ |
+| 2025-11-13 | Initial version. |
+| 2026-07-07 | Repositioned as a prototype; clarified unaudited status. |
+| 2026-10-20 | Rewrote the reporting process around GitHub private vulnerability reporting. Removed placeholder contacts and broken references. Added scope and a table of known limitations linked to their tracking issues. |
