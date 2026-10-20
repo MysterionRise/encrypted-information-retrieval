@@ -8,6 +8,7 @@ This repo contains both current portfolio evidence and older planning/reference 
 | --- | --- |
 | [../README.md](../README.md) | Concise project entry point, demo path, boundaries, and commands. |
 | [PORTFOLIO_EVIDENCE.md](PORTFOLIO_EVIDENCE.md) | Current portfolio evidence and verification summary. |
+| [ROADMAP.md](ROADMAP.md) | Phased roadmap (v0.9.0 → v0.10.0 → v1.0.0), the findings behind it, and links to the live GitHub issues. |
 | [CURRENT_STATUS.md](CURRENT_STATUS.md) | Current implementation status, quality commands, known limitations, and production gaps. |
 | [PORTFOLIO_CASE_STUDY.md](PORTFOLIO_CASE_STUDY.md) | CTO-facing case study for the regulated AI/RAG retrieval prototype. |
 | [CTO_DEMO_SCRIPT.md](CTO_DEMO_SCRIPT.md) | Five-minute demo script for CTO review. |
@@ -29,7 +30,7 @@ This repo contains both current portfolio evidence and older planning/reference 
 | Document | Status |
 | --- | --- |
 | [GAP_ANALYSIS.md](GAP_ANALYSIS.md) | Historical gap analysis with stale counts, timelines, and compliance percentages. |
-| [GITHUB_ISSUES.md](GITHUB_ISSUES.md) | Backlog draft, not the authoritative GitHub issue tracker. |
+| [GITHUB_ISSUES.md](GITHUB_ISSUES.md) | Retired backlog draft; superseded by the GitHub issue tracker and [ROADMAP.md](ROADMAP.md). |
 | [LLM_SYSTEM_ANALYSIS.md](LLM_SYSTEM_ANALYSIS.md) | Long-form analysis generated for LLM context; useful but not the current status ledger. |
 | [MVP_COMPLETION_SUMMARY.md](MVP_COMPLETION_SUMMARY.md) | Historical milestone summary. |
 

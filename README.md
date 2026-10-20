@@ -143,13 +143,13 @@ Use the project to discuss architecture and controls, not to claim compliance or
 
 ## Roadmap
 
-The next steps that would most improve production credibility are:
+The roadmap lives in [docs/ROADMAP.md](docs/ROADMAP.md) and is tracked as GitHub issues grouped into three phases:
 
-1. Validate the production OIDC/JWKS and AWS KMS paths against real cloud tenants.
-2. Add immutable audit export to a SIEM or append-only log sink.
-3. Add deployment IaC, TLS termination, backup/restore drills, and SLO dashboards.
-4. Replace prototype retrieval primitives where stronger leakage guarantees are required.
-5. Commission external cryptographic and application-security review.
+1. **v0.9.0 Honest prototype**: make every claim in code, docs, and CI verifiable. No behavioural change.
+2. **v0.10.0 Durable path hardened**: fix the real bugs in the document/RAG path, remove demo-only routes, quarantine research modules.
+3. **v1.0.0 Reviewed portfolio release**: cloud-free OIDC and KMS end-to-end evidence, benchmarks with provenance, a reviewer guide, and a tagged release.
+
+Work beyond that (shared rate limiting, SIEM export, IaC, PIR/ORAM/TEE, vector retrieval, external audit) is listed in the roadmap as not planned, so no document implies it exists.
 
 ## License
 
