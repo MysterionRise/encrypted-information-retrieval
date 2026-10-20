@@ -1,0 +1,47 @@
+name: Bug report
+description: Something does not work as the code, tests or docs say it should.
+labels: ["type/bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security vulnerabilities go through [private reporting](https://github.com/MysterionRise/encrypted-information-retrieval/security/advisories/new), not here.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: A minimal script, test or curl sequence is ideal.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: "0.9.0, or a commit SHA"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Durable API path (documents, RAG retrieval, auth, keys, audit)
+        - Library module (blind index, deterministic encryption, searchable encryption)
+        - Research module (ORE, FPE, CKKS, post-quantum, differential privacy)
+        - CI, packaging or Docker
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Python version, OS, database (SQLite or PostgreSQL), Docker or local.
