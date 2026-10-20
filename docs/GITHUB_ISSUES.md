@@ -1,5 +1,9 @@
 # GitHub Issues Backlog - Encrypted Information Retrieval MVP
 
+> **Retired (October 20, 2026):** this markdown backlog was never created as GitHub
+> issues and no longer reflects the plan. The live backlog is the GitHub issue tracker,
+> organised by the phases in [`ROADMAP.md`](ROADMAP.md). This file is kept for history only.
+
 > **Portfolio status note (July 7, 2026):** This backlog is planning history,
 > not current certification evidence. Current implementation evidence lives in
 > `README.md`, `docs/PORTFOLIO_EVIDENCE.md`, `docs/LEAKAGE_AND_ENDPOINTS.md`,
