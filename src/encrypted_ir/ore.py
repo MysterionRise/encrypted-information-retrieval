@@ -1,22 +1,33 @@
 """
-Order-Revealing Encryption (ORE) Module
+Order-Revealing Encryption (ORE) Module: research prototype, not audited.
 
-Implements the Lewi-Wu ORE construction for secure range queries on encrypted
-numeric data. Unlike OPE (Order-Preserving Encryption), ORE does not leak
-global ordering from individual ciphertexts.
+What this is: a CLWW-style prefix ORE over 32-bit integers split into four
+8-bit blocks (Chenette, Lewi, Weis and Wu, FSE 2016). For block i the
+ciphertext stores a left value HMAC(k_left, i || prefix)[:8], where prefix is
+blocks 0..i-1, and a right value (block_i + HMAC(k_right, i || prefix)) mod 2^16.
 
-Security Properties:
-- Pairwise comparison only: ordering is revealed only when two ciphertexts
-  are explicitly compared using the compare() method
-- No global order leakage: a single ciphertext reveals nothing about the
-  plaintext value's rank among all encrypted values
-- Per-key isolation: ciphertexts from different keys cannot be compared
+What this is not: the Lewi-Wu (2016) left/right construction. In Lewi-Wu,
+stored right ciphertexts cannot be compared with each other; here they can.
+The ALGORITHM identifier and the HMAC labels still say "ore-lewi-wu" so that
+existing ciphertexts and keys stay valid. Renaming is tracked in issue #37.
 
-Algorithm: ore-lewi-wu (based on Lewi & Wu, 2016)
-Reference: https://eprint.iacr.org/2016/612
+Leakage, to anyone who holds the ciphertexts (no key is needed):
+- Total order. compare() reads only the two ciphertexts and never uses the
+  instance key, so an ORE instance with any key can sort another key's
+  ciphertexts. This is the same order leakage as OPE.
+- Block differences. For ciphertexts that share a prefix, the difference of
+  the first differing right values equals the difference of the plaintext
+  blocks at that position.
+- Partial plaintext. right_0 is the most significant byte plus a per-key
+  constant, so one known plaintext/ciphertext pair reveals the most
+  significant byte of every value encrypted under that key.
+- Equality, because encryption is deterministic.
 
-Leakage Profile:
-    Leakage(ORE) = { compare(encrypt(a), encrypt(b)) -> (a < b, a = b, a > b) }
+Raw ciphertext bytes do not sort in plaintext order, but that is not a
+protection because compare() needs no key. Treat this module as a research
+demo; see docs/LEAKAGE_AND_ENDPOINTS.md and issue #34.
+
+Lewi-Wu, for comparison (not implemented here): https://eprint.iacr.org/2016/612
 """
 
 from __future__ import annotations
@@ -30,16 +41,19 @@ import struct
 
 class ORE:
     """
-    Order-Revealing Encryption using the Lewi-Wu construction.
+    CLWW-style prefix order-revealing encryption over 32-bit integers.
 
-    Encrypts numeric values such that pairwise comparison reveals ordering
-    without leaking global order from individual ciphertexts.
+    Research prototype, not audited. The ciphertext holds a left and a right
+    component per 8-bit block. compare() matches left components to find the
+    first differing block, then reads the order from the right components.
 
-    The ciphertext is split into left and right components per block position.
-    Comparison works by matching left components (which encode the prefix)
-    and recovering the block difference from right components using modular
-    arithmetic. This ensures that only the explicit compare() call reveals
-    ordering—raw ciphertext bytes are not sortable.
+    Encryption is deterministic and compare() needs no key. Whoever holds the
+    ciphertexts learns:
+    - their total order,
+    - the exact difference at the first differing block,
+    - with one known pair, the most significant byte of every value.
+
+    See the module docstring.
     """
 
     ALGORITHM = "ore-lewi-wu"
@@ -101,8 +115,9 @@ class ORE:
         """
         Encrypt an integer value using ORE.
 
-        The returned ciphertext is NOT directly comparable via byte ordering.
-        Use compare() for pairwise comparison.
+        Raw ciphertext bytes do not sort in plaintext order, but compare()
+        orders ciphertexts without any key, so this is not a confidentiality
+        property. See the module docstring for the full leakage.
 
         Args:
             plaintext: Non-negative integer (0 to 2^32 - 1).
@@ -218,9 +233,12 @@ class ORE:
         """
         Compare two ORE ciphertexts to determine plaintext ordering.
 
-        This is the only way to determine ordering—raw ciphertext bytes are
-        not sortable. Both ciphertexts must have been encrypted under the
-        same key.
+        This method never uses the instance key: any ORE instance, or anyone
+        reimplementing it, can compare ciphertexts produced under any key.
+        The "different keys" check only detects that the two ciphertexts came
+        from different keys, by comparing their left components. Both
+        ciphertexts must come from the same key for the result to be
+        meaningful.
 
         Args:
             ciphertext1: First ORE ciphertext.

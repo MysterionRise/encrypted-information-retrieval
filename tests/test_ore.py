@@ -1,5 +1,7 @@
 """Tests for Order-Revealing Encryption (ORE) module."""
 
+import functools
+import struct
 import time
 
 import pytest
@@ -217,12 +219,14 @@ class TestOREComparison:
 class TestORESecurityProperties:
     """Tests verifying ORE's security guarantees."""
 
-    def test_no_global_order_leakage(self):
-        """Single ciphertext should not reveal ordering via byte comparison.
+    def test_raw_bytes_not_sortable(self):
+        """Raw ciphertext bytes do not reliably sort in plaintext order.
 
         Values that differ in higher-order blocks have pseudorandom left
-        components at those positions, so byte-level sorting should NOT
-        reliably match plaintext ordering.
+        components at those positions, so byte-level sorting does not
+        reliably match plaintext ordering. This is NOT a confidentiality
+        property: compare() orders ciphertexts without any key
+        (see test_compare_requires_no_key).
         """
         mismatches = 0
         for _ in range(20):
@@ -259,27 +263,45 @@ class TestORESecurityProperties:
         with pytest.raises(ValueError, match="different keys"):
             ore_a.compare(enc_a, enc_b)
 
-    def test_ciphertext_not_trivially_sortable(self):
-        """Verify ciphertexts cannot be sorted by simple numeric interpretation."""
+    def test_compare_requires_no_key(self):
+        """Known leakage: compare() never uses the instance key.
+
+        An ORE instance holding an unrelated key sorts another key's
+        ciphertexts into plaintext order, so anyone holding the ciphertext
+        column learns the total order, the same leakage as OPE.
+        Documented in the module docstring and issue #34.
+        """
+        owner = ORE()
+        outsider = ORE()  # independent random key
+        values = [900, 5, 70000, 16777300, 12, 4294967295, 0, 65536]
+        ciphertexts = [owner.encrypt_int(v) for v in values]
+
+        recovered = sorted(ciphertexts, key=functools.cmp_to_key(outsider.compare))
+
+        assert [values[ciphertexts.index(c)] for c in recovered] == sorted(values)
+
+    def test_right_component_leaks_block_differences(self):
+        """Known leakage: right components reveal plaintext byte differences.
+
+        right_0 is the most significant byte plus a per-key constant, so the
+        difference of two right_0 values equals the difference of the most
+        significant bytes. For ciphertexts that share a prefix, the same holds
+        at the first differing block. Documented in the module docstring.
+        """
         ore = ORE()
-        values = [100, 500, 1000, 5000, 10000]
-        encrypted = [ore.encrypt_int(v) for v in values]
+        right_offset = 2 + ORE.NUM_BLOCKS * ORE.LEFT_SIZE
 
-        # Interpret ciphertext bytes as big-endian integers
-        as_ints = [int.from_bytes(e, "big") for e in encrypted]
+        def right(ciphertext: bytes, block: int) -> int:
+            start = right_offset + 2 * block
+            return struct.unpack(">H", ciphertext[start : start + 2])[0]
 
-        # Check that numeric sorting of ciphertext ints does NOT match
-        # plaintext ordering. Since left components at position 0 are
-        # identical (same key, same empty prefix), the first few bytes
-        # will be the same. Sorting still shouldn't be reliable because
-        # the right components are masked with random offsets.
-        sorted(range(len(values)), key=lambda i: as_ints[i])
-        list(range(len(values)))
+        high = ore.encrypt_int(0x05_00_00_00)
+        low = ore.encrypt_int(0x02_00_00_00)
+        assert (right(high, 0) - right(low, 0)) % ORE.MODULUS == 3
 
-        # With the Lewi-Wu construction, byte-level sorting is unreliable
-        # for determining plaintext order. We just verify that compare()
-        # is the only reliable ordering mechanism.
-        assert ore.compare(encrypted[0], encrypted[4]) == -1
+        shared_prefix_a = ore.encrypt_int(0x01_02_03_09)
+        shared_prefix_b = ore.encrypt_int(0x01_02_03_05)
+        assert (right(shared_prefix_a, 3) - right(shared_prefix_b, 3)) % ORE.MODULUS == 4
 
 
 class TestORERangeQuery:

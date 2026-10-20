@@ -9,9 +9,12 @@ to minimize global frequency analysis and scope leakage to tenant boundaries.
 
 Security Properties:
 - Equality leakage scoped to tenant (not global)
-- Collision-resistant (2^128 security for HMAC-256-128)
-- Preimage-resistant (cannot recover plaintext from index)
-- Per-tenant salting reduces cross-tenant correlation
+- Collision resistance of about 2^64 (birthday bound) for the default
+  128-bit output, which is HMAC-SHA256 truncated to 16 bytes
+- Preimage resistance without the key; with the key, low-entropy values
+  (SSNs, account numbers) can be enumerated
+- Cross-tenant separation: the tenant ID is part of the HMAC key-derivation
+  context. There is no separate salt.
 
 References:
 - CipherSweet: https://ciphersweet.paragonie.com/internals/blind-index
@@ -54,7 +57,7 @@ class BlindIndexGenerator:
     """
     Generate blind indexes for equality searches with scoped leakage.
 
-    Uses HMAC-SHA256 with per-tenant salts to create searchable indexes
+    Uses HMAC-SHA256 with per-tenant, per-field derived keys to create searchable indexes
     that reveal equality only within tenant scope.
 
     Example:
