@@ -12,7 +12,7 @@ from typing import Any
 from encrypted_ir.audit import AuditEventType
 from encrypted_ir.blind_index import BlindIndexConfig, BlindIndexSearch
 from encrypted_ir.key_manager import KeyManager
-from encrypted_ir.ore import ORE
+from encrypted_ir.research.ore import ORE
 from encrypted_ir.searchable import SearchableEncryption
 
 

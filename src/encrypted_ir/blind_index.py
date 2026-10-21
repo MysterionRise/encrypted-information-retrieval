@@ -13,8 +13,9 @@ Security Properties:
   128-bit output, which is HMAC-SHA256 truncated to 16 bytes
 - Preimage resistance without the key; with the key, low-entropy values
   (SSNs, account numbers) can be enumerated
-- Cross-tenant separation: the tenant ID is part of the HMAC key-derivation
-  context. There is no separate salt.
+- Cross-tenant separation: the tenant ID and field name are length-prefixed
+  in the HMAC key-derivation context, so no tenant/field pair can collide with
+  another. There is no separate salt.
 
 References:
 - CipherSweet: https://ciphersweet.paragonie.com/internals/blind-index
@@ -34,6 +35,17 @@ from typing import Literal, cast
 
 UnicodeNormalization = Literal["NFC", "NFD", "NFKC", "NFKD"]
 
+_UNICODE_FORMS = frozenset({"NFC", "NFD", "NFKC", "NFKD"})
+_MIN_OUTPUT_LENGTH = 8
+_MAX_OUTPUT_LENGTH = 32  # HMAC-SHA256 output size
+_KDF_LABEL = b"encrypted-ir/blind-index/v2"
+
+
+def _length_prefixed(value: str) -> bytes:
+    """Encode ``value`` as a 4-byte big-endian length followed by its UTF-8 bytes."""
+    encoded = value.encode("utf-8")
+    return len(encoded).to_bytes(4, "big") + encoded
+
 
 @dataclass
 class BlindIndexConfig:
@@ -42,15 +54,33 @@ class BlindIndexConfig:
 
     Attributes:
         field_name: Name of the field being indexed (e.g., 'ssn', 'account_number')
-        output_length: Length of index in bytes (default: 16 = 128 bits)
+        output_length: Length of index in bytes, 8 to 32 (default: 16 = 128 bits)
         case_sensitive: Whether to preserve case (default: False)
-        unicode_normalize: Unicode normalization form (default: 'NFKC')
+        unicode_normalize: Unicode normalization form, one of NFC, NFD, NFKC, NFKD,
+            or None to skip normalization (default: 'NFKC')
+
+    Raises:
+        ValueError: If ``output_length`` or ``unicode_normalize`` is invalid.
     """
 
     field_name: str
     output_length: int = 16
     case_sensitive: bool = False
-    unicode_normalize: str = "NFKC"
+    unicode_normalize: str | None = "NFKC"
+
+    def __post_init__(self) -> None:
+        length = self.output_length
+        if (
+            isinstance(length, bool)
+            or not isinstance(length, int)
+            or not _MIN_OUTPUT_LENGTH <= length <= _MAX_OUTPUT_LENGTH
+        ):
+            raise ValueError(
+                f"output_length must be an integer from {_MIN_OUTPUT_LENGTH} to "
+                f"{_MAX_OUTPUT_LENGTH} bytes"
+            )
+        if self.unicode_normalize is not None and self.unicode_normalize not in _UNICODE_FORMS:
+            raise ValueError("unicode_normalize must be one of NFC, NFD, NFKC, NFKD or None")
 
 
 class BlindIndexGenerator:
@@ -95,7 +125,9 @@ class BlindIndexGenerator:
         """
         Derive a per-field key from the master key.
 
-        Uses HMAC-SHA256 as a KDF to generate field-specific keys.
+        Uses HMAC-SHA256 as a KDF. The context is a version label followed by the
+        length-prefixed tenant ID and field name, so ("a:b", "c") and ("a", "b:c")
+        derive different keys.
 
         Args:
             field_name: Name of the field
@@ -106,8 +138,8 @@ class BlindIndexGenerator:
         if field_name in self._field_keys:
             return self._field_keys[field_name]
 
-        # KDF: HMAC-SHA256(master_key, tenant_id || field_name)
-        context = f"{self.tenant_id}:{field_name}".encode()
+        # KDF: HMAC-SHA256(master_key, label || len(tenant) || tenant || len(field) || field)
+        context = _KDF_LABEL + _length_prefixed(self.tenant_id) + _length_prefixed(field_name)
         derived_key = hmac.new(self.master_key, context, hashlib.sha256).digest()
 
         self._field_keys[field_name] = derived_key
@@ -128,7 +160,7 @@ class BlindIndexGenerator:
         normalized = value.strip()
 
         # Unicode normalization (e.g., decompose accented characters)
-        if config.unicode_normalize:
+        if config.unicode_normalize is not None:
             normalization = cast(UnicodeNormalization, config.unicode_normalize)
             normalized = unicodedata.normalize(normalization, normalized)
 
@@ -273,6 +305,9 @@ class BlindIndexSearch:
         >>> # Search
         >>> results = search.search("alice@example.com", indexes, config)
         >>> print(results)  # ['rec1']
+
+    Records that share a value share an index, so ``index_records`` maps each index to every
+    matching record ID and ``search`` returns all of them.
     """
 
     def __init__(self, tenant_id: str, master_key: bytes = None):
@@ -288,7 +323,7 @@ class BlindIndexSearch:
 
     def index_records(
         self, records: dict[str, dict], field_name: str, config: BlindIndexConfig
-    ) -> dict[str, str]:
+    ) -> dict[str, list[str]]:
         """
         Generate blind indexes for a set of records.
 
@@ -298,7 +333,7 @@ class BlindIndexSearch:
             config: Index configuration
 
         Returns:
-            Dictionary of index -> record_id
+            Dictionary of index -> list of record IDs with that value, in input order
 
         Example:
             >>> records = {
@@ -308,7 +343,7 @@ class BlindIndexSearch:
             >>> config = BlindIndexConfig(field_name="ssn")
             >>> indexes = search.index_records(records, "ssn", config)
         """
-        index_map: dict[str, str] = {}
+        index_map: dict[str, list[str]] = {}
 
         for record_id, record_data in records.items():
             if field_name not in record_data:
@@ -319,12 +354,12 @@ class BlindIndexSearch:
                 continue
 
             index = self.generator.create_index(str(value), config)
-            index_map[index] = record_id
+            index_map.setdefault(index, []).append(record_id)
 
         return index_map
 
     def search(
-        self, query_value: str, index_map: dict[str, str], config: BlindIndexConfig
+        self, query_value: str, index_map: dict[str, list[str]], config: BlindIndexConfig
     ) -> list[str]:
         """
         Search for records matching a query value.
@@ -335,20 +370,16 @@ class BlindIndexSearch:
             config: Index configuration (must match indexing config)
 
         Returns:
-            List of matching record IDs
+            List of every matching record ID (empty if none match)
 
         Example:
             >>> results = search.search("123-45-6789", index_map, config)
         """
         query_index = self.generator.create_index(query_value, config)
-
-        if query_index in index_map:
-            return [index_map[query_index]]
-        else:
-            return []
+        return list(index_map.get(query_index, []))
 
     def multi_search(
-        self, query_values: list[str], index_map: dict[str, str], config: BlindIndexConfig
+        self, query_values: list[str], index_map: dict[str, list[str]], config: BlindIndexConfig
     ) -> dict[str, list[str]]:
         """
         Search for multiple values at once.

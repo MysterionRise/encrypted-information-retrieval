@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from encrypted_ir.ore import ORE
+from encrypted_ir.research.ore import ORE
 
 
 class TestOREKeyManagement:
@@ -471,7 +471,7 @@ class TestOREAlgorithmIdentifier:
 
     def test_algorithm_constant(self):
         """Test that algorithm identifier is set correctly."""
-        assert ORE.ALGORITHM == "ore-lewi-wu"
+        assert ORE.ALGORITHM == "ore-clww-prototype"
 
     def test_plaintext_range(self):
         """Test plaintext space constants."""

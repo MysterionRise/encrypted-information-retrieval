@@ -64,21 +64,22 @@ The design accepts that trade-off for a prototype and documents it per endpoint 
 ## Library and research primitives
 
 None of these are used by the durable path or reachable through the API; the demo routes that
-exposed some of them were removed in [#36]. The research modules are slated for quarantine under
-`encrypted_ir.research` ([#37]).
+exposed some of them were removed in [#36]. AES-SIV and the blind index are standard constructions in
+the core package. The rest are unaudited prototypes in `encrypted_ir.research`, which issues a
+`ResearchPrototypeWarning` on import ([#37]). The OPE module was deleted because it was decryptable
+without the key.
 
 | Primitive | Construction | Leakage and known issues | Tracking |
 | --- | --- | --- | --- |
 | Deterministic encryption (`deterministic.py`) | AES-SIV (RFC 5297) from `cryptography` | Equality of plaintexts under the same key. Callers pass no associated data. | [#38] |
-| Blind index (`blind_index.py`) | HMAC-SHA256 truncated to 128 bits, per-tenant and per-field derived keys | Equality within tenant and field. About 2^64 collision resistance. The key-derivation context `tenant:field` is ambiguous, and `index_records` keeps one record per value. | [#37] |
-| ORE (`ore.py`) | CLWW-style prefix ORE over 32-bit integers, **not** Lewi-Wu | `compare()` needs no key, so whoever holds the ciphertexts learns their **total order**, the same as OPE. Also leaks plaintext byte differences, the most significant byte given one known pair, and equality. `encrypt_float` truncates instead of rounding. | [#34], [#37], [#38] |
-| OPE (`order_preserving.py`) | Home-grown linear mapping plus HMAC noise | **Decryptable without the key** (`p = ct // (2^32 + 1)`). Deprecated, but still used by the demo use cases. | [#37] |
-| Forward-private SSE (`ForwardPrivateSSE`) | Custom hash chain, not Sophos | `"strong"` mode moves entries into a deterministic index, which leaks keyword co-occurrence for keywords never searched. State cannot be persisted. | [#38] |
-| "Backward-private" index (`BackwardPrivateIndex`) | Token-set index keyed by `doc_id` | Provides **no** backward privacy. Deletes are fully visible, and the returned delete tokens are unused. | [#38] |
-| FF1 format-preserving encryption (`fpe.py`) | NIST SP 800-38G FF1 | Passes the nine NIST sample vectors when run by hand; the vectors are not in the test suite yet. Helpers default to an empty tweak. | [#38] |
-| CKKS (`homomorphic.py`) | TenSEAL, N=8192 | The aggregate helpers decrypt and finish in plaintext. The secret key can be exported in the clear. | [#38] |
-| ML-KEM, ML-DSA and hybrid KEM (`post_quantum.py`) | pqcrypto 0.4 bindings, plus a custom `SHA256(kem_ss ‖ x25519_ss)` combiner | The combiner is not X-Wing and binds no public keys. Signature checking is skipped when no signature is passed. Needs pqcrypto below 1.0. | [#38] |
-| Differential privacy (`differential_privacy.py`) | Textbook Laplace, Gaussian and exponential mechanisms | Uses floating-point noise (Mironov 2012). The classical Gaussian bound is not checked for ε < 1. The budget can be reset by re-registering a tenant. | [#38] |
+| Blind index (`blind_index.py`) | HMAC-SHA256 truncated to 128 bits by default (8 to 32 bytes allowed), per-tenant and per-field keys derived from a length-prefixed context | Equality within tenant and field. About 2^64 collision resistance at the default length. | [#38] (golden vectors) |
+| ORE (`research/ore.py`) | CLWW-style prefix ORE over 32-bit integers, **not** Lewi-Wu | `compare()` needs no key, so whoever holds the ciphertexts learns their **total order**, the same as OPE. Also leaks plaintext byte differences, the most significant byte given one known pair, and equality. `encrypt_float` truncates instead of rounding. | [#34], [#38] |
+| Forward-private SSE (`research/forward_private_sse.py`, `ForwardPrivateSSE`) | Custom hash chain, not Sophos | `"strong"` mode moves entries into a deterministic index, which leaks keyword co-occurrence for keywords never searched. State cannot be persisted. | [#38] |
+| "Backward-private" index (`research/forward_private_sse.py`, `BackwardPrivateIndex`) | Token-set index keyed by `doc_id` | Provides **no** backward privacy. Deletes are fully visible, and the returned delete tokens are unused. | [#38] |
+| FF1 format-preserving encryption (`research/fpe.py`) | NIST SP 800-38G FF1 | Passes the nine NIST sample vectors when run by hand; the vectors are not in the test suite yet. Helpers default to an empty tweak. | [#38] |
+| CKKS (`research/homomorphic.py`) | TenSEAL, N=8192 | The aggregate helpers decrypt and finish in plaintext. The secret key can be exported in the clear. | [#38] |
+| ML-KEM, ML-DSA and hybrid KEM (`research/post_quantum.py`) | pqcrypto 0.4 bindings, plus a custom `SHA256(kem_ss ‖ x25519_ss)` combiner | The combiner is not X-Wing and binds no public keys. Signature checking is skipped when no signature is passed. Needs pqcrypto below 1.0. | [#38] |
+| Differential privacy (`research/differential_privacy.py`) | Textbook Laplace, Gaussian and exponential mechanisms | Uses floating-point noise (Mironov 2012). The classical Gaussian bound is not checked for ε < 1. The budget can be reset by re-registering a tenant. | [#38] |
 
 ## Residual risks
 

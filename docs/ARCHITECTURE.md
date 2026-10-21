@@ -91,8 +91,8 @@ no row-level security in the database.
 | AES-256-GCM + HMAC keyword tokens (`SearchableEncryption`) | Yes | |
 | AES-SIV (`DeterministicEncryption`) | | Yes |
 | Blind index | | Yes (`examples/portfolio_demo.py`) |
-| ORE (CLWW-style prototype) | | Yes (`examples/portfolio_demo.py`) |
-| OPE, FF1, CKKS, ML-KEM/ML-DSA, differential privacy, forward- and backward-private SSE | | Yes |
+| ORE (CLWW-style prototype, `encrypted_ir.research.ore`) | | Yes (`examples/portfolio_demo.py`) |
+| FF1, CKKS, ML-KEM/ML-DSA, differential privacy, forward- and backward-private SSE | | Yes (`encrypted_ir.research`) |
 
 The leakage of each primitive is in [THREAT_MODEL.md](THREAT_MODEL.md).
 

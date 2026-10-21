@@ -51,7 +51,7 @@ install-dev: ## Install development dependencies only
 
 test: ## Run all tests
 	@echo "$(BLUE)Running tests...$(NC)"
-	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest -v -W ignore::DeprecationWarning
+	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest -v
 	@echo "$(GREEN)✓ All tests passed$(NC)"
 
 test-verbose: ## Run tests with verbose output
@@ -64,8 +64,7 @@ test-coverage: ## Run tests with coverage report
 		--cov=src/encrypted_ir \
 		--cov-report=term-missing \
 		--cov-report=html \
-		--cov-report=xml \
-		-W ignore::DeprecationWarning
+		--cov-report=xml
 	@echo "$(GREEN)✓ Coverage report generated$(NC)"
 	@echo "$(YELLOW)View HTML report: open htmlcov/index.html$(NC)"
 
@@ -74,6 +73,7 @@ bench: ## Run performance benchmarks
 	@mkdir -p benchmarks/results
 	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest \
 		tests/test_benchmarks.py \
+		tests/research/test_benchmarks_research.py \
 		--benchmark-only \
 		--benchmark-json=benchmarks/results/latest.json
 
@@ -149,7 +149,7 @@ pre-commit-check: ## Quick checks before committing
 	@echo "$(BLUE)2. Linting...$(NC)"
 	$(PYTHON) -m ruff check src tests examples
 	@echo "$(BLUE)3. Quick tests...$(NC)"
-	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest -q -W ignore::DeprecationWarning
+	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest -q
 	@echo "$(GREEN)✓ Pre-commit checks passed$(NC)"
 
 docs-check: ## Check that relative links in maintained Markdown files resolve
@@ -159,7 +159,7 @@ docs-check: ## Check that relative links in maintained Markdown files resolve
 watch-test: ## Watch for changes and run tests automatically
 	@echo "$(BLUE)Watching for changes...$(NC)"
 	@echo "$(YELLOW)Note: Requires '$(PIP) install pytest-watch'$(NC)"
-	PYTHONPATH=src:$$PYTHONPATH ptw -- -v -W ignore::DeprecationWarning
+	PYTHONPATH=src:$$PYTHONPATH ptw -- -v
 
 requirements: ## Generate requirements.txt from current environment
 	@echo "$(BLUE)Generating requirements.txt...$(NC)"
