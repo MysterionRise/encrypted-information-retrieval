@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from encrypted_ir import __version__
 from encrypted_ir.database import create_database_engine, create_database_schema
 from encrypted_ir.document_service import DocumentService
+from encrypted_ir.errors import DocumentAlreadyExistsError
 from encrypted_ir.master_key import resolve_master_key
 from encrypted_ir.settings import EncryptedIRSettings
 
@@ -121,6 +122,18 @@ def create_app(settings: EncryptedIRSettings | None = None) -> FastAPI:  # noqa:
                 "message": "Request validation failed",
                 "request_id": getattr(request.state, "request_id", "unknown"),
                 "details": details,
+            },
+        )
+
+    @app.exception_handler(DocumentAlreadyExistsError)
+    async def conflict_handler(request: Request, exc: DocumentAlreadyExistsError):
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "error": "conflict",
+                "message": "A document with this ID already exists",
+                "request_id": getattr(request.state, "request_id", "unknown"),
+                "details": [],
             },
         )
 

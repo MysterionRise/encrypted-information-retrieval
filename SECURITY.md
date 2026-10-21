@@ -80,7 +80,6 @@ These are tracked publicly. They are not secrets, and you do not need to report 
 | Ciphertext binding | Document ciphertexts and wrapped tenant keys are not bound to their tenant, document or key ID through associated data. | [#40](https://github.com/MysterionRise/encrypted-information-retrieval/issues/40) |
 | Authentication | Dev auth is on by default with a public HS256 secret outside production mode. JWT `exp` is not required. Error responses can include exception text. | [#41](https://github.com/MysterionRise/encrypted-information-retrieval/issues/41) |
 | Key rotation | Rotation does not re-encrypt stored documents. | [#42](https://github.com/MysterionRise/encrypted-information-retrieval/issues/42) |
-| Durable path | AND search breaks once a tenant has more than one search key. The per-tenant key cache does not reload across workers. | [#39](https://github.com/MysterionRise/encrypted-information-retrieval/issues/39) |
 | Observability | `/metrics` is unauthenticated and keyed by raw request path, which can expose document IDs. | [#43](https://github.com/MysterionRise/encrypted-information-retrieval/issues/43) |
 | Audit | Audit rows are ordinary database rows, not tamper-evident, and have no export. | [#44](https://github.com/MysterionRise/encrypted-information-retrieval/issues/44) |
 
