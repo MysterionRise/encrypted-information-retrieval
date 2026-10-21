@@ -341,14 +341,21 @@ class SearchableEncryption:
 
 class ForwardPrivateSSE:
     """
-    Forward-private searchable symmetric encryption.
+    Hash-chain searchable encryption with a forward-privacy goal.
 
-    Forward privacy ensures that when new documents are added to the encrypted
-    index, the server (honest-but-curious adversary) cannot link the updates
-    to any previously executed search queries.
+    Research prototype, not audited. The goal is that when new documents are
+    added, an honest-but-curious server cannot link the updates to searches
+    it has already seen.
 
-    Construction: Hash-chain state advancement inspired by Bost (2016),
-    "Sigma-o-phi-o-s - Forward Secure Searchable Encryption" (ePrint 2016/728).
+    Construction: a custom per-keyword hash chain, loosely inspired by Bost
+    (2016), "Sophos: Forward Secure Searchable Encryption" (ePrint 2016/728).
+    It is not Sophos:
+    - there is no trapdoor permutation,
+    - the client walks the chain itself,
+    - client state and the "server" index live in the same Python object, so
+      no search token ever crosses a trust boundary.
+    The forward-privacy argument rests on re-keying each keyword's chain to a
+    fresh random state after every search.
 
     Leakage profile:
       - Update leakage: Document count only. The server cannot determine which
@@ -357,7 +364,8 @@ class ForwardPrivateSSE:
         same keyword was searched before). After search, the keyword's state
         chain is re-keyed to restore forward privacy for future updates.
       - No query-document linkage: Updates added after the last search or
-        re-encryption cannot be correlated with past search queries.
+        re-encryption cannot be correlated with past search queries, until
+        re_encrypt() runs (see below).
 
     Dual-state index:
       - Secure index: Contains entries whose keyword mapping the server already
@@ -368,12 +376,14 @@ class ForwardPrivateSSE:
         the secure index during search or periodic re-encryption.
 
     Modes:
-      - 'strong': Maximum privacy. Per-update random salts, automatic periodic
-        re-encryption after a configurable threshold of updates. Higher
-        computational cost due to frequent re-keying.
-      - 'balanced': Practical tradeoff. Per-update random salts, manual
-        re-encryption via re_encrypt(). Good privacy with lower overhead.
-        This is the default mode.
+      - 'strong': Per-update random salts, plus automatic re_encrypt() after
+        re_encrypt_threshold updates. re_encrypt() moves every auxiliary entry
+        into the deterministic secure index, keyed by HMAC(search_key, keyword).
+        That reveals which documents share each keyword, including keywords
+        that were never searched. Despite its name, strong mode therefore
+        leaks more than balanced mode (issue #38).
+      - 'balanced': Per-update random salts; re_encrypt() runs only when called,
+        with the same effect as above. This is the default mode.
       - 'off': Backward compatibility. Deterministic HMAC tokens with no
         forward privacy guarantee. Equivalent to standard SSE. Suitable for
         static datasets where forward privacy is not required.
@@ -617,8 +627,12 @@ class ForwardPrivateSSE:
         Re-encrypt the auxiliary index into the secure index.
 
         Moves all forward-private entries to the secure index and re-keys
-        all keyword states. This restores forward privacy by ensuring future
-        update tokens are derived from fresh, unrelated state chains.
+        all keyword states, so future update tokens come from fresh chains.
+
+        Leakage: the secure index stores entries under deterministic
+        HMAC(search_key, keyword) tokens. After this call the server can see
+        which documents share each keyword, including keywords that were
+        never searched (issue #38).
 
         In 'strong' mode, this is called automatically after a configurable
         number of updates. In 'balanced' mode, call this manually.
@@ -694,20 +708,26 @@ class ForwardPrivateSSE:
 
 class BackwardPrivateIndex:
     """
-    Backward-private searchable encryption index.
+    Keyword index with deletion support. Research prototype, not audited.
 
-    Provides backward privacy: delete operations cannot be linked to prior
-    add operations or search queries. The server observing a deletion learns
-    nothing about which keywords were associated with the deleted document
-    or which past queries matched it.
+    This class does NOT provide backward privacy:
+    - Deletes are addressed by plaintext doc_id and remove the token set the
+      server already holds for that document, so the server learns exactly
+      which tokens were deleted.
+    - The delete tokens that delete_document() returns are not used for
+      anything.
+    - Plaintext keywords are kept in the same object as the server-side
+      index.
+    - re_encrypt() replaces both the encryption and search keys of the
+      wrapped SearchableEncryption. Documents encrypted earlier with self.sse
+      can then only be decrypted by a caller who kept the old keys.
+    - garbage_collect() cannot find anything, because the index and the
+      keyword map are always changed together.
 
-    Implements:
-    - Unlinkable delete tokens (separate key, different derivation path)
-    - Secure index pruning (complete removal of deleted entries)
-    - Garbage collection for stale index entries
-    - Periodic re-encryption with fresh randomness after N deletions
-
-    Reference: Bost & Fouque (2017), "Thwarting Leakage Abuse Attacks"
+    Backward privacy as a security notion: Bost, Minaud and Ohrimenko,
+    "Forward and Backward Private Searchable Encryption from Constrained
+    Cryptographic Primitives", CCS 2017 (https://eprint.iacr.org/2017/805).
+    Fix or removal is tracked in issue #38.
     """
 
     def __init__(
@@ -817,11 +837,12 @@ class BackwardPrivateIndex:
 
     def delete_document(self, doc_id: str) -> dict:
         """
-        Delete a document from the index with backward privacy.
+        Delete a document from the index.
 
-        The delete tokens returned are cryptographically unlinkable to the
-        search tokens that were used to index the document. The server
-        cannot correlate a deletion with any prior add or search operation.
+        Not backward-private: removing doc_id's entry removes the exact token
+        set the server already holds, so the deletion is fully visible. The
+        returned delete tokens are derived from a separate key but are not
+        used by this class.
 
         Args:
             doc_id: Document identifier to delete
@@ -862,13 +883,12 @@ class BackwardPrivateIndex:
         """
         Re-encrypt the entire index with fresh keys and randomness.
 
-        Generates new search keys and rebuilds all tokens. After
-        re-encryption, all previous search tokens and delete tokens
-        become invalid and unlinkable to the new index state.
+        Generates new encryption and search keys and rebuilds all tokens
+        from the plaintext keywords held in this object. Previous search
+        tokens and delete tokens stop matching.
 
-        This provides the strongest backward privacy guarantee:
-        any correlation the server may have accumulated between
-        tokens and queries is broken.
+        This replaces self.sse, so documents encrypted earlier with the old
+        self.sse can only be decrypted with the old keys.
         """
         new_enc_key, new_search_key = SearchableEncryption.generate_keys()
         new_sse = SearchableEncryption(new_enc_key, new_search_key)

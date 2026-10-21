@@ -2,7 +2,12 @@
 Basic Homomorphic Encryption Module
 
 Implements basic homomorphic encryption operations using TenSEAL (CKKS scheme).
-Allows computations on encrypted data without decryption.
+Research prototype, not audited.
+
+Addition, subtraction and multiplication run on ciphertexts. The aggregate
+helpers sum_vector, mean_vector, dot_product and weighted_sum are different:
+they decrypt the vector and finish in plaintext. They are not homomorphic
+aggregates, and the holder of the secret key sees every element (issue #38).
 
 Use Case: Privacy-preserving credit scoring, encrypted risk calculations,
 secure multi-party analytics, regulatory reporting on encrypted data.
@@ -207,7 +212,9 @@ class BasicHomomorphicEncryption:
 
     def sum_vector(self, encrypted_vector: ts.CKKSVector) -> float:
         """
-        Compute sum of encrypted vector (decrypt result).
+        Decrypt the vector and sum it in plaintext.
+
+        Not a homomorphic operation: every element is decrypted (issue #38).
 
         Args:
             encrypted_vector: Encrypted vector
@@ -220,7 +227,9 @@ class BasicHomomorphicEncryption:
 
     def mean_vector(self, encrypted_vector: ts.CKKSVector) -> float:
         """
-        Compute mean of encrypted vector.
+        Decrypt the vector and average it in plaintext.
+
+        Not a homomorphic operation: every element is decrypted (issue #38).
 
         Args:
             encrypted_vector: Encrypted vector
@@ -233,7 +242,10 @@ class BasicHomomorphicEncryption:
 
     def dot_product(self, enc_vec1: ts.CKKSVector, enc_vec2: ts.CKKSVector) -> float:
         """
-        Compute dot product of two encrypted vectors.
+        Multiply two encrypted vectors element-wise, then decrypt and sum.
+
+        The multiplication is homomorphic; the sum is not. Every element-wise
+        product is decrypted (issue #38).
 
         Args:
             enc_vec1: First encrypted vector
@@ -247,7 +259,10 @@ class BasicHomomorphicEncryption:
 
     def weighted_sum(self, encrypted_vector: ts.CKKSVector, weights: list[float]) -> float:
         """
-        Compute weighted sum of encrypted vector.
+        Multiply by plaintext weights, then decrypt and sum.
+
+        The multiplication is homomorphic; the sum is not. Every weighted
+        element is decrypted (issue #38).
 
         Args:
             encrypted_vector: Encrypted vector

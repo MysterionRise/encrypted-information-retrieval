@@ -134,7 +134,7 @@ Encrypted retrieval always leaks something:
 
 - deterministic tokens and blind indexes leak equality within their configured scope,
 - keyword retrieval leaks query repetition, result sizes, and access patterns,
-- ORE reveals order through explicit comparisons,
+- the ORE prototype's comparison needs no key, so anyone holding ORE ciphertexts learns their total order,
 - optional plaintext retrieval for RAG must be policy-gated and audited,
 - local demo secrets are not a substitute for production KMS/HSM policy.
 
