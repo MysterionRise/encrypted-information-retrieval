@@ -1,24 +1,16 @@
 """
-Financial Services Use Cases
+Financial Services Use Cases (research demos)
 
-Demonstrates practical applications of encrypted information retrieval
-in financial services scenarios.
+Demonstrates how the primitives could be combined in financial-services scenarios.
+These are research demos, not part of the durable document path. CreditScoring
+needs the optional TenSEAL dependency from the ``research`` extra.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
-from .deterministic import DeterministicEncryption
-from .key_manager import KeyManager
-from .order_preserving import OrderPreservingEncryption
-from .searchable import SearchableEncryption
-
-_BasicHomomorphicEncryption: Any
-try:
-    from .homomorphic import BasicHomomorphicEncryption as _BasicHomomorphicEncryption
-except ImportError:
-    _BasicHomomorphicEncryption = None
+from ..deterministic import DeterministicEncryption
+from ..key_manager import KeyManager
+from ..searchable import SearchableEncryption
 
 
 class AccountManagement:
@@ -63,62 +55,6 @@ class AccountManagement:
             if enc_account == search_token:
                 matches.append(idx)
         return matches
-
-
-class TransactionProcessing:
-    """
-    Use case: Encrypted transaction amounts with range queries.
-
-    Enables querying transactions by amount range while keeping
-    actual amounts encrypted.
-    """
-
-    def __init__(self, key_manager: KeyManager):
-        self.key_manager = key_manager
-        self.key_id = key_manager.create_key("ope", description="Transaction amount encryption")
-        key = key_manager.get_key(self.key_id)
-        self.encryptor = OrderPreservingEncryption(key)
-
-    def encrypt_amount(self, amount: float) -> int:
-        """Encrypt a transaction amount."""
-        return self.encryptor.encrypt_amount(amount)
-
-    def find_large_transactions(self, encrypted_amounts: list[int], threshold: float) -> list[int]:
-        """
-        Find transactions above a threshold.
-
-        Args:
-            encrypted_amounts: List of encrypted transaction amounts
-            threshold: Minimum amount threshold
-
-        Returns:
-            List of indices with amounts >= threshold
-        """
-        encrypted_threshold = self.encrypt_amount(threshold)
-        return [
-            idx for idx, enc_amt in enumerate(encrypted_amounts) if enc_amt >= encrypted_threshold
-        ]
-
-    def find_transactions_in_range(
-        self, encrypted_amounts: list[int], min_amount: float, max_amount: float
-    ) -> list[int]:
-        """
-        Find transactions within amount range.
-
-        Args:
-            encrypted_amounts: List of encrypted transaction amounts
-            min_amount: Minimum amount
-            max_amount: Maximum amount
-
-        Returns:
-            List of indices with amounts in range
-        """
-        enc_min = self.encrypt_amount(min_amount)
-        enc_max = self.encrypt_amount(max_amount)
-
-        return [
-            idx for idx, enc_amt in enumerate(encrypted_amounts) if enc_min <= enc_amt <= enc_max
-        ]
 
 
 class DocumentSearch:
@@ -235,12 +171,11 @@ class CreditScoring:
     HISTORY_CAP = 120.0  # months (10 years)
 
     def __init__(self):
-        if _BasicHomomorphicEncryption is None:
-            raise ImportError(
-                "CreditScoring requires the optional TenSEAL dependency. "
-                "Install requirements-research.txt or the research extra."
-            )
-        self.encryptor = _BasicHomomorphicEncryption()
+        # Imported here so the other use cases work without the optional TenSEAL dependency.
+        # The homomorphic module raises an ImportError that names the research extra.
+        from .homomorphic import BasicHomomorphicEncryption
+
+        self.encryptor = BasicHomomorphicEncryption()
 
     def encrypt_financial_data(
         self, income: float, debt: float, credit_history_months: int
@@ -354,86 +289,3 @@ class CreditScoring:
         # Scale to 300-850 range and clamp
         credit_score = 300 + (raw_score * 550)
         return float(max(300, min(850, credit_score)))
-
-
-class FraudDetection:
-    """
-    Use case: Encrypted fraud pattern detection.
-
-    Detects suspicious transaction patterns while keeping
-    transaction details encrypted.
-    """
-
-    def __init__(self, key_manager: KeyManager):
-        self.key_manager = key_manager
-        self.ope_key_id = key_manager.create_key(
-            "ope_fraud", description="Transaction amount encryption for fraud detection"
-        )
-        ope_key = key_manager.get_key(self.ope_key_id)
-        self.ope_encryptor = OrderPreservingEncryption(ope_key)
-
-        self.det_key_id = key_manager.create_key(
-            "deterministic_fraud",
-            key_size=64,
-            description="Account ID encryption for fraud detection",
-        )
-        det_key = key_manager.get_key(self.det_key_id)
-        self.det_encryptor = DeterministicEncryption(det_key)
-
-    def encrypt_transaction(self, account_id: str, amount: float, merchant: str) -> dict[str, Any]:
-        """
-        Encrypt transaction data.
-
-        Args:
-            account_id: Account identifier
-            amount: Transaction amount
-            merchant: Merchant name
-
-        Returns:
-            Dictionary with encrypted fields
-        """
-        return {
-            "account_id": self.det_encryptor.encrypt_to_base64(account_id),
-            "amount": self.ope_encryptor.encrypt_amount(amount),
-            "merchant": self.det_encryptor.encrypt_to_base64(merchant),
-        }
-
-    def detect_unusual_amounts(
-        self, encrypted_transactions: list[dict], threshold_amount: float
-    ) -> list[int]:
-        """
-        Detect transactions with unusual amounts.
-
-        Args:
-            encrypted_transactions: List of encrypted transactions
-            threshold_amount: Suspicious amount threshold
-
-        Returns:
-            List of indices of suspicious transactions
-        """
-        enc_threshold = self.ope_encryptor.encrypt_amount(threshold_amount)
-        suspicious = []
-
-        for idx, txn in enumerate(encrypted_transactions):
-            if txn["amount"] > enc_threshold:
-                suspicious.append(idx)
-
-        return suspicious
-
-    def detect_rapid_transactions(
-        self, encrypted_transactions: list[dict], account_id: str, max_count: int = 5
-    ) -> bool:
-        """
-        Detect rapid succession of transactions from same account.
-
-        Args:
-            encrypted_transactions: List of encrypted transactions
-            account_id: Account to check
-            max_count: Maximum allowed transactions
-
-        Returns:
-            True if fraud pattern detected
-        """
-        enc_account = self.det_encryptor.encrypt_to_base64(account_id)
-        count = sum(1 for txn in encrypted_transactions if txn["account_id"] == enc_account)
-        return count > max_count

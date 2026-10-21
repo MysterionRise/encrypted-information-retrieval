@@ -177,9 +177,6 @@ markers = [
     "integration: marks tests as integration tests",
     "benchmark: marks tests as benchmarks",
 ]
-filterwarnings = [
-    "ignore::DeprecationWarning",
-]
 
 [tool.coverage.run]
 source = ["src"]

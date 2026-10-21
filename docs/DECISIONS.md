@@ -94,7 +94,7 @@ We need deterministic encryption for equality searches on account numbers, custo
 ## ADR-002: Implement Blind Indexes for Equality Search
 
 **Date**: 2025-01-11
-**Status**: Accepted. Implemented in `blind_index.py` as a library primitive. Not used by the durable document path. Known defects are tracked in [#37].
+**Status**: Accepted. Implemented in `blind_index.py` as a library primitive. Not used by the durable document path. The ambiguous key-derivation context and the one-record-per-value bug were fixed in [#37].
 **Decision Makers**: Security Architecture Team
 
 ### Context
@@ -231,7 +231,7 @@ Searchable Symmetric Encryption (SSE) enables keyword search on encrypted docume
 ## ADR-004: Migrate from OPE to ORE for Range Queries
 
 **Date**: 2025-01-11
-**Status**: Not achieved as written. `ore.py` implements a CLWW-style prefix ORE, not Lewi-Wu. Its comparison needs no key, so its order leakage equals OPE's ([#34]). OPE is still used by the demo use cases; removal is [#37].
+**Status**: Not achieved as written. `encrypted_ir.research.ore` implements a CLWW-style prefix ORE, not Lewi-Wu. Its comparison needs no key, so its order leakage equals OPE's ([#34]). The OPE module and the use cases built on it were deleted in [#37].
 **Decision Makers**: Security Architecture Team
 
 ### Context
@@ -599,7 +599,7 @@ Some operations require plaintext processing (e.g., complex predicates, ML infer
 ## ADR-010: Post-Quantum Cryptography Roadmap
 
 **Date**: 2025-01-11
-**Status**: Research module only. ML-KEM, ML-DSA and a hybrid KEM exist in `post_quantum.py` (pqcrypto 0.4) and are not used by the durable path. The hybrid combiner is not X-Wing ([#38]).
+**Status**: Research module only. ML-KEM, ML-DSA and a hybrid KEM exist in `encrypted_ir.research.post_quantum` (pqcrypto 0.4) and are not used by the durable path. The hybrid combiner is not X-Wing ([#38]).
 **Decision Makers**: Security Architecture Team
 
 ### Context
@@ -745,7 +745,7 @@ locally and stored AES-GCM-wrapped under that master key.
 ## ADR-015: Quarantine Research Modules
 
 **Date**: 2026-10-20
-**Status**: Accepted. Implementation tracked in [#37].
+**Status**: Accepted and implemented ([#37]).
 
 ### Context
 

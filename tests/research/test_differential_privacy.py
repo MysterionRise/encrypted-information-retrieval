@@ -5,7 +5,7 @@ import warnings
 
 import pytest
 
-from encrypted_ir.differential_privacy import (
+from encrypted_ir.research.differential_privacy import (
     DPQueryInterface,
     ExponentialMechanism,
     GaussianMechanism,

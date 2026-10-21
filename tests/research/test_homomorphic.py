@@ -4,7 +4,7 @@ import pytest
 
 ts = pytest.importorskip("tenseal")
 
-from encrypted_ir.homomorphic import BasicHomomorphicEncryption  # noqa: E402
+from encrypted_ir.research.homomorphic import BasicHomomorphicEncryption  # noqa: E402
 
 
 class TestBasicHomomorphicEncryption:

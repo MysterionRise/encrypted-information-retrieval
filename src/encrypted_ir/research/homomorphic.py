@@ -18,7 +18,14 @@ from __future__ import annotations
 import base64
 from typing import cast
 
-import tenseal as ts
+try:
+    import tenseal as ts
+except ImportError as exc:
+    raise ImportError(
+        "encrypted_ir.research.homomorphic needs TenSEAL. Install the research extra: "
+        "pip install 'encrypted-information-retrieval[research]' "
+        "or pip install -r requirements-research.txt"
+    ) from exc
 
 
 class BasicHomomorphicEncryption:

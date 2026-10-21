@@ -3,6 +3,11 @@
 Every document outside `archive/` is meant to be accurate for the current code. If you find a
 statement the code does not back, that is a bug: please open an issue.
 
+**Core versus research.** The durable API path and the standard constructions it uses are in the
+`encrypted_ir` package. Unaudited prototypes (ORE, FF1, CKKS, post-quantum, differential privacy,
+forward-private SSE, the use-case demos) are in `encrypted_ir.research`, which warns on import and is
+never imported by the core package or the API. THREAT_MODEL.md covers both, and says which is which.
+
 ## Read first
 
 | Document | Purpose |

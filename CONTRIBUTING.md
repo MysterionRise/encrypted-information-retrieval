@@ -40,7 +40,7 @@ pip install -r requirements-research.txt
 | `make lint` | ruff, bandit and mypy, with the same arguments as CI. |
 | `make security` | bandit and pip-audit, as in CI. |
 | `make pre-commit-check` | black check, ruff and a quick test run. |
-| `make bench` | pytest-benchmark timings for `tests/test_benchmarks.py`. |
+| `make bench` | pytest-benchmark timings for `tests/test_benchmarks.py` and `tests/research/test_benchmarks_research.py`. |
 | `docker compose up --build`, then `./scripts/compose_smoke.sh` | The Compose persistence smoke test that CI runs. |
 
 CI pins exact versions of black, ruff, mypy and bandit in the `env` block of

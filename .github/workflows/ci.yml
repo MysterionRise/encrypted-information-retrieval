@@ -103,7 +103,7 @@ jobs:
         # --benchmark-disable runs each benchmarked function once without calibration;
         # timings are measured only by the benchmarks job.
         run: |
-          PYTHONPATH=src:$PYTHONPATH python -m pytest -v -rs -W ignore::DeprecationWarning --timeout=60 --benchmark-disable
+          PYTHONPATH=src:$PYTHONPATH python -m pytest -v -rs --timeout=60 --benchmark-disable
         timeout-minutes: 10
 
   # Coverage with an enforced floor. Measured 87.13% on 2026-10-20; the floor ratchets up, never down.
@@ -120,10 +120,12 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install dependencies
+      - name: Install dependencies with research extras
+        # Coverage measures the research prototypes too, so their tests must run here.
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-ci.txt
+          pip install -r requirements-research.txt
 
       - name: Run tests with coverage (fails under the floor)
         run: |
@@ -133,8 +135,7 @@ jobs:
             --cov-report=term-missing \
             --cov-report=xml \
             --cov-report=html \
-            --cov-fail-under=86 \
-            -W ignore::DeprecationWarning
+            --cov-fail-under=86
 
       - name: Upload coverage to Codecov
         if: always()
@@ -217,7 +218,7 @@ jobs:
 
       - name: Run full suite with research extras
         run: |
-          PYTHONPATH=src:$PYTHONPATH python -m pytest -rs -W ignore::DeprecationWarning --timeout=120 --benchmark-disable
+          PYTHONPATH=src:$PYTHONPATH python -m pytest -rs --timeout=120 --benchmark-disable
         timeout-minutes: 15
 
   # Build the API image and run the Compose persistence smoke test from docs/CTO_DEMO_SCRIPT.md.
@@ -265,10 +266,11 @@ jobs:
       - name: Run benchmarks
         run: |
           mkdir -p benchmarks/results
-          PYTHONPATH=src:$PYTHONPATH python -m pytest tests/test_benchmarks.py \
+          PYTHONPATH=src:$PYTHONPATH python -m pytest \
+            tests/test_benchmarks.py \
+            tests/research/test_benchmarks_research.py \
             --benchmark-only \
-            --benchmark-json=benchmarks/results/latest.json \
-            -W ignore::DeprecationWarning
+            --benchmark-json=benchmarks/results/latest.json
 
       - name: Keep summary statistics only
         # --benchmark-json embeds every raw timing (about 150 MB); keep min/mean/median/etc.
