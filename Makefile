@@ -31,7 +31,7 @@ help: ## Show this help message
 setup: ## Install dependencies and set up development environment
 	@echo "$(BLUE)Setting up development environment...$(NC)"
 	$(PIP) install --upgrade pip setuptools wheel
-	$(PIP) install -r requirements.txt
+	$(PIP) install -r requirements-ci.txt
 	$(PIP) install -r requirements-dev.txt
 	@echo "$(GREEN)✓ Dependencies installed$(NC)"
 	@echo "$(BLUE)Installing pre-commit hooks...$(NC)"
@@ -73,10 +73,9 @@ bench: ## Run performance benchmarks
 	@echo "$(BLUE)Running benchmarks...$(NC)"
 	@mkdir -p benchmarks/results
 	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest \
-		tests/ \
+		tests/test_benchmarks.py \
 		--benchmark-only \
-		--benchmark-json=benchmarks/results/latest.json \
-		2>/dev/null || echo "$(YELLOW)⚠ No benchmarks found yet (will be added in Issue #3)$(NC)"
+		--benchmark-json=benchmarks/results/latest.json
 
 lint: ## Run all code quality checks (ruff, bandit, mypy)
 	@echo "$(BLUE)Running code quality checks...$(NC)"
@@ -106,7 +105,7 @@ security: ## Run security checks (bandit + pip-audit), same as CI
 	@echo "$(BLUE)1. Scanning code for security issues (bandit)...$(NC)"
 	$(PYTHON) -m bandit -r src -ll -f screen
 	@echo "$(BLUE)2. Auditing dependencies for known vulnerabilities (pip-audit)...$(NC)"
-	$(PYTHON) -m pip_audit -r requirements.txt -r requirements-api.txt -r requirements-research.txt
+	$(PYTHON) -m pip_audit -r requirements-ci.txt -r requirements-api.txt -r requirements-research.txt
 	@echo "$(GREEN)✓ Security checks complete$(NC)"
 
 clean: ## Clean build artifacts and cache
@@ -127,9 +126,8 @@ clean: ## Clean build artifacts and cache
 	rm -rf coverage.xml
 	@echo "$(GREEN)✓ Cleaned$(NC)"
 
-docs: ## Generate API documentation (future)
-	@echo "$(YELLOW)⚠ Documentation generation not yet implemented (Issue #6)$(NC)"
-	@echo "$(BLUE)Planned: sphinx-build -b html docs/ docs/_build/$(NC)"
+docs: ## Point to the documentation (Markdown under docs/; there is no generated site)
+	@echo "$(BLUE)Documentation is Markdown under docs/. Start with docs/README.md.$(NC)"
 
 all: clean format lint test ## Run full CI pipeline locally (clean, format, lint, test)
 	@echo ""

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from alembic import command
+
 from encrypted_ir.database import create_database_engine
 from encrypted_ir.migrations import alembic_config, migration_head, migration_status
 from encrypted_ir.tools import benchmark_retrieval
