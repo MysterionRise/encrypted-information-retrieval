@@ -1,7 +1,8 @@
 # Leakage and Endpoint Map
 
 This document ties each public API surface to the primitive it uses, the
-expected leakage, and the production hardening path.
+expected leakage, and the production hardening path. The table lists every route the
+API serves.
 
 | Endpoint | Primitive / workflow | Expected leakage | Production risk | Mitigation |
 | --- | --- | --- | --- | --- |
@@ -9,9 +10,14 @@ expected leakage, and the production hardening path.
 | `POST /v1/documents/search` | Tenant-scoped HMAC query tokens | Query repetition, matching doc IDs, result size, access pattern | Search/access-pattern inference | Audit searches, rate limit, pad results where required, use stronger SSE/PIR for sensitive collections |
 | `GET /v1/documents/{doc_id}` | KeyManager-backed AES-GCM decrypt | Document access pattern, decrypt timing | Insider misuse or excessive decrypt access | OIDC roles, audit records, least-privilege policy, KMS-wrapped master key |
 | `POST /v1/rag/retrieve` | Keyword-token retrieval over encrypted documents | Same as document search, plus optional plaintext disclosure to caller | RAG context exfiltration if caller is over-privileged | Require read role, audit `include_plaintext`, restrict downstream callers |
-| `POST /v1/search/equality` | Blind index compatibility demo | Equality pattern within request-supplied index map | Caller controls index map; not durable service path | Use durable document workflow or integrate blind indexes into persisted records |
-| `POST /v1/search/range` | Custom CLWW-style ORE prototype (not Lewi-Wu) | Total order of the ciphertexts to anyone holding them, because comparison needs no key; plaintext byte differences; most significant byte given one known pair; equality; access pattern | Order leakage equivalent to OPE; custom crypto not externally audited | Treat as research demo; route removal tracked in [#36](https://github.com/MysterionRise/encrypted-information-retrieval/issues/36); use vetted structured encryption before production |
-| `POST /v1/search/keyword` | Legacy HMAC-token compatibility demo | Query repetition, result size, access pattern | Request-supplied tokens are demo-only | Use `/v1/documents/search` for durable workflow |
+| `GET /health` | None (unauthenticated) | Package version and process uptime | Version fingerprinting | Acceptable for a liveness probe; restrict at the network edge if needed |
+| `GET /ready` | Database, migration, auth and key-provider checks (unauthenticated) | Raw exception text when a check fails, the current and head Alembic revisions, the auth mode (`dev` or `oidc`) and the master-key source (`aws-kms`, `raw-env` or `ephemeral-dev`) | Deployment reconnaissance; internals in error strings | Booleans plus a generic reason, details to the log: [#41](https://github.com/MysterionRise/encrypted-information-retrieval/issues/41) |
+| `GET /metrics` | Process-global JSON counters (unauthenticated) | Request counts keyed by raw URL path, so the document IDs passed to `GET /v1/documents/{doc_id}` appear as keys; number of active tenants; error count; average latency | Document-ID and tenant-activity disclosure to anyone who can reach the port | Prometheus metrics with route-template labels and optional protection: [#43](https://github.com/MysterionRise/encrypted-information-retrieval/issues/43) |
+
+The demo routes `/v1/encrypt`, `/v1/decrypt`, `/v1/search/{equality,range,keyword}` and
+`/v1/keys*` were removed in [#36](https://github.com/MysterionRise/encrypted-information-retrieval/issues/36).
+They held random per-process keys and shared nothing with the durable path. Blind-index and ORE
+demos remain at library level in `examples/portfolio_demo.py`.
 
 ## Current Production Boundary
 

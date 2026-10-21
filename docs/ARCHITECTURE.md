@@ -51,11 +51,13 @@ These routes persist across restarts. The Docker Compose smoke flow in
 
 ### Other routes
 
+These are the only routes besides the four above. The in-memory demo routes (`/v1/encrypt`,
+`/v1/decrypt`, `/v1/search/*`, `/v1/keys*`) were removed in [#36].
+
 | Route | Backing | Note |
 | --- | --- | --- |
 | `GET /health`, `GET /ready` | Process state; database, migration, auth and key-provider checks | `/ready` is unauthenticated and returns exception text ([#41]). |
 | `GET /metrics` | Process-global JSON counters | Unauthenticated and keyed by raw path ([#43]). |
-| `POST /v1/encrypt`, `POST /v1/decrypt`, `POST /v1/search/equality`, `POST /v1/search/range`, `POST /v1/search/keyword`, `GET /v1/keys`, `POST /v1/keys/rotate` | Random per-process keys in module globals | Demo routes that do not survive a restart and share nothing with the durable path. Removal is tracked in [#36]. |
 
 ### Storage
 
@@ -84,13 +86,13 @@ no row-level security in the database.
 
 ### Where the primitives are used
 
-| Primitive | Durable path | Demo routes | Library or tests only |
-| --- | --- | --- | --- |
-| AES-256-GCM + HMAC keyword tokens (`SearchableEncryption`) | Yes | `/v1/encrypt`, `/v1/search/keyword` | |
-| AES-SIV (`DeterministicEncryption`) | | `/v1/encrypt` | |
-| Blind index | | `/v1/search/equality` | |
-| ORE (CLWW-style prototype) | | `/v1/search/range` | |
-| OPE, FF1, CKKS, ML-KEM/ML-DSA, differential privacy, forward- and backward-private SSE | | | Yes |
+| Primitive | Durable path (API) | Library, examples or tests only |
+| --- | --- | --- |
+| AES-256-GCM + HMAC keyword tokens (`SearchableEncryption`) | Yes | |
+| AES-SIV (`DeterministicEncryption`) | | Yes |
+| Blind index | | Yes (`examples/portfolio_demo.py`) |
+| ORE (CLWW-style prototype) | | Yes (`examples/portfolio_demo.py`) |
+| OPE, FF1, CKKS, ML-KEM/ML-DSA, differential privacy, forward- and backward-private SSE | | Yes |
 
 The leakage of each primitive is in [THREAT_MODEL.md](THREAT_MODEL.md).
 

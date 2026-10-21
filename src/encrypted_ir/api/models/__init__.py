@@ -1,39 +1,31 @@
 """Pydantic request/response models for the encrypted IR API."""
 
-from .requests import (
-    DecryptRequest,
-    EncryptRequest,
-    EqualitySearchRequest,
-    KeyRotateRequest,
-    KeywordSearchRequest,
-    RangeSearchRequest,
-)
+from .requests import DocumentIngestRequest, DocumentSearchRequest, RagRetrieveRequest
 from .responses import (
-    DecryptResponse,
-    EncryptResponse,
+    DocumentGetResponse,
+    DocumentIngestResponse,
+    DocumentMatch,
+    DocumentSearchResponse,
     ErrorResponse,
     HealthResponse,
-    KeyInfoResponse,
-    KeyListResponse,
-    KeyRotateResponse,
     MetricsResponse,
-    SearchResponse,
+    RagCandidate,
+    RagRetrieveResponse,
+    ReadinessResponse,
 )
 
 __all__ = [
-    "EncryptRequest",
-    "DecryptRequest",
-    "EqualitySearchRequest",
-    "RangeSearchRequest",
-    "KeywordSearchRequest",
-    "KeyRotateRequest",
-    "EncryptResponse",
-    "DecryptResponse",
-    "SearchResponse",
-    "KeyInfoResponse",
-    "KeyListResponse",
-    "KeyRotateResponse",
+    "DocumentIngestRequest",
+    "DocumentSearchRequest",
+    "RagRetrieveRequest",
+    "DocumentIngestResponse",
+    "DocumentMatch",
+    "DocumentSearchResponse",
+    "DocumentGetResponse",
+    "RagCandidate",
+    "RagRetrieveResponse",
     "HealthResponse",
     "MetricsResponse",
+    "ReadinessResponse",
     "ErrorResponse",
 ]

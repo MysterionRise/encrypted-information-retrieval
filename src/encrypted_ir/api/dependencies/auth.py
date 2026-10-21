@@ -138,19 +138,6 @@ if JWT_SECRET == DEFAULT_DEV_JWT_SECRET:
         stacklevel=2,
     )
 
-# In-memory API key store for development; replace with a database in production
-_api_keys: dict[str, TenantInfo] = {}
-
-
-def register_api_key(api_key: str, tenant_info: TenantInfo) -> None:
-    """Register an API key (for testing and development)."""
-    _api_keys[api_key] = tenant_info
-
-
-def clear_api_keys() -> None:
-    """Clear all registered API keys."""
-    _api_keys.clear()
-
 
 def _decode_dev_jwt(token: str, config: AuthConfig) -> dict:
     """Decode and validate a JWT token.
@@ -283,16 +270,6 @@ async def get_current_tenant(
 
     # Try API key
     if api_key is not None:
-        tenant_info = _api_keys.get(api_key)
-        if tenant_info is not None:
-            if config.environment == "prod":
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="API key authentication is disabled in production",
-                )
-            request.state.tenant_id = tenant_info.tenant_id
-            request.state.actor = tenant_info.subject
-            return tenant_info
         if config.dev_auth_enabled and api_key == config.dev_api_key:
             tenant = TenantInfo(
                 tenant_id=config.dev_tenant_id,
