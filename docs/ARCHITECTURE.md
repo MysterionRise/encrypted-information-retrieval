@@ -29,29 +29,40 @@ graph LR
 ```
 
 There is no Redis, HSM, blob storage, TEE, SIEM or TLS termination in this repository. The
-application runs as one process. Rate limiting and some caches are in memory, so a multi-replica
-deployment is not supported yet ([#39], [#47]).
+application runs as one process. The per-tenant key cache is safe across processes: it reloads keys
+from the database before every ingest and search and loads unknown key IDs on demand ([#39]). Rate
+limiting is in memory and per process, so a multi-replica deployment still needs an external
+limiter ([#47]).
 
 ### Durable document and RAG workflow
 
 1. `POST /v1/documents` authenticates the caller and resolves its tenant.
    - It encrypts the content with AES-256-GCM under the tenant's document key.
    - It extracts keywords, or accepts the ones supplied, and stores one
-     `HMAC-SHA256(tenant search key, keyword)` token per keyword.
-   - It writes a sanitized audit row.
-2. `POST /v1/documents/search` recomputes the query tokens and returns the matching document IDs,
-   their metadata and a token-match score.
+     `HMAC-SHA256(tenant search key, keyword)` token per keyword. Keywords are lowercased and
+     stripped of surrounding punctuation; extracted keywords shorter than three characters and
+     stop words are dropped, and one document yields at most 10,000.
+   - Request limits: `doc_id` is 1 to 128 of `A-Z a-z 0-9 . _ -` and cannot start with `.`;
+     at most 256 explicit keywords of up to 128 characters; at most 32 metadata keys and 16 KB of
+     metadata JSON.
+   - It writes a sanitized audit row. A duplicate `doc_id` returns 409.
+2. `POST /v1/documents/search` recomputes the query tokens under every non-destroyed search key of
+   the tenant and returns the matching document IDs, their metadata and a score: the number of
+   distinct query keywords matched. `AND` requires every keyword.
 3. `GET /v1/documents/{doc_id}` decrypts one document that belongs to the caller's tenant.
-4. `POST /v1/rag/retrieve` returns ranked candidates for downstream RAG context assembly.
+4. `DELETE /v1/documents/{doc_id}` deletes a document and its tokens in one transaction (write or
+   admin role; audit event `document.delete`).
+5. `POST /v1/rag/retrieve` returns ranked candidates for downstream RAG context assembly.
    - Plaintext is included only when `include_plaintext` is true.
    - It does not generate embeddings or call an LLM.
 
-These routes persist across restarts. The Docker Compose smoke flow in
+Key reads on these paths do not write to the database: only ingest (and key creation) and delete
+write, plus one audit row per request. These routes persist across restarts. The Docker Compose smoke flow in
 [CTO_DEMO_SCRIPT.md](CTO_DEMO_SCRIPT.md) demonstrates this.
 
 ### Other routes
 
-These are the only routes besides the four above. The in-memory demo routes (`/v1/encrypt`,
+These are the only routes besides the five above. The in-memory demo routes (`/v1/encrypt`,
 `/v1/decrypt`, `/v1/search/*`, `/v1/keys*`) were removed in [#36].
 
 | Route | Backing | Note |
@@ -61,7 +72,8 @@ These are the only routes besides the four above. The in-memory demo routes (`/v
 
 ### Storage
 
-One Alembic migration creates the four tables:
+Two Alembic migrations create the four tables (the second drops a soft-delete flag that was never
+set; documents are hard-deleted):
 
 | Table | Contents |
 | --- | --- |

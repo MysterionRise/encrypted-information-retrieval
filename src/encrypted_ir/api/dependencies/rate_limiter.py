@@ -22,6 +22,7 @@ DEFAULT_LIMITS: dict[str, RateLimitConfig] = {
     "document_ingest": RateLimitConfig(max_requests=60, window_seconds=60),
     "document_search": RateLimitConfig(max_requests=120, window_seconds=60),
     "document_get": RateLimitConfig(max_requests=120, window_seconds=60),
+    "document_delete": RateLimitConfig(max_requests=60, window_seconds=60),
     "rag_retrieve": RateLimitConfig(max_requests=120, window_seconds=60),
 }
 
