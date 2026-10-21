@@ -1,35 +1,112 @@
 # System Architecture
 
-**Version**: 1.0
-**Last Updated**: July 2026
-**Status**: Portfolio Prototype Architecture
+**Describes:** the "As built" section is the code in this repository as of October 2026. Everything
+under "Target state" is the original target design, kept as reference. It is not a description of
+the current code.
 
-## Table of Contents
+## Contents
 
-1. [Overview](#overview)
-2. [System Components](#system-components)
-3. [Data Flow Diagrams](#data-flow-diagrams)
-4. [Encryption Patterns](#encryption-patterns)
-5. [Key Management Architecture](#key-management-architecture)
-6. [Deployment Models](#deployment-models)
-7. [Performance Characteristics](#performance-characteristics)
-8. [Security Boundaries](#security-boundaries)
+1. [As built](#as-built)
+2. [Target state (not implemented)](#target-state-not-implemented)
+3. [References](#references)
 
 ---
 
-## Overview
+## As built
 
-The Encrypted Information Retrieval (IR) system is a **production-oriented prototype** for privacy-preserving retrieval in regulated AI/RAG and financial-services applications. It implements a hybrid architecture that combines standard cryptographic libraries, prototype research constructions, tenant-scoped key management, and a durable PostgreSQL-backed document retrieval workflow.
+### Shape
 
-This architecture is intended to demonstrate CTO-level engineering judgment, not to claim audited production cryptography. Custom ORE/SSE implementations require independent review before use with sensitive production data.
+```mermaid
+graph LR
+    CLIENT["Client"] -->|"X-API-Key or bearer token"| API["FastAPI app (single process)"]
+    API --> AUTH["Auth: OIDC RS256 via JWKS (prod); dev API key and HS256 dev JWT (dev)"]
+    API --> RL["In-memory rate limiter (per process)"]
+    API --> DS["DocumentService"]
+    DS --> KM["KeyManager per tenant (AES-GCM-wrapped keys)"]
+    KM --> MK["App master key: env var, or AWS KMS Decrypt at startup"]
+    DS --> DB[("PostgreSQL (Compose) or SQLite: documents, tokens, keys, audit")]
+    API --> ADMIN["/health, /ready, /metrics"]
+```
 
-The HSM/KMS elements in the diagrams represent the production hardening target.
-The default portfolio demo uses Docker Compose, PostgreSQL, local dev auth, and
-a raw local app master key. AWS KMS and real OIDC/JWKS are implemented as
-configuration paths and covered by mocked tests, but live cloud validation is
-optional and not required for the local evidence run.
+There is no Redis, HSM, blob storage, TEE, SIEM or TLS termination in this repository. The
+application runs as one process. Rate limiting and some caches are in memory, so a multi-replica
+deployment is not supported yet ([#39], [#47]).
 
-### Design Principles
+### Durable document and RAG workflow
+
+1. `POST /v1/documents` authenticates the caller and resolves its tenant.
+   - It encrypts the content with AES-256-GCM under the tenant's document key.
+   - It extracts keywords, or accepts the ones supplied, and stores one
+     `HMAC-SHA256(tenant search key, keyword)` token per keyword.
+   - It writes a sanitized audit row.
+2. `POST /v1/documents/search` recomputes the query tokens and returns the matching document IDs,
+   their metadata and a token-match score.
+3. `GET /v1/documents/{doc_id}` decrypts one document that belongs to the caller's tenant.
+4. `POST /v1/rag/retrieve` returns ranked candidates for downstream RAG context assembly.
+   - Plaintext is included only when `include_plaintext` is true.
+   - It does not generate embeddings or call an LLM.
+
+These routes persist across restarts. The Docker Compose smoke flow in
+[CTO_DEMO_SCRIPT.md](CTO_DEMO_SCRIPT.md) demonstrates this.
+
+### Other routes
+
+| Route | Backing | Note |
+| --- | --- | --- |
+| `GET /health`, `GET /ready` | Process state; database, migration, auth and key-provider checks | `/ready` is unauthenticated and returns exception text ([#41]). |
+| `GET /metrics` | Process-global JSON counters | Unauthenticated and keyed by raw path ([#43]). |
+| `POST /v1/encrypt`, `POST /v1/decrypt`, `POST /v1/search/equality`, `POST /v1/search/range`, `POST /v1/search/keyword`, `GET /v1/keys`, `POST /v1/keys/rotate` | Random per-process keys in module globals | Demo routes that do not survive a restart and share nothing with the durable path. Removal is tracked in [#36]. |
+
+### Storage
+
+One Alembic migration creates the four tables:
+
+| Table | Contents |
+| --- | --- |
+| `encrypted_ir_documents` | Document ciphertext, key IDs, plaintext metadata JSON, token count |
+| `encrypted_ir_document_tokens` | `(tenant_id, token, doc_id)` keyword-token rows |
+| `encrypted_ir_keys` | Per-tenant keys wrapped under the app master key, plus metadata |
+| `encrypted_ir_audit_log` | Sanitized audit entries (API events and key events) |
+
+Tenant isolation is enforced in application code: every query filters on `tenant_id`. There is
+no row-level security in the database.
+
+### Keys
+
+- **App master key.** One per deployment. In dev it is read from `ENCRYPTED_IR_MASTER_KEY_B64`
+  (Compose sets a demo value); if unset, a random key is generated and lost on restart.
+- **Production key source.** Production settings require `ENCRYPTED_IR_KMS_PROVIDER=aws`, and
+  the master key is unwrapped once at startup with AWS KMS `Decrypt`.
+- **Tenant keys.** Each tenant has a document-encryption key and a search key. Both are created
+  on first use and stored wrapped under the master key.
+- **Rotation.** The library can create new key versions and keep retired keys decryptable.
+  Stored documents are not re-encrypted ([#42]).
+
+### Where the primitives are used
+
+| Primitive | Durable path | Demo routes | Library or tests only |
+| --- | --- | --- | --- |
+| AES-256-GCM + HMAC keyword tokens (`SearchableEncryption`) | Yes | `/v1/encrypt`, `/v1/search/keyword` | |
+| AES-SIV (`DeterministicEncryption`) | | `/v1/encrypt` | |
+| Blind index | | `/v1/search/equality` | |
+| ORE (CLWW-style prototype) | | `/v1/search/range` | |
+| OPE, FF1, CKKS, ML-KEM/ML-DSA, differential privacy, forward- and backward-private SSE | | | Yes |
+
+The leakage of each primitive is in [THREAT_MODEL.md](THREAT_MODEL.md).
+
+---
+
+## Target state (not implemented)
+
+> Everything under this heading is the original target-state design, written in 2025. It is kept
+> as reference for later phases. **None of it describes the current code.** Components such as
+> HSM, CloudHSM, Redis, multiple API replicas, blob storage, TEE, PIR, BFV and SIEM integration
+> do not exist in this repository. See [ROADMAP.md](ROADMAP.md) for what is planned and what is
+> explicitly not planned.
+
+### Overview (target)
+
+#### Design Principles
 
 1. **Defense in Depth**: Multiple encryption layers with different security/performance trade-offs
 2. **Crypto-Agility**: Algorithm identifiers in ciphertext headers; support for migration
@@ -37,7 +114,7 @@ optional and not required for the local evidence run.
 4. **Auditability**: Comprehensive logging of all cryptographic operations
 5. **Compliance-First**: Design mapped to DORA, PCI DSS v4.0.1, NYDFS, GDPR
 
-### High-Level Architecture
+#### High-Level Architecture
 
 ```mermaid
 graph TB
@@ -106,22 +183,11 @@ graph TB
 
 ---
 
-## System Components
+### System Components
 
-### Durable RAG Retrieval Workflow
+#### 1. Encryption Modules
 
-The API now includes a PostgreSQL-backed workflow for portfolio demonstrations:
-
-1. `POST /v1/documents` authenticates a tenant, encrypts document content with AES-GCM, stores ciphertext in PostgreSQL, extracts or accepts keywords, and persists deterministic HMAC search tokens.
-2. `POST /v1/documents/search` regenerates tenant-scoped query tokens and returns matching document IDs plus metadata and token-match score.
-3. `GET /v1/documents/{doc_id}` decrypts one authorized tenant-owned document for retrieval pipelines.
-4. `POST /v1/rag/retrieve` returns ranked candidates for downstream RAG context assembly. It performs no embedding generation and no LLM calls.
-
-The service persists encrypted documents, token indexes, key metadata, and audit entries. It is realistic enough to survive API restarts in Docker Compose, while still being labeled a prototype because auth, deployment controls, and custom crypto paths are not production-hardened.
-
-### 1. Encryption Modules
-
-#### 1.1 Deterministic Encryption (AES-SIV)
+##### 1.1 Deterministic Encryption (AES-SIV)
 
 **Purpose**: Equality searches on account numbers, customer IDs, SSNs
 
@@ -141,7 +207,7 @@ ciphertext = encryptor.encrypt("ACC-12345")
 
 **Leakage**: Equality patterns, frequency distribution
 
-#### 1.2 Blind Indexes (HMAC-SHA256)
+##### 1.2 Blind Indexes (HMAC-SHA256)
 
 **Purpose**: Equality searches with reduced leakage
 
@@ -165,7 +231,7 @@ graph LR
 
 **Leakage**: Scoped equality (within tenant), bounded frequency
 
-#### 1.3 Searchable Encryption (DSSE)
+##### 1.3 Searchable Encryption (DSSE)
 
 **Purpose**: Keyword search on encrypted documents/emails
 
@@ -201,7 +267,7 @@ graph TB
 
 **Leakage**: Search patterns, access patterns, result sizes
 
-#### 1.4 Range Queries (ORE/Structured Encryption)
+##### 1.4 Range Queries (ORE/Structured Encryption)
 
 **Purpose**: Range queries on transaction amounts, dates
 
@@ -237,7 +303,7 @@ graph TB
 
 **Leakage**: Order (ORE), bucket access (structured encryption)
 
-#### 1.5 Homomorphic Encryption (CKKS/BFV)
+##### 1.5 Homomorphic Encryption (CKKS/BFV)
 
 **Purpose**: Encrypted computation for credit scoring, analytics
 
@@ -268,9 +334,9 @@ sequenceDiagram
 
 ---
 
-## Data Flow Diagrams
+### Data Flow Diagrams
 
-### Equality Search Flow (Blind Index)
+#### Equality Search Flow (Blind Index)
 
 ```mermaid
 sequenceDiagram
@@ -293,7 +359,7 @@ sequenceDiagram
     Note over KMS: All operations logged<br/>in CloudTrail
 ```
 
-### Document Encryption & Search Flow
+#### Document Encryption & Search Flow
 
 ```mermaid
 sequenceDiagram
@@ -329,7 +395,7 @@ sequenceDiagram
     end
 ```
 
-### Range Query Flow (ORE)
+#### Range Query Flow (ORE)
 
 ```mermaid
 sequenceDiagram
@@ -352,9 +418,9 @@ sequenceDiagram
 
 ---
 
-## Encryption Patterns
+### Encryption Patterns
 
-### Pattern 1: Envelope Encryption (KEK/DEK)
+#### Pattern 1: Envelope Encryption (KEK/DEK)
 
 ```mermaid
 graph TB
@@ -390,7 +456,7 @@ graph TB
 - DEK rotation without KEK change
 - Per-tenant key isolation
 
-### Pattern 2: Hybrid Multi-Layer Encryption
+#### Pattern 2: Hybrid Multi-Layer Encryption
 
 ```mermaid
 graph TB
@@ -424,9 +490,9 @@ graph TB
 
 ---
 
-## Key Management Architecture
+### Key Management Architecture
 
-### KMS Integration (AWS KMS Example)
+#### KMS Integration (AWS KMS Example)
 
 ```mermaid
 graph TB
@@ -467,7 +533,7 @@ graph TB
     style CLOUDTRAIL fill:#e8f5e9
 ```
 
-### Key Rotation Process
+#### Key Rotation Process
 
 ```mermaid
 sequenceDiagram
@@ -499,9 +565,9 @@ sequenceDiagram
 
 ---
 
-## Deployment Models
+### Deployment Models
 
-### Model 1: Cloud-Native (AWS Example)
+#### Model 1: Cloud-Native (AWS Example)
 
 ```mermaid
 graph TB
@@ -561,7 +627,7 @@ graph TB
     style WAF fill:#ffebee
 ```
 
-### Model 2: On-Premises with HSM
+#### Model 2: On-Premises with HSM
 
 ```mermaid
 graph TB
@@ -606,56 +672,15 @@ graph TB
 
 ---
 
-## Performance Characteristics
+### Performance Characteristics
 
-### Latency by Operation (Typical)
-
-```mermaid
-graph LR
-    subgraph "Fast (< 10ms)"
-        DET_ENC[Deterministic Encrypt<br/>~2ms]
-        BLIND_INDEX[Blind Index Lookup<br/>~5ms]
-    end
-
-    subgraph "Moderate (10-100ms)"
-        SSE_SEARCH[SSE Search<br/>~20-50ms<br/>@ 10k docs]
-        ORE_RANGE[ORE Range Query<br/>~30ms]
-    end
-
-    subgraph "Slow (100ms-1s)"
-        HE_ADD[HE Addition<br/>~100-200ms]
-        HE_MULT[HE Multiplication<br/>~500ms]
-    end
-
-    subgraph "Very Slow (1s+)"
-        HE_VECTOR[HE Vector Ops<br/>~2-5s<br/>@ 1k features]
-    end
-
-    style DET_ENC fill:#e8f5e9
-    style BLIND_INDEX fill:#e8f5e9
-    style SSE_SEARCH fill:#fff3e0
-    style ORE_RANGE fill:#fff3e0
-    style HE_ADD fill:#ffebee
-    style HE_MULT fill:#ffebee
-    style HE_VECTOR fill:#ffcdd2
-```
-
-### Throughput Estimates (Single Server)
-
-| Operation | QPS | Latency (P50/P95/P99) |
-|-----------|-----|------------------------|
-| Blind Index | 10,000 | 2ms / 5ms / 10ms |
-| Deterministic Encrypt | 5,000 | 3ms / 8ms / 15ms |
-| SSE Search | 500 | 30ms / 80ms / 150ms |
-| ORE Range Query | 300 | 40ms / 100ms / 200ms |
-| HE Addition | 10 | 150ms / 300ms / 500ms |
-| HE Credit Score | 2 | 2s / 4s / 8s |
+Earlier versions of this document listed latency and throughput estimates that were never measured. They were removed. Measured numbers, and how they were produced, are in [`benchmarks/reports/`](../benchmarks/reports/) and [PORTFOLIO_EVIDENCE.md](PORTFOLIO_EVIDENCE.md).
 
 ---
 
-## Security Boundaries
+### Security Boundaries
 
-### Trust Boundaries
+#### Trust Boundaries
 
 ```mermaid
 graph TB
@@ -693,11 +718,11 @@ graph TB
     style DATABASE fill:#ffebee
 
     USER -.->|"Threat: Malicious Client"| THREAT1[❌ Out of Scope]
-    API_SERVER -.->|"Threat: Honest-but-Curious"| THREAT2[✅ Mitigated by Encryption]
-    DATABASE -.->|"Threat: Database Breach"| THREAT3[✅ Data Encrypted at Rest]
+    API_SERVER -.->|"Threat: Honest-but-Curious"| THREAT2["Target: mitigated by encryption"]
+    DATABASE -.->|"Threat: Database Breach"| THREAT3["Target: data encrypted at rest"]
 ```
 
-### Attack Surface
+#### Attack Surface
 
 ```mermaid
 mindmap
@@ -726,9 +751,9 @@ mindmap
 
 ---
 
-## Scaling Considerations
+### Scaling Considerations
 
-### Horizontal Scaling
+#### Horizontal Scaling
 
 ```mermaid
 graph TB
@@ -777,12 +802,6 @@ graph TB
 
 ---
 
-## Revision History
-
-| Version | Date | Author | Changes |
-|---------|------|--------|---------|
-| 1.0 | 2025-01-11 | Architecture Team | Initial architecture documentation |
-
 ---
 
 ## References
@@ -793,7 +812,9 @@ graph TB
 4. RFC 5297, "Synthetic Initialization Vector (SIV)"
 5. Lewi & Wu, "Order-Revealing Encryption", 2016
 
----
-
-**Classification**: Internal Use Only
-**Review Cycle**: Quarterly
+[#36]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/36
+[#39]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/39
+[#41]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/41
+[#42]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/42
+[#43]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/43
+[#47]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/47

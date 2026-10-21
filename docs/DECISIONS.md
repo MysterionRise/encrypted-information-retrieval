@@ -1,14 +1,19 @@
 # Architecture Decision Records (ADR)
 
-> **Portfolio status note (July 7, 2026):** These ADRs include historical target
-> architecture. Current implementation evidence lives in `README.md`,
-> `docs/PORTFOLIO_EVIDENCE.md`, `docs/LEAKAGE_AND_ENDPOINTS.md`, and
-> `docs/CTO_DEMO_SCRIPT.md`. Claims about audit readiness, CloudTrail,
-> FIPS-backed KMS, certification, or production launch should be read as roadmap
-> targets unless explicitly backed by current evidence.
+> **How to read this file (October 2026).**
+>
+> - ADR-001 to ADR-010 were written in 2025 as target architecture. Their **Status** lines were
+>   corrected in October 2026 to say what is actually implemented.
+> - Their "Compliance Mapping" entries are targets, not certifications.
+> - Latency and throughput figures inside those ADRs are design-time estimates, not measurements.
+>   Measured numbers are in `benchmarks/reports/`.
+> - ADR-011 to ADR-016 record decisions that are already reflected in the code, or accepted for
+>   the roadmap.
+>
+> Current state is described in `docs/ARCHITECTURE.md` (As built) and `docs/THREAT_MODEL.md`.
 
 **Project**: Encrypted Information Retrieval for Financial Services
-**Last Updated**: January 2025
+**Last Updated**: October 2026
 
 ## Table of Contents
 
@@ -22,13 +27,19 @@
 - [ADR-008: Optional PIR Mode for Zero-Leakage Queries](#adr-008-optional-pir-mode-for-zero-leakage-queries)
 - [ADR-009: TEE Integration for Sensitive Operations](#adr-009-tee-integration-for-sensitive-operations)
 - [ADR-010: Post-Quantum Cryptography Roadmap](#adr-010-post-quantum-cryptography-roadmap)
+- [ADR-011: FastAPI, PostgreSQL and Alembic for the Durable Service](#adr-011-fastapi-postgresql-and-alembic-for-the-durable-service)
+- [ADR-012: AES-GCM Documents with HMAC Keyword Tokens on the Durable Path](#adr-012-aes-gcm-documents-with-hmac-keyword-tokens-on-the-durable-path)
+- [ADR-013: OIDC/JWKS in Production, Explicit Dev Auth Otherwise](#adr-013-oidcjwks-in-production-explicit-dev-auth-otherwise)
+- [ADR-014: One KMS-Wrapped App Master Key, Locally Wrapped Tenant Keys](#adr-014-one-kms-wrapped-app-master-key-locally-wrapped-tenant-keys)
+- [ADR-015: Quarantine Research Modules](#adr-015-quarantine-research-modules)
+- [ADR-016: Remove the Demo-Only API Routes](#adr-016-remove-the-demo-only-api-routes)
 
 ---
 
 ## ADR-001: Use AES-SIV for Deterministic Encryption
 
 **Date**: 2025-01-11
-**Status**: ✅ ACCEPTED (Implemented)
+**Status**: Accepted. Implemented in `deterministic.py` as a library primitive. The durable document path uses AES-GCM plus HMAC keyword tokens instead (ADR-012).
 **Decision Makers**: Security Architecture Team
 
 ### Context
@@ -69,9 +80,9 @@ We need deterministic encryption for equality searches on account numbers, custo
 
 ### Compliance Mapping
 
-- ✅ **PCI DSS 3.5.1**: AES-256 encryption ✅
-- ✅ **GDPR Art. 32**: State-of-the-art encryption ✅
-- ✅ **NYDFS § 500.15**: Encryption at rest ✅
+- Target: **PCI DSS 3.5.1**: AES-256 encryption
+- Target: **GDPR Art. 32**: State-of-the-art encryption
+- Target: **NYDFS § 500.15**: Encryption at rest
 
 ### References
 
@@ -83,7 +94,7 @@ We need deterministic encryption for equality searches on account numbers, custo
 ## ADR-002: Implement Blind Indexes for Equality Search
 
 **Date**: 2025-01-11
-**Status**: 🔄 IN PROGRESS
+**Status**: Accepted. Implemented in `blind_index.py` as a library primitive. Not used by the durable document path. Known defects are tracked in [#37].
 **Decision Makers**: Security Architecture Team
 
 ### Context
@@ -101,7 +112,7 @@ Direct deterministic encryption (AES-SIV) reveals equality patterns globally. We
 
 **Pros**:
 - ✅ **Scoped leakage**: Equality visible only within tenant, not globally
-- ✅ **Collision-resistant**: 2^128 security for HMAC-256-128
+- ✅ **Collision-resistant**: about 2^64 (birthday bound) for the 128-bit truncated output
 - ✅ **Standards-based**: HMAC-SHA256 (FIPS 198-1)
 - ✅ **Simple implementation**: No complex crypto; integrates with existing HMAC primitives
 - ✅ **CipherSweet pattern**: Proven approach used in production systems
@@ -141,8 +152,8 @@ def create_blind_index(value: str, tenant_id: str, field_type: str) -> str:
 
 ### Compliance Mapping
 
-- ✅ **GDPR Art. 25**: Pseudonymization ✅
-- ✅ **GDPR Art. 32**: Data minimization ✅
+- Target: **GDPR Art. 25**: Pseudonymization
+- Target: **GDPR Art. 32**: Data minimization
 
 ### References
 
@@ -154,7 +165,7 @@ def create_blind_index(value: str, tenant_id: str, field_type: str) -> str:
 ## ADR-003: Adopt DSSE with Forward Privacy
 
 **Date**: 2025-01-11
-**Status**: ✅ ACCEPTED (Implemented)
+**Status**: Partially implemented. `ForwardPrivateSSE` is a custom hash-chain prototype, not Sophos. Its "strong" mode leaks more than "balanced". It is not used by the durable path, which uses deterministic HMAC tokens (ADR-012). See [#38].
 **Decision Makers**: Security Architecture Team
 
 ### Context
@@ -202,12 +213,12 @@ Searchable Symmetric Encryption (SSE) enables keyword search on encrypted docume
 ### Consequences
 
 - **Security**: Documented leakage; acceptable for non-PII documents; use PIR mode for sensitive collections
-- **Performance**: 500 QPS single server; 20-50ms P50 latency
+- **Performance**: not measured. Measured retrieval numbers are in `benchmarks/reports/`.
 - **Operational**: Monitor for scraping attempts; rate-limit queries
 
 ### Compliance Mapping
 
-- ✅ **GDPR Art. 32(1)(a)**: Pseudonymization ✅
+- Target: **GDPR Art. 32(1)(a)**: Pseudonymization
 - ⚠️ **Requires**: Clear user disclosure of leakage profile
 
 ### References
@@ -220,7 +231,7 @@ Searchable Symmetric Encryption (SSE) enables keyword search on encrypted docume
 ## ADR-004: Migrate from OPE to ORE for Range Queries
 
 **Date**: 2025-01-11
-**Status**: 🔄 IN PROGRESS (P0 Priority)
+**Status**: Not achieved as written. `ore.py` implements a CLWW-style prefix ORE, not Lewi-Wu. Its comparison needs no key, so its order leakage equals OPE's ([#34]). OPE is still used by the demo use cases; removal is [#37].
 **Decision Makers**: Security Architecture Team
 
 ### Context
@@ -268,7 +279,7 @@ Searchable Symmetric Encryption (SSE) enables keyword search on encrypted docume
 
 ### Compliance Mapping
 
-- ✅ **Risk mitigation**: Reduces inference attack surface
+- Target: **Risk mitigation**: Reduces inference attack surface
 - ⚠️ **Requires**: Updated DPIA for residual order leakage
 
 ### References
@@ -281,7 +292,7 @@ Searchable Symmetric Encryption (SSE) enables keyword search on encrypted docume
 ## ADR-005: Use CKKS/BFV Homomorphic Encryption
 
 **Date**: 2025-01-11
-**Status**: ✅ ACCEPTED (Implemented)
+**Status**: Accepted, CKKS only. BFV is not implemented. The research module's aggregate helpers decrypt before summing ([#38]).
 **Decision Makers**: Security Architecture Team
 
 ### Context
@@ -327,8 +338,8 @@ We need encrypted computation for credit scoring and analytics. Options:
 
 ### Compliance Mapping
 
-- ✅ **GDPR Art. 25**: Privacy by design ✅
-- ✅ **NYDFS § 500.15**: Encryption of nonpublic info ✅
+- Target: **GDPR Art. 25**: Privacy by design
+- Target: **NYDFS § 500.15**: Encryption of nonpublic info
 
 ### References
 
@@ -340,7 +351,7 @@ We need encrypted computation for credit scoring and analytics. Options:
 ## ADR-006: Envelope Encryption with KMS
 
 **Date**: 2025-01-11
-**Status**: 🔄 IN PROGRESS (P0 Priority)
+**Status**: Partially implemented. A single app master key can be unwrapped through AWS KMS at startup (`master_key.py`, tested with mocks only), and per-tenant keys are wrapped locally under it. No HSM, CloudHSM or CloudTrail integration exists in this repository.
 **Decision Makers**: Security Architecture Team
 
 ### Context
@@ -402,9 +413,9 @@ Key management complexity is a top operational challenge (59% of IT professional
 
 ### Compliance Mapping
 
-- ✅ **PCI DSS 3.6.1**: Protect cryptographic keys ✅
-- ✅ **NIST SP 800-57**: Key management best practices ✅
-- ✅ **DORA Art. 9**: ICT risk management ✅
+- Target: **PCI DSS 3.6.1**: Protect cryptographic keys
+- Target: **NIST SP 800-57**: Key management best practices
+- Target: **DORA Art. 9**: ICT risk management
 
 ### References
 
@@ -416,7 +427,7 @@ Key management complexity is a top operational challenge (59% of IT professional
 ## ADR-007: Crypto-Agile Design with Algorithm Identifiers
 
 **Date**: 2025-01-11
-**Status**: ✅ ACCEPTED (Implemented)
+**Status**: Accepted, not implemented. The ciphertext header below does not exist. Document ciphertexts are `iv || tag || ciphertext` with no header or associated data ([#40]).
 **Decision Makers**: Security Architecture Team
 
 ### Context
@@ -473,8 +484,8 @@ Cryptographic algorithms have finite lifespans. We must prepare for:
 
 ### Compliance Mapping
 
-- ✅ **NIST PQC migration**: Algorithm agility enables hybrid mode ✅
-- ✅ **PCI DSS 12.3.4**: Documented cryptographic architecture ✅
+- Target: **NIST PQC migration**: Algorithm agility enables hybrid mode
+- Target: **PCI DSS 12.3.4**: Documented cryptographic architecture
 
 ### References
 
@@ -485,7 +496,7 @@ Cryptographic algorithms have finite lifespans. We must prepare for:
 ## ADR-008: Optional PIR Mode for Zero-Leakage Queries
 
 **Date**: 2025-01-11
-**Status**: 🔄 PLANNED (P1 Priority)
+**Status**: Not planned. See the roadmap's "Not planned" section.
 **Decision Makers**: Security Architecture Team
 
 ### Context
@@ -534,7 +545,7 @@ SSE leaks access patterns. For high-sensitivity collections (e.g., sanctions lis
 ## ADR-009: TEE Integration for Sensitive Operations
 
 **Date**: 2025-01-11
-**Status**: 🔄 PLANNED (P1 Priority)
+**Status**: Not planned. See the roadmap's "Not planned" section.
 **Decision Makers**: Security Architecture Team
 
 ### Context
@@ -588,7 +599,7 @@ Some operations require plaintext processing (e.g., complex predicates, ML infer
 ## ADR-010: Post-Quantum Cryptography Roadmap
 
 **Date**: 2025-01-11
-**Status**: 🔄 PLANNED (2025 H2)
+**Status**: Research module only. ML-KEM, ML-DSA and a hybrid KEM exist in `post_quantum.py` (pqcrypto 0.4) and are not used by the durable path. The hybrid combiner is not X-Wing ([#38]).
 **Decision Makers**: Security Architecture Team
 
 ### Context
@@ -634,7 +645,140 @@ NIST finalized PQC standards (FIPS 203/204/205) in August 2024. Large-scale quan
 
 - [NIST FIPS 203: Kyber (ML-KEM)](https://csrc.nist.gov/pubs/fips/203/final)
 - [NIST FIPS 204: Dilithium (ML-DSA)](https://csrc.nist.gov/pubs/fips/204/final)
-- [NIST FIPS 205: Falcon (SLH-DSA)](https://csrc.nist.gov/pubs/fips/205/final)
+- [NIST FIPS 205: SLH-DSA (SPHINCS+)](https://csrc.nist.gov/pubs/fips/205/final)
+
+---
+
+## ADR-011: FastAPI, PostgreSQL and Alembic for the Durable Service
+
+**Date**: 2026-07-06 (recorded 2026-10-20)
+**Status**: Accepted. Implemented.
+
+### Context
+
+The 2025 library had no service, no persistence and no migrations, so nothing survived a restart and
+nothing could be demonstrated end to end.
+
+### Decision
+
+Expose the durable document and RAG workflow through FastAPI. Persist documents, keyword tokens, wrapped
+keys and audit rows in PostgreSQL through SQLAlchemy Core. Manage the schema with Alembic. SQLite remains
+supported for tests and local runs.
+
+### Consequences
+
+- Docker Compose runs PostgreSQL plus the API. The persistence smoke test in `docs/CTO_DEMO_SCRIPT.md`
+  exercises it.
+- The service is single-process today (in-memory rate limiter and key cache). Multi-replica correctness
+  is tracked in [#39] and [#47].
+
+---
+
+## ADR-012: AES-GCM Documents with HMAC Keyword Tokens on the Durable Path
+
+**Date**: 2026-07-06 (recorded 2026-10-20)
+**Status**: Accepted. Implemented in `DocumentService` through `SearchableEncryption`.
+
+### Context
+
+ADR-001 (AES-SIV), ADR-003 (forward-private DSSE) and ADR-004 (ORE) describe primitives that exist as
+library or research code. The durable path needed one construction that is standard, testable and simple
+to reason about.
+
+### Decision
+
+Encrypt document bodies with AES-256-GCM under a per-tenant key. Index them with deterministic
+`HMAC-SHA256(per-tenant search key, keyword)` tokens stored one row per keyword per document.
+
+### Consequences
+
+- The leakage is explicit and documented per endpoint: keyword equality and frequency within a tenant,
+  query repetition, result sizes and access patterns.
+- No forward or backward privacy.
+- Binding ciphertexts to their tenant and document with associated data is tracked in [#40].
+
+---
+
+## ADR-013: OIDC/JWKS in Production, Explicit Dev Auth Otherwise
+
+**Date**: 2026-07-06 (recorded 2026-10-20)
+**Status**: Accepted. Implemented. Hardening is tracked in [#41].
+
+### Decision
+
+- **Production mode** (`ENCRYPTED_IR_ENV=prod`):
+  - Requires OIDC issuer, audience and JWKS URL.
+  - Verifies RS256 bearer tokens against the JWKS.
+  - Takes the tenant and roles from configurable claims.
+  - Rejects dev auth.
+- **Other modes:** an explicit dev API key and dev HS256 tokens exist so the local demo needs no identity
+  provider.
+
+### Consequences
+
+- The local demo works without cloud accounts.
+- Dev auth is on by default outside production, with a public default HS256 secret.
+- `exp` is not yet required.
+- [#41] tightens both. Live IdP evidence is [#48].
+
+---
+
+## ADR-014: One KMS-Wrapped App Master Key, Locally Wrapped Tenant Keys
+
+**Date**: 2026-07-06 (recorded 2026-10-20)
+**Status**: Accepted. Implemented. KMS is tested with mocks only; live evidence is [#49].
+
+### Decision
+
+One application master key per deployment. Production mode unwraps it once at startup with AWS KMS
+`Decrypt`; dev reads it from an environment variable. Per-tenant document and search keys are generated
+locally and stored AES-GCM-wrapped under that master key.
+
+### Consequences
+
+- One KMS call per process start instead of one per request.
+- The master key stays in process memory, so a host compromise exposes every tenant (THREAT_MODEL A3).
+- Re-encrypting documents on rotation is not implemented ([#42]).
+
+---
+
+## ADR-015: Quarantine Research Modules
+
+**Date**: 2026-10-20
+**Status**: Accepted. Implementation tracked in [#37].
+
+### Context
+
+ORE, OPE, FF1, CKKS, post-quantum, differential privacy and the forward/backward-private SSE classes are
+exported next to the durable-path code. Several of them describe stronger guarantees than they provide.
+
+### Decision
+
+- Move them under `encrypted_ir.research`, which emits a prototype warning on import.
+- Delete OPE.
+- Keep only standard, tested constructions in the core package.
+- Run the research tests in CI with the optional extras installed.
+
+---
+
+## ADR-016: Remove the Demo-Only API Routes
+
+**Date**: 2026-10-20
+**Status**: Accepted. Implementation tracked in [#36].
+
+### Context
+
+`/v1/encrypt`, `/v1/decrypt`, `/v1/search/*` and `/v1/keys*` hold random per-process keys in module
+globals. They do not survive a restart and share nothing with the durable path.
+
+### Decision
+
+Remove these routes rather than make them durable. Library-level demos of blind indexes and ORE stay in
+`examples/portfolio_demo.py`.
+
+### Consequences
+
+The API surface and the leakage map then describe only durable, tested code.
 
 ---
 
@@ -643,6 +787,7 @@ NIST finalized PQC standards (FIPS 203/204/205) in August 2024. Large-scale quan
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2025-01-11 | Architecture Team | Initial ADR log |
+| 2.0 | 2026-10-20 | Maintainer | Statuses corrected to match the code; compliance entries marked as targets; FIPS 205 corrected; ADR-011 to ADR-016 added |
 
 ---
 
@@ -683,5 +828,16 @@ NIST finalized PQC standards (FIPS 203/204/205) in August 2024. Large-scale quan
 
 ---
 
-**Classification**: Internal Use Only
 **Review Cycle**: Quarterly
+
+[#34]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/34
+[#36]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/36
+[#37]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/37
+[#38]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/38
+[#39]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/39
+[#40]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/40
+[#41]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/41
+[#42]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/42
+[#47]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/47
+[#48]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/48
+[#49]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/49

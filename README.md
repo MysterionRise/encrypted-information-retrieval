@@ -68,7 +68,7 @@ curl -X POST http://localhost:8000/v1/rag/retrieve \
 
 The Compose stack enables `local-demo-key` through explicit dev-only auth. Disable `ENCRYPTED_IR_DEV_AUTH_ENABLED` and configure OIDC/JWKS before treating the API as anything beyond a local demo.
 
-See [docs/CTO_DEMO_SCRIPT.md](docs/CTO_DEMO_SCRIPT.md) and [docs/DOCKER_COMPOSE_SMOKE_TEST.md](docs/DOCKER_COMPOSE_SMOKE_TEST.md) for the full review flow.
+See [docs/CTO_DEMO_SCRIPT.md](docs/CTO_DEMO_SCRIPT.md) for the full review flow, including the persistence check.
 
 ## Install Locally
 
@@ -119,15 +119,14 @@ python -m encrypted_ir.tools.benchmark_retrieval \
 
 Read these first:
 
-- [docs/PORTFOLIO_EVIDENCE.md](docs/PORTFOLIO_EVIDENCE.md): latest portfolio evidence and verification summary.
-- [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md): current implementation status, commands, limitations, and production gaps.
-- [docs/PORTFOLIO_CASE_STUDY.md](docs/PORTFOLIO_CASE_STUDY.md): CTO-facing case study and roadmap framing.
+- [docs/PORTFOLIO_EVIDENCE.md](docs/PORTFOLIO_EVIDENCE.md): dated evidence run, current status, limitations, and how to reproduce.
+- [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md): what the code protects and leaks, with each known gap and its tracking issue.
+- [docs/PORTFOLIO_CASE_STUDY.md](docs/PORTFOLIO_CASE_STUDY.md): CTO-facing case study.
 - [docs/CTO_DEMO_SCRIPT.md](docs/CTO_DEMO_SCRIPT.md): five-minute review script.
 - [docs/LEAKAGE_AND_ENDPOINTS.md](docs/LEAKAGE_AND_ENDPOINTS.md): API leakage map and production boundary.
-- [docs/DOCKER_COMPOSE_SMOKE_TEST.md](docs/DOCKER_COMPOSE_SMOKE_TEST.md): persistence smoke test.
 - [docs/README.md](docs/README.md): documentation map and accuracy guidance.
 
-Reference docs such as architecture, threat model, compliance notes, and backlog are useful context, but some include target-state or historical planning language. Treat portfolio evidence, executable tests, and the current code as the source of truth.
+The target-state section of `docs/ARCHITECTURE.md` and everything under `docs/archive/` are reference material, not claims about the current code. Treat executable tests, CI, and portfolio evidence as the source of truth.
 
 ## Security Notes
 

@@ -6,13 +6,17 @@ retrieval, not a toy encryption library.
 Default path: Docker Compose only. No AWS account, KMS key, Cognito/Auth0/Okta
 tenant, or external IdP is required for the portfolio demo.
 
+This script also serves as the persistence smoke test. It absorbs the former
+`DOCKER_COMPOSE_SMOKE_TEST.md`, and each step lists its expected result.
+
 ## 1. Show the Deployment Shape
 
 ```bash
 docker compose up --build
 ```
 
-Call readiness:
+Wait for the API to listen on `http://localhost:8000`. The API container runs
+`alembic upgrade head` before starting Uvicorn. Then call readiness:
 
 ```bash
 curl http://localhost:8000/ready
@@ -33,6 +37,8 @@ curl -X POST http://localhost:8000/v1/documents \
   -d '{"doc_id":"risk-001","content":"Quarterly fraud risk report for regulated RAG retrieval","metadata":{"source":"ctodemo"}}'
 ```
 
+Expected: `200 OK` with `indexed_token_count` greater than zero.
+
 Explain:
 - Content is encrypted with AES-GCM.
 - Search tokens are deterministic HMAC values scoped by tenant keys.
@@ -47,6 +53,8 @@ curl -X POST http://localhost:8000/v1/rag/retrieve \
   -d '{"query":"fraud risk","top_k":3,"include_plaintext":true}'
 ```
 
+Expected: one candidate for `risk-001` with plaintext included.
+
 Explain:
 - The endpoint returns retrieval candidates for a downstream RAG system.
 - It intentionally performs no LLM calls and no embedding generation.
@@ -59,13 +67,14 @@ docker compose restart api
 ```
 
 Run the RAG retrieval request again. The document should still be returned
-because Postgres stores ciphertext, keyword tokens, and encrypted key metadata.
+because Postgres stores ciphertext, keyword tokens, and encrypted key metadata,
+and Compose provides a stable `ENCRYPTED_IR_MASTER_KEY_B64`.
 
 ## 5. Show Audit and Leakage Discipline
 
 Open:
 - `docs/LEAKAGE_AND_ENDPOINTS.md`
-- `docs/DOCKER_COMPOSE_SMOKE_TEST.md`
+- `docs/THREAT_MODEL.md`
 
 Explain:
 - The project explicitly documents token equality, query repetition, result
@@ -88,3 +97,12 @@ Optional live-validation path if cloud credentials are available:
   claim.
 - Start the API with `ENCRYPTED_IR_ENV=prod` and verify `/ready` only reports
   ready after DB migrations, OIDC settings, and KMS settings are valid.
+
+## Notes
+
+- `local-demo-key` works only because `docker-compose.yml` sets
+  `ENCRYPTED_IR_DEV_AUTH_ENABLED=true`.
+- Compose sets `ENCRYPTED_IR_AUTO_CREATE_TABLES=false`, so schema changes are applied through
+  Alembic migrations.
+- This is a local demo workflow, not production authentication or secret management. The
+  master key, database password and JWT secret in `docker-compose.yml` are demo values.

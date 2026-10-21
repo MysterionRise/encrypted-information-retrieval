@@ -1,7 +1,11 @@
 # Portfolio Evidence
 
-**Run date:** July 7, 2026  
+**Run date:** July 7 and 8, 2026, at commit `d52d63d`  
 **Target:** CTO review of a portfolio-grade regulated AI/RAG retrieval prototype
+
+> This is the only dated evidence run so far. It predates the Phase 0 work in
+> [ROADMAP.md](ROADMAP.md). A fresh run on the release commit is part of [#51](https://github.com/MysterionRise/encrypted-information-retrieval/issues/51). Since this
+> run, CI also runs the research-module tests and a Docker Compose smoke test.
 
 This repository demonstrates a real local workflow for encrypted retrieval:
 FastAPI, PostgreSQL, Alembic migrations, tenant-scoped keys, encrypted document
@@ -86,9 +90,46 @@ Reports:
 - Audit rows are database records, not immutable external logs or SIEM events.
 - Retrieval is deterministic keyword-token search, not vector search, PIR, ORAM,
   or zero-leakage retrieval.
-- Custom ORE/SSE code remains prototype/research-oriented and unaudited.
+- Custom ORE/SSE code remains prototype/research-oriented and unaudited. The ORE prototype's
+  comparison needs no key, so ciphertext holders learn total order; see
+  [THREAT_MODEL.md](THREAT_MODEL.md).
 - No Terraform/CDK, IAM policy review, TLS termination, WAF, SLOs, log retention,
   backup/restore drill, or external penetration test is included.
+
+## Status and Limitations
+
+This section absorbs the former `CURRENT_STATUS.md`.
+
+**What is verified**
+- The FastAPI app, database migrations, encrypted document storage, tenant-scoped retrieval, key
+  metadata and audit tables are implemented and tested.
+- Dev auth rejects unsigned `alg:none` JWTs and requires signed HS256 tokens.
+- `pyproject.toml` is the packaging source of truth; `setup.py` is a compatibility shim.
+
+**Known limitations**
+- No external cryptographic or application-security audit has been performed.
+- Local demo auth, local master keys and in-memory demos are not production identity or
+  key-management controls.
+- Retrieval leaks equality, query repetition, result sizes and access patterns, depending on the
+  primitive and endpoint. See [LEAKAGE_AND_ENDPOINTS.md](LEAKAGE_AND_ENDPOINTS.md).
+- RAG support stops at retrieval and authorized context release. The repository does not call an
+  LLM or run a vector database.
+- Regulatory mapping material is discussion only. The old compliance notes are archived under
+  [archive/](archive/README.md).
+
+**Production-readiness gaps** are tracked as issues and ordered in [ROADMAP.md](ROADMAP.md).
+
+### Reproduce locally
+
+```bash
+make test                 # full pytest suite (set POSTGRES_TEST_DATABASE_URL to include the Postgres test)
+make lint                 # ruff, bandit, mypy
+make security             # bandit and dependency audit
+python -m build && twine check dist/*
+PYTHONPATH=src python examples/portfolio_demo.py   # dependency-light library demo
+```
+
+The Docker Compose flow is in [CTO_DEMO_SCRIPT.md](CTO_DEMO_SCRIPT.md).
 
 ## CTO Review Framing
 

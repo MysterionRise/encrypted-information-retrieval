@@ -8,8 +8,8 @@ Regulated AI systems need retrieval pipelines that can find relevant customer, r
 
 - Encrypted document storage with deterministic keyword-token retrieval.
 - Tenant-scoped blind indexes for equality lookup without global cross-tenant correlation.
-- ORE range comparisons for numeric workflows where order leakage is an accepted trade-off.
-- Key creation, access, rotation, retired-key decryption, and audit trails.
+- A research ORE prototype for range comparisons. Its comparison needs no key, so it leaks total order like OPE ([#34](https://github.com/MysterionRise/encrypted-information-retrieval/issues/34)).
+- Key creation, access, rotation and retired-key decryption in the library `KeyManager`, plus audit trails. Stored documents are not yet re-encrypted on rotation ([#42](https://github.com/MysterionRise/encrypted-information-retrieval/issues/42)).
 - FastAPI, PostgreSQL, Alembic, readiness checks, Docker Compose evidence, and CI quality gates.
 - A RAG boundary where search can return candidates without plaintext until an authorized retrieval step decrypts context.
 
@@ -44,7 +44,7 @@ That is a credible engineering slice for regulated RAG because it narrows the pr
 
 - Blind indexes leak equality within a tenant and field.
 - Keyword tokens leak query repetition, result sizes, and access patterns.
-- ORE reveals order only through explicit comparisons, but those comparisons are still leakage.
+- The ORE prototype's comparison needs no key, so whoever holds ORE ciphertexts learns their total order.
 - Returning plaintext for RAG is a policy decision and must be gated, logged, and minimized.
 
 The right portfolio framing is that the prototype makes leakage visible and bounded. It should not be described as zero-leakage retrieval, PIR, ORAM, or production-certified cryptography.
@@ -59,9 +59,4 @@ The right portfolio framing is that the prototype makes leakage visible and boun
 
 ## Roadmap
 
-1. Run production OIDC/JWKS and AWS KMS paths against real cloud tenants.
-2. Add append-only audit export and SIEM integration.
-3. Add deployment IaC, TLS, backup/restore, SLOs, alerting, and operational runbooks.
-4. Add a policy layer for plaintext release into RAG context windows.
-5. Replace or formally review prototype ORE/SSE primitives before production use.
-6. Add vector retrieval only after the encrypted retrieval and audit boundary is explicit.
+The phased plan, with its tracking issues, is in [ROADMAP.md](ROADMAP.md).

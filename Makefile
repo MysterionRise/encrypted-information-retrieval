@@ -1,4 +1,4 @@
-.PHONY: help setup test test-verbose test-coverage lint format type-check security clean docs bench all install-dev
+.PHONY: help setup test test-verbose test-coverage lint format type-check security clean docs docs-check bench all install-dev
 
 # Default target
 .DEFAULT_GOAL := help
@@ -153,6 +153,9 @@ pre-commit-check: ## Quick checks before committing
 	@echo "$(BLUE)3. Quick tests...$(NC)"
 	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest -q -W ignore::DeprecationWarning
 	@echo "$(GREEN)✓ Pre-commit checks passed$(NC)"
+
+docs-check: ## Check that relative links in maintained Markdown files resolve
+	$(PYTHON) scripts/check_links.py
 
 # Development workflow helpers
 watch-test: ## Watch for changes and run tests automatically
