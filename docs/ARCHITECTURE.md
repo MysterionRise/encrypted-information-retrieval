@@ -19,7 +19,7 @@ the current code.
 ```mermaid
 graph LR
     CLIENT["Client"] -->|"X-API-Key or bearer token"| API["FastAPI app (single process)"]
-    API --> AUTH["Auth: OIDC RS256 via JWKS (prod); dev API key and HS256 dev JWT (dev)"]
+    API --> AUTH["Auth: OIDC via JWKS (RS256, PS256 or ES256); dev API key and HS256 dev JWT (dev only)"]
     API --> RL["In-memory rate limiter (per process)"]
     API --> DS["DocumentService"]
     DS --> KM["KeyManager per tenant (AES-GCM-wrapped keys)"]
@@ -67,7 +67,7 @@ These are the only routes besides the five above. The in-memory demo routes (`/v
 
 | Route | Backing | Note |
 | --- | --- | --- |
-| `GET /health`, `GET /ready` | Process state; database, migration, auth and key-provider checks | `/ready` is unauthenticated and returns exception text ([#41]). |
+| `GET /health`, `GET /ready` | Process state; database, migration, auth and key-provider checks | `/ready` is unauthenticated and returns pass/fail booleans; failure details go to the log ([#41]). |
 | `GET /metrics` | Process-global JSON counters | Unauthenticated and keyed by raw path ([#43]). |
 
 ### Storage

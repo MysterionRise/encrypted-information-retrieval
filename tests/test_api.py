@@ -19,6 +19,7 @@ import json
 
 import jwt
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import select, update
 
 from encrypted_ir import __version__
@@ -27,6 +28,7 @@ from encrypted_ir.api.dependencies.rate_limiter import (
     RateLimiter,
     set_rate_limiter,
 )
+from encrypted_ir.api.main import create_app
 from encrypted_ir.database import audit_log_table, documents_table
 
 REMOVED_DEMO_PATHS = (
@@ -549,20 +551,29 @@ class TestRequestTracing:
 # =============================================================================
 
 
+@pytest.fixture()
+def docs_client(settings_factory):
+    return TestClient(create_app(settings_factory(enable_docs=True)), raise_server_exceptions=False)
+
+
 class TestOpenAPI:
-    def test_openapi_spec_available(self, client):
-        resp = client.get("/openapi.json")
+    @pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+    def test_docs_are_off_by_default(self, client, path):
+        assert client.get(path).status_code == 404
+
+    def test_openapi_spec_available(self, docs_client):
+        resp = docs_client.get("/openapi.json")
         assert resp.status_code == 200
         spec = resp.json()
         assert spec["info"]["title"] == "Encrypted Information Retrieval API"
         assert spec["info"]["version"] == __version__
 
-    def test_docs_available(self, client):
-        resp = client.get("/docs")
+    def test_docs_available(self, docs_client):
+        resp = docs_client.get("/docs")
         assert resp.status_code == 200
 
-    def test_openapi_lists_exactly_the_durable_routes(self, client):
-        paths = client.get("/openapi.json").json()["paths"]
+    def test_openapi_lists_exactly_the_durable_routes(self, docs_client):
+        paths = docs_client.get("/openapi.json").json()["paths"]
         assert set(paths) == {
             "/v1/documents",
             "/v1/documents/search",

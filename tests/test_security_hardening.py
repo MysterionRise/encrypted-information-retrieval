@@ -156,14 +156,14 @@ def test_kms_master_key_resolution_with_fake_provider():
     assert source == "aws-kms"
 
 
-def test_ready_endpoint_reports_ready_in_local_mode():
-    app = create_app()
-    client = TestClient(app, raise_server_exceptions=False)
-
+def test_ready_endpoint_reports_ready_in_local_mode(client):
     resp = client.get("/ready")
 
     assert resp.status_code == 200
-    assert resp.json()["status"] == "ready"
+    assert resp.json() == {
+        "status": "ready",
+        "checks": {"database": True, "migrations": True, "auth": True, "key_provider": True},
+    }
 
 
 def test_ready_endpoint_returns_503_when_not_ready():
@@ -178,7 +178,10 @@ def test_ready_endpoint_returns_503_when_not_ready():
     resp = client.get("/ready")
 
     assert resp.status_code == 503
-    assert resp.json()["status"] == "not_ready"
+    assert resp.json() == {
+        "status": "not_ready",
+        "checks": {"database": True, "migrations": False, "auth": False, "key_provider": True},
+    }
 
 
 @pytest.mark.parametrize(
@@ -218,10 +221,8 @@ def test_oidc_document_flow_rejects_missing_or_unknown_claims(token_kwargs, expe
     assert resp.status_code == expected_status
 
 
-def test_document_operations_write_sanitized_audit_rows():
-    app = create_app()
-    client = TestClient(app, raise_server_exceptions=False)
-    headers = {"X-API-Key": "local-demo-key"}
+def test_document_operations_write_sanitized_audit_rows(app, client):
+    headers = {"X-API-Key": app.state.auth_config.dev_api_key}
 
     client.post(
         "/v1/documents",
@@ -252,10 +253,8 @@ def test_document_operations_write_sanitized_audit_rows():
     assert "secret fraud risk content" not in serialized
 
 
-def test_document_operation_failures_write_sanitized_audit_rows():
-    app = create_app()
-    client = TestClient(app, raise_server_exceptions=False)
-    headers = {"X-API-Key": "local-demo-key"}
+def test_document_operation_failures_write_sanitized_audit_rows(app, client):
+    headers = {"X-API-Key": app.state.auth_config.dev_api_key}
 
     client.post(
         "/v1/documents",
@@ -315,6 +314,7 @@ def test_dev_api_key_auth_is_rejected_when_dev_auth_disabled():
         environment="test",
         master_key=os.urandom(32),
         dev_auth_enabled=False,
+        dev_api_key="local-demo-key",
         auto_create_tables=True,
         oidc_issuer="https://issuer.example",
         oidc_audience="encrypted-ir",

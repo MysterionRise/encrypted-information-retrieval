@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -37,13 +38,15 @@ class _BucketState:
 class RateLimiter:
     """In-memory sliding window rate limiter.
 
-    Uses a per-tenant, per-operation sliding window counter.
-    In production, replace with Redis-backed implementation.
+    Uses a per-tenant, per-operation sliding window counter. Route handlers run in FastAPI's
+    thread pool, so the buckets are guarded by a lock. State is per process; in production,
+    replace with a shared (for example Redis-backed) implementation.
     """
 
     def __init__(self, limits: dict[str, RateLimitConfig] | None = None):
         self._limits = limits or DEFAULT_LIMITS
         self._buckets: dict[str, _BucketState] = defaultdict(_BucketState)
+        self._lock = threading.Lock()
 
     def check_limit(self, tenant_id: str, operation: str) -> None:
         """Check rate limit for a tenant+operation.
@@ -60,25 +63,26 @@ class RateLimiter:
             return  # No limit configured for this operation
 
         key = f"{tenant_id}:{operation}"
-        bucket = self._buckets[key]
-        now = time.monotonic()
-        cutoff = now - config.window_seconds
+        with self._lock:
+            bucket = self._buckets[key]
+            now = time.monotonic()
+            cutoff = now - config.window_seconds
 
-        # Remove expired timestamps
-        bucket.timestamps = [ts for ts in bucket.timestamps if ts > cutoff]
+            # Remove expired timestamps
+            bucket.timestamps = [ts for ts in bucket.timestamps if ts > cutoff]
 
-        if len(bucket.timestamps) >= config.max_requests:
-            # Calculate retry-after
-            oldest = bucket.timestamps[0]
-            retry_after = int(oldest - cutoff) + 1
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Rate limit exceeded for {operation}. "
-                f"Max {config.max_requests} requests per {config.window_seconds}s.",
-                headers={"Retry-After": str(max(retry_after, 1))},
-            )
+            if len(bucket.timestamps) >= config.max_requests:
+                # Calculate retry-after
+                oldest = bucket.timestamps[0]
+                retry_after = int(oldest - cutoff) + 1
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Rate limit exceeded for {operation}. "
+                    f"Max {config.max_requests} requests per {config.window_seconds}s.",
+                    headers={"Retry-After": str(max(retry_after, 1))},
+                )
 
-        bucket.timestamps.append(now)
+            bucket.timestamps.append(now)
 
     def reset(self, tenant_id: str | None = None) -> None:
         """Reset rate limit counters.
@@ -86,12 +90,13 @@ class RateLimiter:
         Args:
             tenant_id: Reset only this tenant's counters. If None, reset all.
         """
-        if tenant_id is None:
-            self._buckets.clear()
-        else:
-            keys_to_remove = [k for k in self._buckets if k.startswith(f"{tenant_id}:")]
-            for k in keys_to_remove:
-                del self._buckets[k]
+        with self._lock:
+            if tenant_id is None:
+                self._buckets.clear()
+            else:
+                keys_to_remove = [k for k in self._buckets if k.startswith(f"{tenant_id}:")]
+                for k in keys_to_remove:
+                    del self._buckets[k]
 
 
 # Global rate limiter instance

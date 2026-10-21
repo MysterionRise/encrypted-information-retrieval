@@ -22,6 +22,10 @@ Wait for the API to listen on `http://localhost:8000`. The API container runs
 curl http://localhost:8000/ready
 ```
 
+Expected: `{"status":"ready","checks":{"database":true,"migrations":true,"auth":true,"key_provider":true}}`.
+Failure details go to the API log, not the response. The interactive docs are at
+`http://localhost:8000/docs` because Compose sets `ENCRYPTED_IR_ENABLE_DOCS=true`.
+
 Point out:
 - PostgreSQL is the durable store.
 - Alembic migrations run before API startup.
@@ -88,7 +92,10 @@ Summarize the production path:
 - OIDC issuer/audience/JWKS verification replaces demo API keys.
 - AWS KMS unwraps the app master key.
 - Alembic migrations replace ad hoc schema creation.
-- `/ready` gates deployments on DB, migration, auth, and key-provider posture.
+- `/ready` gates deployments on DB, migration, auth, and key-provider posture, and reports
+  only pass/fail booleans.
+- Tokens must carry `exp`, `iat`, `aud`, `iss`, a valid tenant claim and roles. Every 401 has
+  the same body; the reason goes to a rate-bounded audit row.
 
 Optional live-validation path if cloud credentials are available:
 - Generate an AWS KMS-wrapped app master key with
@@ -103,7 +110,8 @@ Optional live-validation path if cloud credentials are available:
 ## Notes
 
 - `local-demo-key` works only because `docker-compose.yml` sets
-  `ENCRYPTED_IR_DEV_AUTH_ENABLED=true`.
+  `ENCRYPTED_IR_DEV_AUTH_ENABLED=true`, a 32-byte-plus `ENCRYPTED_IR_JWT_SECRET` and
+  `ENCRYPTED_IR_DEV_API_KEY`. Dev auth is refused unless `ENCRYPTED_IR_ENV=dev`.
 - Compose sets `ENCRYPTED_IR_AUTO_CREATE_TABLES=false`, so schema changes are applied through
   Alembic migrations.
 - This is a local demo workflow, not production authentication or secret management. The
