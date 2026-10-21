@@ -6,7 +6,7 @@ API serves.
 
 | Endpoint | Primitive / workflow | Expected leakage | Production risk | Mitigation |
 | --- | --- | --- | --- | --- |
-| `POST /v1/documents` | AES-GCM document encryption + HMAC keyword tokens | Document length, token count, ingest timing; metadata (stored as plaintext JSON, at most 32 keys and 16 KB) | Keyword frequency analysis over deterministic tokens | Scope keys per tenant, limit sensitive keywords, consider PIR/ORAM for high-sensitivity collections |
+| `POST /v1/documents` | AES-GCM sealed content and metadata (bound to tenant, document and key) + HMAC keyword tokens | Document and metadata length, token count, ingest timing; the encrypting key's ID (row column and ciphertext header) | Keyword frequency analysis over deterministic tokens | Scope keys per tenant, limit sensitive keywords, consider PIR/ORAM for high-sensitivity collections |
 | `POST /v1/documents/search` | Tenant-scoped HMAC query tokens | Query repetition, matching doc IDs, result size, access pattern | Search/access-pattern inference | Audit searches, rate limit, pad results where required, use stronger SSE/PIR for sensitive collections |
 | `GET /v1/documents/{doc_id}` | KeyManager-backed AES-GCM decrypt | Document access pattern, decrypt timing | Insider misuse or excessive decrypt access | OIDC roles, audit records, least-privilege policy, KMS-wrapped master key |
 | `DELETE /v1/documents/{doc_id}` | Hard delete of the ciphertext row and its token rows in one transaction | That a document ID existed (404 versus 204) to an authorized caller of the same tenant; delete timing | Deleted rows may persist in database backups and WAL until they age out | Write or admin role, audit event `document.delete`, backup retention policy |
@@ -20,6 +20,11 @@ The demo routes `/v1/encrypt`, `/v1/decrypt`, `/v1/search/{equality,range,keywor
 They held random per-process keys and shared nothing with the durable path. Blind-index and ORE
 demos remain at library level in `examples/portfolio_demo.py`.
 
+Metadata is encrypted with the document key since [#40](https://github.com/MysterionRise/encrypted-information-retrieval/issues/40)
+and is returned decrypted only to callers of the owning tenant. Rows written before that keep
+their metadata as plaintext JSON until the rotation tool in [#42](https://github.com/MysterionRise/encrypted-information-retrieval/issues/42)
+re-encrypts them.
+
 ## Current Production Boundary
 
 The main portfolio path is the durable document/RAG workflow. It uses
@@ -32,4 +37,4 @@ retrieval construction.
 
 Endpoint audit records must not include plaintext, raw queries, search tokens,
 or key material. They may include tenant, actor, operation, request ID, result
-count, document ID, and non-sensitive metadata keys.
+count and document ID. They do not include metadata keys or values.

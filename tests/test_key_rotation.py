@@ -12,7 +12,6 @@ from encrypted_ir.key_rotation import (
     RotationPriority,
     RotationProgress,
     RotationStatus,
-    VersionedBlob,
 )
 
 # ---------------------------------------------------------------------------
@@ -139,73 +138,6 @@ class TestRotationProgress:
         assert d["progress_percent"] == 70.0
         assert d["priority"] == "emergency"
         assert d["status"] == "in_progress"
-
-
-# ---------------------------------------------------------------------------
-# VersionedBlob
-# ---------------------------------------------------------------------------
-
-
-class TestVersionedBlob:
-    """Test versioned encrypted blob format."""
-
-    def test_wrap_and_unwrap(self):
-        key_id = "det_abc123"
-        payload = b"encrypted_data_here"
-        blob = VersionedBlob.wrap(key_id, payload)
-
-        assert VersionedBlob.is_versioned(blob)
-        key_hash, ciphertext = VersionedBlob.unwrap(blob)
-        assert ciphertext == payload
-        assert isinstance(key_hash, int)
-
-    def test_is_versioned_true(self):
-        blob = VersionedBlob.wrap("key_1", b"data")
-        assert VersionedBlob.is_versioned(blob) is True
-
-    def test_is_versioned_false_short(self):
-        assert VersionedBlob.is_versioned(b"\xeb") is False
-
-    def test_is_versioned_false_wrong_magic(self):
-        assert VersionedBlob.is_versioned(b"\x00\x00\x00\x00\x00\x00data") is False
-
-    def test_unwrap_invalid_short(self):
-        with pytest.raises(ValueError, match="too short"):
-            VersionedBlob.unwrap(b"\xeb")
-
-    def test_unwrap_invalid_magic(self):
-        with pytest.raises(ValueError, match="Invalid"):
-            VersionedBlob.unwrap(b"\x00\x00\x00\x00\x00\x00data")
-
-    def test_find_key_id(self):
-        key_id = "det_target_key"
-        blob = VersionedBlob.wrap(key_id, b"secret")
-        candidates = ["det_other_key", key_id, "det_third_key"]
-        assert VersionedBlob.find_key_id(blob, candidates) == key_id
-
-    def test_find_key_id_no_match(self):
-        blob = VersionedBlob.wrap("det_unknown", b"secret")
-        candidates = ["det_a", "det_b"]
-        assert VersionedBlob.find_key_id(blob, candidates) is None
-
-    def test_find_key_id_non_versioned(self):
-        assert VersionedBlob.find_key_id(b"raw_data", ["key_1"]) is None
-
-    def test_consistent_hashing(self):
-        """Same key ID always produces the same hash."""
-        blob1 = VersionedBlob.wrap("my_key", b"data1")
-        blob2 = VersionedBlob.wrap("my_key", b"data2")
-        h1, _ = VersionedBlob.unwrap(blob1)
-        h2, _ = VersionedBlob.unwrap(blob2)
-        assert h1 == h2
-
-    def test_different_keys_different_hashes(self):
-        """Different key IDs produce different hashes (probabilistic)."""
-        blob1 = VersionedBlob.wrap("key_alpha", b"data")
-        blob2 = VersionedBlob.wrap("key_beta", b"data")
-        h1, _ = VersionedBlob.unwrap(blob1)
-        h2, _ = VersionedBlob.unwrap(blob2)
-        assert h1 != h2
 
 
 # ---------------------------------------------------------------------------
@@ -773,39 +705,6 @@ class TestKeyChain:
         assert rotation.get_key_chain(id1) == [id1, id2, id3]
         assert rotation.get_key_chain(id2) == [id1, id2, id3]
         assert rotation.get_key_chain(id3) == [id1, id2, id3]
-
-
-# ---------------------------------------------------------------------------
-# Resolve Key for Blob
-# ---------------------------------------------------------------------------
-
-
-class TestResolveKeyForBlob:
-    """Test resolving key IDs from versioned blobs."""
-
-    def test_resolve_known_key(self, manager, rotation):
-        """Can resolve key ID from a versioned blob."""
-        key_id = manager.create_key("deterministic")
-        blob = VersionedBlob.wrap(key_id, b"encrypted_data")
-
-        resolved = rotation.resolve_key_for_blob(blob)
-        assert resolved == key_id
-
-    def test_resolve_after_rotation(self, manager, rotation):
-        """Can resolve both old and new key IDs after rotation."""
-        old_id = manager.create_key("deterministic")
-        progress = rotation.rotate_dek(old_id)
-        new_id = progress.new_key_id
-
-        old_blob = VersionedBlob.wrap(old_id, b"old_data")
-        new_blob = VersionedBlob.wrap(new_id, b"new_data")
-
-        assert rotation.resolve_key_for_blob(old_blob) == old_id
-        assert rotation.resolve_key_for_blob(new_blob) == new_id
-
-    def test_resolve_non_versioned(self, rotation):
-        """Non-versioned blob returns None."""
-        assert rotation.resolve_key_for_blob(b"raw_unversioned_data") is None
 
 
 # ---------------------------------------------------------------------------

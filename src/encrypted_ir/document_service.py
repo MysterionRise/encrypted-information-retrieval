@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from collections import OrderedDict
@@ -13,10 +14,11 @@ from sqlalchemy import Integer, and_, case, delete, func, insert, literal, selec
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
+from . import document_crypto
 from .database import audit_log_table, document_tokens_table, documents_table
-from .errors import DocumentAlreadyExistsError, DocumentNotFoundError
+from .errors import DocumentAlreadyExistsError, DocumentIntegrityError, DocumentNotFoundError
 from .key_manager import KeyLifecycleState, KeyManager
-from .searchable import SearchableEncryption, extract_keywords, normalize_keyword, search_token
+from .searchable import extract_keywords, normalize_keyword, search_token
 from .storage_backend import DatabaseStorageBackend
 
 MAX_QUERY_KEYWORDS = 32
@@ -46,6 +48,10 @@ class RetrievalCandidate:
 class DocumentService:
     """Persist encrypted documents and deterministic keyword search tokens.
 
+    Content and metadata are sealed with AES-256-GCM under the tenant's document key, bound to
+    the tenant, the document ID and the key ID (see :mod:`encrypted_ir.document_crypto`). Rows
+    written before that format (``algorithm == "aes-gcm"``) remain readable.
+
     The service is safe to share between threads. Per-tenant key managers are cached in a
     bounded LRU with a TTL; key reads never write to the database, and keys created by other
     processes are picked up before every ingest and search.
@@ -53,7 +59,7 @@ class DocumentService:
 
     DOC_ENCRYPTION_KEY_TYPE = "document_encryption"
     DOC_SEARCH_KEY_TYPE = "document_search"
-    ALGORITHM = "aes-gcm"
+    ALGORITHM = document_crypto.ALGORITHM
     KEY_CACHE_MAX_TENANTS = 1024
     KEY_CACHE_TTL_SECONDS = 300.0
 
@@ -93,6 +99,7 @@ class DocumentService:
         manager = KeyManager(
             master_key=self._master_key,
             storage_backend=DatabaseStorageBackend(self._engine, tenant_id),
+            tenant_id=tenant_id,
         )
         with self._key_cache_lock:
             cached = self._cached_key_manager(tenant_id)
@@ -117,6 +124,44 @@ class DocumentService:
         # for example "AI" against a document ingested with keywords=["AI"].
         fallback = normalize_keyword(query)
         return [fallback] if fallback else []
+
+    @staticmethod
+    def _encode_metadata(metadata: dict[str, Any]) -> bytes:
+        return json.dumps(metadata, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+    def _open_row(self, tenant_id: str, row: Any, *, content: bool) -> tuple[dict[str, Any], str]:
+        """Return (metadata, plaintext) for a document row; plaintext is "" unless ``content``.
+
+        Raises:
+            DocumentIntegrityError: If a ciphertext does not authenticate for this row.
+        """
+        key = self._key_manager(tenant_id).get_key_for_decryption(row.encryption_key_id)
+        if row.algorithm == document_crypto.LEGACY_ALGORITHM:
+            plaintext = (
+                document_crypto.open_legacy(key, bytes(row.encrypted_document)) if content else b""
+            )
+            return dict(row.metadata_json or {}), plaintext.decode("utf-8")
+        if row.algorithm != document_crypto.ALGORITHM or row.encrypted_metadata is None:
+            raise DocumentIntegrityError("Document row has an unknown or incomplete format")
+
+        context = {"key_id": row.encryption_key_id, "tenant_id": tenant_id, "doc_id": row.doc_id}
+        metadata_bytes = document_crypto.open_sealed(
+            key,
+            bytes(row.encrypted_metadata),
+            purpose=document_crypto.PURPOSE_METADATA,
+            **context,
+        )
+        plaintext = (
+            document_crypto.open_sealed(
+                key,
+                bytes(row.encrypted_document),
+                purpose=document_crypto.PURPOSE_CONTENT,
+                **context,
+            )
+            if content
+            else b""
+        )
+        return json.loads(metadata_bytes), plaintext.decode("utf-8")
 
     def record_audit_event(
         self,
@@ -172,18 +217,25 @@ class DocumentService:
         search_key_id = key_manager.get_or_create_active_key(
             self.DOC_SEARCH_KEY_TYPE, "RAG document search tokens"
         )
-        cipher = SearchableEncryption(
-            key_manager.get_key(encryption_key_id),
-            key_manager.get_key(search_key_id),
+        encryption_key = key_manager.get_key(encryption_key_id)
+        search_key = key_manager.get_key(search_key_id)
+        document_keywords = (
+            extract_keywords(content) if keywords is None else self._normalize_keywords(keywords)
         )
-        if keywords is None:
-            encrypted_doc, tokens = cipher.encrypt_document(content)
-        else:
-            encrypted_doc, tokens = cipher.encrypt_document(
-                content,
-                auto_extract_keywords=False,
-                keywords=self._normalize_keywords(keywords),
-            )
+        tokens = {search_token(search_key, keyword) for keyword in document_keywords}
+        context = {"key_id": encryption_key_id, "tenant_id": tenant_id, "doc_id": doc_id}
+        sealed_content = document_crypto.seal(
+            encryption_key,
+            content.encode("utf-8"),
+            purpose=document_crypto.PURPOSE_CONTENT,
+            **context,
+        )
+        sealed_metadata = document_crypto.seal(
+            encryption_key,
+            self._encode_metadata(metadata or {}),
+            purpose=document_crypto.PURPOSE_METADATA,
+            **context,
+        )
 
         try:
             with self._engine.begin() as conn:
@@ -191,11 +243,12 @@ class DocumentService:
                     insert(documents_table).values(
                         tenant_id=tenant_id,
                         doc_id=doc_id,
-                        encrypted_document=encrypted_doc,
+                        encrypted_document=sealed_content,
+                        encrypted_metadata=sealed_metadata,
                         algorithm=self.ALGORITHM,
                         encryption_key_id=encryption_key_id,
                         search_key_id=search_key_id,
-                        metadata_json=metadata or {},
+                        metadata_json={},
                         token_count=len(tokens),
                     )
                 )
@@ -281,6 +334,9 @@ class DocumentService:
         stmt = (
             select(
                 documents_table.c.doc_id,
+                documents_table.c.algorithm,
+                documents_table.c.encryption_key_id,
+                documents_table.c.encrypted_metadata,
                 documents_table.c.metadata_json,
                 scores.c.score,
             )
@@ -303,7 +359,7 @@ class DocumentService:
         return [
             RetrievalCandidate(
                 doc_id=row.doc_id,
-                metadata=dict(row.metadata_json or {}),
+                metadata=self._open_row(tenant_id, row, content=False)[0],
                 score=int(row.score),
             )
             for row in rows
@@ -314,6 +370,8 @@ class DocumentService:
 
         Raises:
             DocumentNotFoundError: If the tenant has no document with this ID.
+            DocumentIntegrityError: If the stored ciphertext does not authenticate for this
+                tenant, document and key.
         """
         stmt = select(documents_table).where(
             documents_table.c.tenant_id == tenant_id,
@@ -324,15 +382,11 @@ class DocumentService:
         if row is None:
             raise DocumentNotFoundError(doc_id)
 
-        key_manager = self._key_manager(tenant_id)
-        cipher = SearchableEncryption(
-            encryption_key=key_manager.get_key_for_decryption(row.encryption_key_id)
-        )
-        plaintext = cipher.decrypt_document(bytes(row.encrypted_document)).decode("utf-8")
+        metadata, plaintext = self._open_row(tenant_id, row, content=True)
         return DocumentRecord(
             doc_id=row.doc_id,
             tenant_id=row.tenant_id,
-            metadata=dict(row.metadata_json or {}),
+            metadata=metadata,
             plaintext=plaintext,
             key_id=row.encryption_key_id,
         )

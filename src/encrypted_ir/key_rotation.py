@@ -12,7 +12,6 @@ Features:
 - Progress tracking for re-encryption operations
 - Rollback capability for failed rotations
 - Key lifecycle management with 7-year PCI retention
-- Versioned encrypted blobs for key tracking
 
 Usage:
     manager = KeyManager(master_key=key)
@@ -31,7 +30,6 @@ Usage:
 from __future__ import annotations
 
 import hashlib
-import struct
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -152,85 +150,6 @@ ReEncryptCallback = Callable[[str, bytes, bytes], bool]
 NotificationCallback = Callable[[RotationProgress], None]
 
 
-class VersionedBlob:
-    """Versioned encrypted blob that tracks which key version encrypted it.
-
-    Format: [magic:2bytes][key_hash:4bytes][payload:variable]
-
-    The key_hash is a truncated SHA-256 of the key_id, allowing efficient
-    lookup of which key to use for decryption without storing the full key ID.
-    """
-
-    MAGIC = b"\xeb\x01"  # Magic bytes + version 1
-    HEADER_SIZE = 6  # 2 (magic) + 4 (key_hash)
-
-    @staticmethod
-    def wrap(key_id: str, ciphertext: bytes) -> bytes:
-        """Wrap ciphertext with key version metadata.
-
-        Args:
-            key_id: ID of the key used for encryption.
-            ciphertext: The encrypted data.
-
-        Returns:
-            Versioned blob: header + ciphertext.
-        """
-        key_hash = struct.pack(">I", VersionedBlob._hash_key_id(key_id))
-        return VersionedBlob.MAGIC + key_hash + ciphertext
-
-    @staticmethod
-    def unwrap(blob: bytes) -> tuple[int, bytes]:
-        """Extract key hash and ciphertext from a versioned blob.
-
-        Args:
-            blob: Versioned blob bytes.
-
-        Returns:
-            Tuple of (key_id_hash, ciphertext).
-
-        Raises:
-            ValueError: If blob is too short or has invalid magic bytes.
-        """
-        if len(blob) < VersionedBlob.HEADER_SIZE:
-            raise ValueError("Blob too short to be a versioned blob")
-        if blob[:2] != VersionedBlob.MAGIC:
-            raise ValueError("Invalid versioned blob magic bytes")
-
-        key_hash = struct.unpack(">I", blob[2:6])[0]
-        ciphertext = blob[6:]
-        return key_hash, ciphertext
-
-    @staticmethod
-    def is_versioned(blob: bytes) -> bool:
-        """Check if a blob has versioned format."""
-        return len(blob) >= VersionedBlob.HEADER_SIZE and blob[:2] == VersionedBlob.MAGIC
-
-    @staticmethod
-    def _hash_key_id(key_id: str) -> int:
-        """Hash a key ID to a 32-bit integer for compact storage."""
-        digest = hashlib.sha256(key_id.encode()).digest()
-        return int(struct.unpack(">I", digest[:4])[0])
-
-    @staticmethod
-    def find_key_id(blob: bytes, candidate_key_ids: list[str]) -> str | None:
-        """Find which key ID matches a versioned blob's key hash.
-
-        Args:
-            blob: Versioned blob bytes.
-            candidate_key_ids: List of key IDs to check.
-
-        Returns:
-            Matching key ID, or None if no match found.
-        """
-        if not VersionedBlob.is_versioned(blob):
-            return None
-        blob_hash, _ = VersionedBlob.unwrap(blob)
-        for key_id in candidate_key_ids:
-            if VersionedBlob._hash_key_id(key_id) == blob_hash:
-                return key_id
-        return None
-
-
 class KeyRotationManager:
     """Manages automated key rotation with zero-downtime rollover.
 
@@ -254,15 +173,6 @@ class KeyRotationManager:
         self._notification_callback = notification_callback
         self._active_rotations: dict[str, RotationProgress] = {}
         self._rotation_history: list[RotationProgress] = []
-        self._key_hash_index: dict[int, str] = {}
-        self._rebuild_key_hash_index()
-
-    def _rebuild_key_hash_index(self) -> None:
-        """Rebuild the key hash -> key_id index for VersionedBlob lookups."""
-        self._key_hash_index.clear()
-        for key_id in self._key_manager.list_keys(active_only=False):
-            h = VersionedBlob._hash_key_id(key_id)
-            self._key_hash_index[h] = key_id
 
     def _generate_rotation_id(self, key_id: str) -> str:
         """Generate a unique rotation ID."""
@@ -362,10 +272,6 @@ class KeyRotationManager:
         # Persist both
         self._key_manager._persist_key(key_id)
         self._key_manager._persist_key(new_key_id)
-
-        # Update hash index
-        h = VersionedBlob._hash_key_id(new_key_id)
-        self._key_hash_index[h] = new_key_id
 
         # Initialize progress tracking
         total = len(record_ids) if record_ids else 0
@@ -517,10 +423,6 @@ class KeyRotationManager:
         metadata.last_rotated = datetime.now()
         self._key_manager._persist_key(key_id)
         self._key_manager._persist_key(new_key_id)
-
-        # Update hash index
-        h = VersionedBlob._hash_key_id(new_key_id)
-        self._key_hash_index[h] = new_key_id
 
         total = len(record_ids) if record_ids else 0
         progress = RotationProgress(
@@ -701,10 +603,6 @@ class KeyRotationManager:
         metadata.active = False
         self._key_manager._persist_key(key_id)
 
-        # Remove from hash index
-        h = VersionedBlob._hash_key_id(key_id)
-        self._key_hash_index.pop(h, None)
-
         self._key_manager._log_access(key_id, "destroy", True, f"Key destroyed (force={force})")
         return True
 
@@ -752,25 +650,6 @@ class KeyRotationManager:
                 "retention_years": self._policy.retention_years,
             },
         }
-
-    def resolve_key_for_blob(self, blob: bytes) -> str | None:
-        """Determine which key ID was used to encrypt a versioned blob.
-
-        Args:
-            blob: Potentially versioned encrypted blob.
-
-        Returns:
-            Key ID if found, None if blob is not versioned or key unknown.
-        """
-        if not VersionedBlob.is_versioned(blob):
-            return None
-        blob_hash, _ = VersionedBlob.unwrap(blob)
-        result = self._key_hash_index.get(blob_hash)
-        if result is None:
-            # Lazy refresh: new keys may have been added since last rebuild
-            self._rebuild_key_hash_index()
-            result = self._key_hash_index.get(blob_hash)
-        return result
 
     def get_key_chain(self, key_id: str) -> list[str]:
         """Get the full version chain for a key (oldest to newest).
