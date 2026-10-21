@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77.0", "wheel"]  # >=77: SPDX string `license`
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "encrypted-information-retrieval"
-version = "1.0.0"
+dynamic = ["version"]  # single source: encrypted_ir.__version__
 description = "Production-oriented prototype for privacy-preserving retrieval in regulated AI/RAG systems"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["encryption", "searchable-encryption", "privacy", "rag", "regulated-ai", "postgresql", "oidc", "kms"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Financial and Insurance Industry",
     "Programming Language :: Python :: 3",
@@ -65,6 +65,9 @@ Repository = "https://github.com/MysterionRise/encrypted-information-retrieval"
 Issues = "https://github.com/MysterionRise/encrypted-information-retrieval/issues"
 
 # Tool configurations
+
+[tool.setuptools.dynamic]
+version = {attr = "encrypted_ir.__version__"}
 
 [tool.black]
 line-length = 100
