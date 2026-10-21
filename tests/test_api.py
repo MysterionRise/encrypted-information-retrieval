@@ -1,15 +1,15 @@
-"""Comprehensive API tests for the encrypted IR REST API.
+"""API tests for the durable encrypted document routes.
 
 Tests cover:
 - Health check and metrics endpoints
-- Encryption/decryption endpoints
-- Equality, range, and keyword search endpoints
-- Authentication (JWT, API key, missing auth)
-- Authorization (RBAC role enforcement)
+- Authentication (dev JWT, dev API key, missing or malformed credentials)
+- Authorization (role enforcement)
+- Durable document ingest, search, get and RAG retrieval
+- Tenant isolation on every document route
 - Rate limiting
-- Error handling (validation, not found, server errors)
+- Error handling (validation, not found, forbidden)
 - Request ID tracing
-- Request size limits
+- OpenAPI surface, including the absence of the removed demo routes
 """
 
 from __future__ import annotations
@@ -19,89 +19,27 @@ import json
 
 import jwt
 import pytest
-from fastapi.testclient import TestClient
 
 from encrypted_ir import __version__
-from encrypted_ir.api.dependencies.auth import (
-    JWT_ALGORITHM,
-    JWT_SECRET,
-    Role,
-    TenantInfo,
-    clear_api_keys,
-    register_api_key,
-)
 from encrypted_ir.api.dependencies.rate_limiter import (
     RateLimitConfig,
     RateLimiter,
     set_rate_limiter,
 )
-from encrypted_ir.api.main import create_app
-from encrypted_ir.api.routes.admin import reset_metrics
-from encrypted_ir.api.routes.data import reset_ciphers
-from encrypted_ir.api.routes.keys import reset_key_managers
-from encrypted_ir.api.routes.search import reset_search_state
-from encrypted_ir.blind_index import BlindIndexConfig
 
-# --- Fixtures ---
-
-
-@pytest.fixture()
-def app():
-    """Create a fresh app instance for each test."""
-    reset_ciphers()
-    reset_search_state()
-    reset_key_managers()
-    reset_metrics()
-    clear_api_keys()
-    set_rate_limiter(RateLimiter())
-    return create_app()
+REMOVED_DEMO_PATHS = (
+    "/v1/encrypt",
+    "/v1/decrypt",
+    "/v1/search/equality",
+    "/v1/search/range",
+    "/v1/search/keyword",
+    "/v1/keys",
+    "/v1/keys/rotate",
+)
 
 
-@pytest.fixture()
-def client(app):
-    """Create test client."""
-    return TestClient(app, raise_server_exceptions=False)
-
-
-@pytest.fixture()
-def auth_headers():
-    """Register an API key and return auth headers for a write tenant."""
-    tenant = TenantInfo(
-        tenant_id="test-tenant-001",
-        roles=[Role.ADMIN, Role.WRITE, Role.READ],
-        subject="test-user",
-    )
-    register_api_key("test-api-key-write", tenant)
-    return {"X-API-Key": "test-api-key-write"}
-
-
-@pytest.fixture()
-def read_only_headers():
-    """Register a read-only API key."""
-    tenant = TenantInfo(
-        tenant_id="test-tenant-read",
-        roles=[Role.READ],
-        subject="read-user",
-    )
-    register_api_key("test-api-key-read", tenant)
-    return {"X-API-Key": "test-api-key-read"}
-
-
-@pytest.fixture()
-def admin_headers():
-    """Register an admin-only API key."""
-    tenant = TenantInfo(
-        tenant_id="test-tenant-admin",
-        roles=[Role.ADMIN],
-        subject="admin-user",
-    )
-    register_api_key("test-api-key-admin", tenant)
-    return {"X-API-Key": "test-api-key-admin"}
-
-
-def _make_jwt(payload: dict) -> str:
-    """Create a signed JWT for testing."""
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+def _bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _make_unsigned_jwt(payload: dict) -> str:
@@ -112,6 +50,18 @@ def _make_unsigned_jwt(payload: dict) -> str:
     body = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=")
     sig = base64.urlsafe_b64encode(b"test-sig").rstrip(b"=")
     return f"{header.decode()}.{body.decode()}.{sig.decode()}"
+
+
+def _ingest(client, headers, doc_id: str, content: str, **extra) -> None:
+    resp = client.post(
+        "/v1/documents",
+        json={"doc_id": doc_id, "content": content, **extra},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+
+SEARCH_BODY = {"query": "fraud"}
 
 
 # =============================================================================
@@ -151,7 +101,6 @@ class TestMetrics:
         client.get("/health")
         resp = client.get("/metrics")
         data = resp.json()
-        # At least the 2 health + 1 metrics request
         assert data["request_count"] >= 2
 
 
@@ -162,57 +111,55 @@ class TestMetrics:
 
 class TestAuth:
     def test_missing_auth_returns_401(self, client):
-        resp = client.post("/v1/encrypt", json={"plaintext": "hello"})
+        resp = client.post("/v1/documents/search", json=SEARCH_BODY)
         assert resp.status_code == 401
 
     def test_invalid_api_key_returns_401(self, client):
         resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "hello"},
-            headers={"X-API-Key": "bad-key"},
+            "/v1/documents/search", json=SEARCH_BODY, headers={"X-API-Key": "bad-key"}
         )
         assert resp.status_code == 401
 
-    def test_valid_api_key_succeeds(self, client, auth_headers):
+    def test_dev_api_key_succeeds(self, client, app):
         resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "hello"},
-            headers=auth_headers,
+            "/v1/documents/search",
+            json=SEARCH_BODY,
+            headers={"X-API-Key": app.state.auth_config.dev_api_key},
         )
         assert resp.status_code == 200
 
-    def test_jwt_auth_succeeds(self, client):
-        token = _make_jwt({"tenant_id": "jwt-tenant", "roles": ["write"], "sub": "user1"})
+    def test_jwt_auth_succeeds(self, client, make_token):
+        token = make_token("jwt-tenant", ["write"])
         resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "hello"},
-            headers={"Authorization": f"Bearer {token}"},
+            "/v1/documents",
+            json={"doc_id": "jwt-doc", "content": "written with a dev JWT"},
+            headers=_bearer(token),
         )
         assert resp.status_code == 200
+        assert resp.json()["tenant_id"] == "jwt-tenant"
 
-    def test_jwt_missing_tenant_id_returns_401(self, client):
-        token = _make_jwt({"sub": "user1", "roles": ["write"]})
-        resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "hello"},
-            headers={"Authorization": f"Bearer {token}"},
+    def test_jwt_missing_tenant_id_returns_401(self, client, make_token):
+        token = make_token(None, ["read"])
+        resp = client.post("/v1/documents/search", json=SEARCH_BODY, headers=_bearer(token))
+        assert resp.status_code == 401
+
+    def test_jwt_with_wrong_secret_returns_401(self, client):
+        token = jwt.encode(
+            {"tenant_id": "jwt-tenant", "roles": ["read"], "sub": "user1"},
+            "a-different-secret-that-is-long-enough",
+            algorithm="HS256",
         )
+        resp = client.post("/v1/documents/search", json=SEARCH_BODY, headers=_bearer(token))
         assert resp.status_code == 401
 
     def test_unsigned_jwt_returns_401(self, client):
         token = _make_unsigned_jwt({"tenant_id": "jwt-tenant", "roles": ["write"]})
-        resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "hello"},
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        resp = client.post("/v1/documents/search", json=SEARCH_BODY, headers=_bearer(token))
         assert resp.status_code == 401
 
     def test_malformed_jwt_returns_401(self, client):
         resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "hello"},
-            headers={"Authorization": "Bearer not.a.valid.jwt"},
+            "/v1/documents/search", json=SEARCH_BODY, headers=_bearer("not.a.valid.jwt")
         )
         assert resp.status_code == 401
 
@@ -223,352 +170,31 @@ class TestAuth:
 
 
 class TestAuthorization:
-    def test_read_only_cannot_encrypt(self, client, read_only_headers):
+    def test_read_only_cannot_ingest(self, client, read_only_headers):
         resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "hello"},
+            "/v1/documents",
+            json={"doc_id": "read-only-doc", "content": "cannot write"},
             headers=read_only_headers,
         )
         assert resp.status_code == 403
 
-    def test_read_only_can_search(self, client, read_only_headers):
-        resp = client.post(
-            "/v1/search/equality",
-            json={
-                "value": "test",
-                "field_name": "email",
-                "index_map": {},
-            },
+    def test_read_only_can_search_get_and_retrieve(self, client, auth_headers, read_only_headers):
+        _ingest(client, auth_headers, "shared-doc", "fraud review notes")
+
+        search = client.post("/v1/documents/search", json=SEARCH_BODY, headers=read_only_headers)
+        get_resp = client.get("/v1/documents/shared-doc", headers=read_only_headers)
+        rag = client.post(
+            "/v1/rag/retrieve",
+            json={"query": "fraud", "include_plaintext": True},
             headers=read_only_headers,
         )
-        assert resp.status_code == 200
 
-    def test_non_admin_cannot_rotate_key(self, client, read_only_headers):
-        resp = client.post(
-            "/v1/keys/rotate",
-            json={"key_id": "some-key"},
-            headers=read_only_headers,
-        )
-        assert resp.status_code == 403
-
-    def test_admin_can_rotate_key(self, client, admin_headers):
-        # First create a key by listing (which initializes the key manager)
-        # We need to create a key first
-        from encrypted_ir.api.routes.keys import _get_key_manager
-
-        km = _get_key_manager("test-tenant-admin")
-        key_id = km.create_key("deterministic")
-
-        resp = client.post(
-            "/v1/keys/rotate",
-            json={"key_id": key_id},
-            headers=admin_headers,
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["old_key_id"] == key_id
-        assert data["new_key_id"] != key_id
-
-
-# =============================================================================
-# Encryption / Decryption
-# =============================================================================
-
-
-class TestEncryptDecrypt:
-    def test_encrypt_aes_siv(self, client, auth_headers):
-        resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "sensitive data", "algorithm": "aes-siv"},
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["algorithm"] == "aes-siv"
-        assert len(data["ciphertext"]) > 0
-        assert "request_id" in data
-
-    def test_encrypt_aes_gcm(self, client, auth_headers):
-        resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "sensitive data", "algorithm": "aes-gcm"},
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["algorithm"] == "aes-gcm"
-
-    def test_encrypt_default_algorithm(self, client, auth_headers):
-        resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "hello"},
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["algorithm"] == "aes-siv"
-
-    def test_encrypt_invalid_algorithm(self, client, auth_headers):
-        resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "hello", "algorithm": "rot13"},
-            headers=auth_headers,
-        )
-        assert resp.status_code == 422
-
-    def test_decrypt_aes_siv_roundtrip(self, client, auth_headers):
-        # Encrypt
-        enc_resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "roundtrip test", "algorithm": "aes-siv"},
-            headers=auth_headers,
-        )
-        assert enc_resp.status_code == 200
-        ciphertext = enc_resp.json()["ciphertext"]
-
-        # Decrypt
-        dec_resp = client.post(
-            "/v1/decrypt",
-            json={"ciphertext": ciphertext, "algorithm": "aes-siv"},
-            headers=auth_headers,
-        )
-        assert dec_resp.status_code == 200
-        assert dec_resp.json()["plaintext"] == "roundtrip test"
-
-    def test_decrypt_aes_gcm_roundtrip(self, client, auth_headers):
-        enc_resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "gcm roundtrip", "algorithm": "aes-gcm"},
-            headers=auth_headers,
-        )
-        ciphertext = enc_resp.json()["ciphertext"]
-
-        dec_resp = client.post(
-            "/v1/decrypt",
-            json={"ciphertext": ciphertext, "algorithm": "aes-gcm"},
-            headers=auth_headers,
-        )
-        assert dec_resp.status_code == 200
-        assert dec_resp.json()["plaintext"] == "gcm roundtrip"
-
-    def test_encrypt_empty_plaintext_rejected(self, client, auth_headers):
-        resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": ""},
-            headers=auth_headers,
-        )
-        assert resp.status_code == 422
-
-    def test_decrypt_invalid_ciphertext(self, client, auth_headers):
-        resp = client.post(
-            "/v1/decrypt",
-            json={"ciphertext": base64.b64encode(b"not-valid").decode(), "algorithm": "aes-siv"},
-            headers=auth_headers,
-        )
-        # Should get a 400 or 500 error from decryption failure
-        assert resp.status_code in (400, 500)
-
-
-# =============================================================================
-# Equality Search
-# =============================================================================
-
-
-class TestEqualitySearch:
-    def test_equality_search_match(self, client, auth_headers):
-        # Build an index map using the same generator the API will use
-        from encrypted_ir.api.routes.search import _get_blind_index
-
-        generator = _get_blind_index("test-tenant-001")
-        config = BlindIndexConfig(field_name="email", output_length=16, case_sensitive=False)
-        idx = generator.create_index("alice@example.com", config)
-
-        resp = client.post(
-            "/v1/search/equality",
-            json={
-                "value": "alice@example.com",
-                "field_name": "email",
-                "index_map": {idx: "record-1"},
-                "output_length": 16,
-                "case_sensitive": False,
-            },
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["count"] == 1
-        assert data["matches"] == ["record-1"]
-
-    def test_equality_search_no_match(self, client, auth_headers):
-        resp = client.post(
-            "/v1/search/equality",
-            json={
-                "value": "unknown@example.com",
-                "field_name": "email",
-                "index_map": {"fake-index": "record-1"},
-            },
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["count"] == 0
-
-    def test_equality_search_case_insensitive(self, client, auth_headers):
-        from encrypted_ir.api.routes.search import _get_blind_index
-
-        generator = _get_blind_index("test-tenant-001")
-        config = BlindIndexConfig(field_name="email", output_length=16, case_sensitive=False)
-        idx = generator.create_index("Alice@Example.COM", config)
-
-        resp = client.post(
-            "/v1/search/equality",
-            json={
-                "value": "alice@example.com",
-                "field_name": "email",
-                "index_map": {idx: "record-1"},
-            },
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["count"] == 1
-
-
-# =============================================================================
-# Range Search
-# =============================================================================
-
-
-class TestRangeSearch:
-    def test_range_search_finds_values_in_range(self, client, auth_headers):
-        from encrypted_ir.api.routes.search import _get_ore
-
-        ore = _get_ore("test-tenant-001")
-        values = [100, 200, 300, 400, 500]
-        encrypted = [base64.b64encode(ore.encrypt_int(v)).decode() for v in values]
-
-        resp = client.post(
-            "/v1/search/range",
-            json={
-                "encrypted_values": encrypted,
-                "min_value": 200,
-                "max_value": 400,
-            },
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["count"] == 3  # 200, 300, 400
-
-    def test_range_search_no_min(self, client, auth_headers):
-        from encrypted_ir.api.routes.search import _get_ore
-
-        ore = _get_ore("test-tenant-001")
-        encrypted = [base64.b64encode(ore.encrypt_int(v)).decode() for v in [10, 20, 30]]
-
-        resp = client.post(
-            "/v1/search/range",
-            json={
-                "encrypted_values": encrypted,
-                "max_value": 20,
-            },
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["count"] == 2  # 10, 20
-
-    def test_range_search_no_max(self, client, auth_headers):
-        from encrypted_ir.api.routes.search import _get_ore
-
-        ore = _get_ore("test-tenant-001")
-        encrypted = [base64.b64encode(ore.encrypt_int(v)).decode() for v in [10, 20, 30]]
-
-        resp = client.post(
-            "/v1/search/range",
-            json={
-                "encrypted_values": encrypted,
-                "min_value": 20,
-            },
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["count"] == 2  # 20, 30
-
-    def test_range_search_empty_result(self, client, auth_headers):
-        from encrypted_ir.api.routes.search import _get_ore
-
-        ore = _get_ore("test-tenant-001")
-        encrypted = [base64.b64encode(ore.encrypt_int(v)).decode() for v in [100, 200]]
-
-        resp = client.post(
-            "/v1/search/range",
-            json={
-                "encrypted_values": encrypted,
-                "min_value": 500,
-                "max_value": 600,
-            },
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["count"] == 0
-
-
-# =============================================================================
-# Keyword Search
-# =============================================================================
-
-
-class TestKeywordSearch:
-    def test_keyword_search_finds_matching_doc(self, client, auth_headers):
-        from encrypted_ir.api.routes.search import _get_sse
-
-        sse = _get_sse("test-tenant-001")
-        _, tokens = sse.encrypt_document("quarterly fraud report analysis")
-        token_list = list(tokens)
-
-        resp = client.post(
-            "/v1/search/keyword",
-            json={
-                "keyword": "fraud",
-                "document_tokens": {"doc-1": token_list},
-            },
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["count"] == 1
-        assert data["matches"] == ["doc-1"]
-
-    def test_keyword_search_no_match(self, client, auth_headers):
-        resp = client.post(
-            "/v1/search/keyword",
-            json={
-                "keyword": "nonexistent",
-                "document_tokens": {"doc-1": ["token1", "token2"]},
-            },
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["count"] == 0
-
-    def test_keyword_search_multiple_docs(self, client, auth_headers):
-        from encrypted_ir.api.routes.search import _get_sse
-
-        sse = _get_sse("test-tenant-001")
-        _, tokens1 = sse.encrypt_document("risk assessment quarterly report")
-        _, tokens2 = sse.encrypt_document("annual compliance report")
-
-        resp = client.post(
-            "/v1/search/keyword",
-            json={
-                "keyword": "report",
-                "document_tokens": {
-                    "doc-1": list(tokens1),
-                    "doc-2": list(tokens2),
-                },
-            },
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["count"] == 2
+        assert search.status_code == 200
+        assert search.json()["count"] == 1
+        assert get_resp.status_code == 200
+        assert get_resp.json()["plaintext"] == "fraud review notes"
+        assert rag.status_code == 200
+        assert rag.json()["candidates"][0]["doc_id"] == "shared-doc"
 
 
 # =============================================================================
@@ -611,14 +237,12 @@ class TestDurableDocuments:
         )
 
     def test_rag_retrieve_can_include_plaintext(self, client, auth_headers):
-        client.post(
-            "/v1/documents",
-            json={
-                "doc_id": "aml-note-1",
-                "content": "AML investigation notes mention suspicious transfer patterns",
-                "metadata": {"case": "aml"},
-            },
-            headers=auth_headers,
+        _ingest(
+            client,
+            auth_headers,
+            "aml-note-1",
+            "AML investigation notes mention suspicious transfer patterns",
+            metadata={"case": "aml"},
         )
 
         resp = client.post(
@@ -641,91 +265,41 @@ class TestDurableDocuments:
         assert first.status_code == 200
         assert second.status_code == 400
 
-    def test_document_tenant_isolation(self, client, auth_headers):
-        tenant_b = TenantInfo(
-            tenant_id="tenant-b",
-            roles=[Role.ADMIN, Role.WRITE, Role.READ],
-            subject="tenant-b-user",
-        )
-        register_api_key("tenant-b-key", tenant_b)
-        tenant_b_headers = {"X-API-Key": "tenant-b-key"}
 
-        client.post(
-            "/v1/documents",
-            json={"doc_id": "tenant-a-doc", "content": "private fraud investigation"},
-            headers=auth_headers,
-        )
+class TestTenantIsolation:
+    """Another tenant must not see, fetch or retrieve tenant A's documents."""
 
-        search_b = client.post(
-            "/v1/documents/search",
-            json={"query": "fraud"},
+    @pytest.fixture()
+    def tenant_b_headers(self, make_token):
+        return _bearer(make_token("tenant-b", ["admin", "write", "read"]))
+
+    @pytest.fixture(autouse=True)
+    def _tenant_a_document(self, client, auth_headers):
+        _ingest(client, auth_headers, "tenant-a-doc", "private fraud investigation")
+
+    def test_search_does_not_return_other_tenant_documents(self, client, tenant_b_headers):
+        resp = client.post("/v1/documents/search", json=SEARCH_BODY, headers=tenant_b_headers)
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 0
+
+    def test_get_returns_404_for_other_tenant_document(self, client, tenant_b_headers):
+        resp = client.get("/v1/documents/tenant-a-doc", headers=tenant_b_headers)
+        assert resp.status_code == 404
+
+    def test_rag_does_not_return_other_tenant_documents(self, client, tenant_b_headers):
+        resp = client.post(
+            "/v1/rag/retrieve",
+            json={"query": "fraud", "include_plaintext": True},
             headers=tenant_b_headers,
         )
-        get_b = client.get("/v1/documents/tenant-a-doc", headers=tenant_b_headers)
-
-        assert search_b.status_code == 200
-        assert search_b.json()["count"] == 0
-        assert get_b.status_code == 404
-
-    def test_document_ingest_requires_write_role(self, client, read_only_headers):
-        resp = client.post(
-            "/v1/documents",
-            json={"doc_id": "read-only-doc", "content": "cannot write"},
-            headers=read_only_headers,
-        )
-
-        assert resp.status_code == 403
-
-
-# =============================================================================
-# Key Management
-# =============================================================================
-
-
-class TestKeyManagement:
-    def test_list_keys_empty(self, client, auth_headers):
-        resp = client.get("/v1/keys", headers=auth_headers)
         assert resp.status_code == 200
-        data = resp.json()
-        assert data["count"] == 0
-        assert data["keys"] == []
+        assert resp.json()["count"] == 0
 
-    def test_list_keys_after_create(self, client, auth_headers):
-        from encrypted_ir.api.routes.keys import _get_key_manager
-
-        km = _get_key_manager("test-tenant-001")
-        km.create_key("deterministic", description="test key")
-
-        resp = client.get("/v1/keys", headers=auth_headers)
+    def test_same_doc_id_is_independent_per_tenant(self, client, tenant_b_headers):
+        _ingest(client, tenant_b_headers, "tenant-a-doc", "tenant b owns this copy")
+        resp = client.get("/v1/documents/tenant-a-doc", headers=tenant_b_headers)
         assert resp.status_code == 200
-        data = resp.json()
-        assert data["count"] == 1
-        assert data["keys"][0]["key_type"] == "deterministic"
-        assert data["keys"][0]["active"] is True
-
-    def test_rotate_key_success(self, client, auth_headers):
-        from encrypted_ir.api.routes.keys import _get_key_manager
-
-        km = _get_key_manager("test-tenant-001")
-        key_id = km.create_key("searchable")
-
-        resp = client.post(
-            "/v1/keys/rotate",
-            json={"key_id": key_id},
-            headers=auth_headers,
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["old_key_id"] == key_id
-        assert data["new_key_id"] != key_id
-
-    def test_rotate_nonexistent_key(self, client, auth_headers):
-        resp = client.post(
-            "/v1/keys/rotate",
-            json={"key_id": "nonexistent-key"},
-            headers=auth_headers,
-        )
-        assert resp.status_code == 404
+        assert resp.json()["plaintext"] == "tenant b owns this copy"
 
 
 # =============================================================================
@@ -735,67 +309,36 @@ class TestKeyManagement:
 
 class TestRateLimiting:
     def test_rate_limit_exceeded(self, client, auth_headers):
-        # Set a very low rate limit
-        limiter = RateLimiter(
-            limits={"encrypt": RateLimitConfig(max_requests=2, window_seconds=60)}
-        )
-        set_rate_limiter(limiter)
-
-        # First two should succeed
-        for _ in range(2):
-            resp = client.post(
-                "/v1/encrypt",
-                json={"plaintext": "test"},
-                headers=auth_headers,
+        set_rate_limiter(
+            RateLimiter(
+                limits={"document_search": RateLimitConfig(max_requests=2, window_seconds=60)}
             )
+        )
+
+        for _ in range(2):
+            resp = client.post("/v1/documents/search", json=SEARCH_BODY, headers=auth_headers)
             assert resp.status_code == 200
 
-        # Third should be rate limited
-        resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "test"},
-            headers=auth_headers,
-        )
+        resp = client.post("/v1/documents/search", json=SEARCH_BODY, headers=auth_headers)
         assert resp.status_code == 429
         assert "Retry-After" in resp.headers
 
-    def test_rate_limit_different_tenants_independent(self, client):
-        limiter = RateLimiter(
-            limits={"encrypt": RateLimitConfig(max_requests=1, window_seconds=60)}
+    def test_rate_limit_different_tenants_independent(self, client, make_token):
+        set_rate_limiter(
+            RateLimiter(
+                limits={"document_search": RateLimitConfig(max_requests=1, window_seconds=60)}
+            )
         )
-        set_rate_limiter(limiter)
+        tenant_1 = _bearer(make_token("tenant-1", ["read"]))
+        tenant_2 = _bearer(make_token("tenant-2", ["read"]))
 
-        # Tenant 1
-        t1 = TenantInfo(tenant_id="tenant-1", roles=[Role.WRITE])
-        register_api_key("key-t1", t1)
+        first_1 = client.post("/v1/documents/search", json=SEARCH_BODY, headers=tenant_1)
+        first_2 = client.post("/v1/documents/search", json=SEARCH_BODY, headers=tenant_2)
+        second_1 = client.post("/v1/documents/search", json=SEARCH_BODY, headers=tenant_1)
 
-        # Tenant 2
-        t2 = TenantInfo(tenant_id="tenant-2", roles=[Role.WRITE])
-        register_api_key("key-t2", t2)
-
-        # Tenant 1 first request
-        resp1 = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "test"},
-            headers={"X-API-Key": "key-t1"},
-        )
-        assert resp1.status_code == 200
-
-        # Tenant 2 first request (should succeed - different tenant)
-        resp2 = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "test"},
-            headers={"X-API-Key": "key-t2"},
-        )
-        assert resp2.status_code == 200
-
-        # Tenant 1 second request (should be rate limited)
-        resp3 = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "test"},
-            headers={"X-API-Key": "key-t1"},
-        )
-        assert resp3.status_code == 429
+        assert first_1.status_code == 200
+        assert first_2.status_code == 200
+        assert second_1.status_code == 429
 
 
 # =============================================================================
@@ -806,8 +349,8 @@ class TestRateLimiting:
 class TestErrorHandling:
     def test_validation_error_format(self, client, auth_headers):
         resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "", "algorithm": "aes-siv"},  # empty plaintext
+            "/v1/documents",
+            json={"doc_id": "empty-doc", "content": ""},
             headers=auth_headers,
         )
         assert resp.status_code == 422
@@ -817,39 +360,29 @@ class TestErrorHandling:
 
     def test_invalid_json_body(self, client, auth_headers):
         resp = client.post(
-            "/v1/encrypt",
+            "/v1/documents",
             content=b"not-json",
             headers={**auth_headers, "Content-Type": "application/json"},
         )
         assert resp.status_code == 422
 
     def test_missing_required_field(self, client, auth_headers):
-        resp = client.post(
-            "/v1/encrypt",
-            json={},
-            headers=auth_headers,
-        )
+        resp = client.post("/v1/documents", json={}, headers=auth_headers)
         assert resp.status_code == 422
 
     def test_not_found_error_format(self, client, auth_headers):
-        resp = client.post(
-            "/v1/keys/rotate",
-            json={"key_id": "does-not-exist"},
-            headers=auth_headers,
-        )
+        resp = client.get("/v1/documents/does-not-exist", headers=auth_headers)
         assert resp.status_code == 404
-        data = resp.json()
-        assert data["error"] == "not_found"
+        assert resp.json()["error"] == "not_found"
 
     def test_403_error_has_detail(self, client, read_only_headers):
         resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "test"},
+            "/v1/documents",
+            json={"doc_id": "forbidden", "content": "test"},
             headers=read_only_headers,
         )
         assert resp.status_code == 403
-        data = resp.json()
-        assert "detail" in data
+        assert "detail" in resp.json()
 
 
 # =============================================================================
@@ -859,18 +392,14 @@ class TestErrorHandling:
 
 class TestRequestTracing:
     def test_response_includes_request_id(self, client, auth_headers):
-        resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "test"},
-            headers=auth_headers,
-        )
+        resp = client.post("/v1/documents/search", json=SEARCH_BODY, headers=auth_headers)
         assert "x-request-id" in resp.headers
 
     def test_custom_request_id_preserved(self, client, auth_headers):
         custom_id = "trace-abc-123"
         resp = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "test"},
+            "/v1/documents/search",
+            json=SEARCH_BODY,
             headers={**auth_headers, "X-Request-ID": custom_id},
         )
         assert resp.headers["x-request-id"] == custom_id
@@ -881,60 +410,6 @@ class TestRequestTracing:
         assert "x-response-time-ms" in resp.headers
         latency = float(resp.headers["x-response-time-ms"])
         assert latency >= 0
-
-
-# =============================================================================
-# Tenant Isolation
-# =============================================================================
-
-
-class TestTenantIsolation:
-    def test_different_tenants_different_ciphers(self, client):
-        t1 = TenantInfo(tenant_id="iso-tenant-1", roles=[Role.WRITE])
-        register_api_key("iso-key-1", t1)
-
-        t2 = TenantInfo(tenant_id="iso-tenant-2", roles=[Role.WRITE])
-        register_api_key("iso-key-2", t2)
-
-        # Encrypt with tenant 1
-        enc1 = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "same-data"},
-            headers={"X-API-Key": "iso-key-1"},
-        )
-        # Encrypt with tenant 2
-        enc2 = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "same-data"},
-            headers={"X-API-Key": "iso-key-2"},
-        )
-
-        # Different tenants should produce different ciphertexts (different keys)
-        assert enc1.json()["ciphertext"] != enc2.json()["ciphertext"]
-
-    def test_tenant_cannot_decrypt_other_tenant_data(self, client):
-        t1 = TenantInfo(tenant_id="cross-tenant-1", roles=[Role.WRITE, Role.READ])
-        register_api_key("cross-key-1", t1)
-
-        t2 = TenantInfo(tenant_id="cross-tenant-2", roles=[Role.WRITE, Role.READ])
-        register_api_key("cross-key-2", t2)
-
-        # Encrypt with tenant 1
-        enc = client.post(
-            "/v1/encrypt",
-            json={"plaintext": "secret"},
-            headers={"X-API-Key": "cross-key-1"},
-        )
-        ct = enc.json()["ciphertext"]
-
-        # Try to decrypt with tenant 2
-        dec = client.post(
-            "/v1/decrypt",
-            json={"ciphertext": ct, "algorithm": "aes-siv"},
-            headers={"X-API-Key": "cross-key-2"},
-        )
-        # Should fail (different key)
-        assert dec.status_code in (400, 500)
 
 
 # =============================================================================
@@ -954,19 +429,19 @@ class TestOpenAPI:
         resp = client.get("/docs")
         assert resp.status_code == 200
 
-    def test_openapi_has_all_endpoints(self, client):
-        resp = client.get("/openapi.json")
-        paths = resp.json()["paths"]
-        expected_paths = [
-            "/v1/encrypt",
-            "/v1/decrypt",
-            "/v1/search/equality",
-            "/v1/search/range",
-            "/v1/search/keyword",
-            "/v1/keys/rotate",
-            "/v1/keys",
+    def test_openapi_lists_exactly_the_durable_routes(self, client):
+        paths = client.get("/openapi.json").json()["paths"]
+        assert set(paths) == {
+            "/v1/documents",
+            "/v1/documents/search",
+            "/v1/documents/{doc_id}",
+            "/v1/rag/retrieve",
             "/health",
+            "/ready",
             "/metrics",
-        ]
-        for path in expected_paths:
-            assert path in paths, f"Missing path: {path}"
+        }
+
+    @pytest.mark.parametrize("path", REMOVED_DEMO_PATHS)
+    def test_removed_demo_routes_return_404(self, client, auth_headers, path):
+        assert client.post(path, json={}, headers=auth_headers).status_code == 404
+        assert client.get(path, headers=auth_headers).status_code == 404

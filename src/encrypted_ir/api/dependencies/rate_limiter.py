@@ -19,17 +19,10 @@ class RateLimitConfig:
 
 # Default rate limits per operation type
 DEFAULT_LIMITS: dict[str, RateLimitConfig] = {
-    "equality_search": RateLimitConfig(max_requests=100, window_seconds=60),
-    "range_search": RateLimitConfig(max_requests=10, window_seconds=60),
-    "keyword_search": RateLimitConfig(max_requests=100, window_seconds=60),
-    "encrypt": RateLimitConfig(max_requests=100, window_seconds=60),
-    "decrypt": RateLimitConfig(max_requests=100, window_seconds=60),
     "document_ingest": RateLimitConfig(max_requests=60, window_seconds=60),
     "document_search": RateLimitConfig(max_requests=120, window_seconds=60),
     "document_get": RateLimitConfig(max_requests=120, window_seconds=60),
     "rag_retrieve": RateLimitConfig(max_requests=120, window_seconds=60),
-    "read": RateLimitConfig(max_requests=1000, window_seconds=60),
-    "key_rotate": RateLimitConfig(max_requests=5, window_seconds=60),
 }
 
 

@@ -17,7 +17,7 @@ from encrypted_ir.master_key import resolve_master_key
 from encrypted_ir.settings import EncryptedIRSettings
 
 from .dependencies.auth import AuthConfig, OIDCVerifier
-from .routes import admin, data, documents, keys, search
+from .routes import admin, documents
 
 
 def create_app(settings: EncryptedIRSettings | None = None) -> FastAPI:  # noqa: C901
@@ -27,10 +27,10 @@ def create_app(settings: EncryptedIRSettings | None = None) -> FastAPI:  # noqa:
     app = FastAPI(
         title="Encrypted Information Retrieval API",
         description=(
-            "Production-oriented prototype API for encrypted search and RAG-ready "
-            "retrieval workflows. Supports blind-index equality search, prototype "
-            "ORE range queries, keyword-token document search, and AES-SIV/AES-GCM "
-            "encryption with demo auth and tenant isolation."
+            "Prototype API for tenant-scoped encrypted document storage, keyword-token "
+            "search and RAG-ready retrieval. Documents are AES-GCM encrypted under "
+            "per-tenant keys; search matches HMAC keyword tokens. See "
+            "docs/LEAKAGE_AND_ENDPOINTS.md for what each route reveals."
         ),
         version=__version__,
         docs_url="/docs",
@@ -162,10 +162,7 @@ def create_app(settings: EncryptedIRSettings | None = None) -> FastAPI:  # noqa:
         )
 
     # Register routers
-    app.include_router(data.router)
-    app.include_router(search.router)
     app.include_router(documents.router)
-    app.include_router(keys.router)
     app.include_router(admin.router)
 
     return app

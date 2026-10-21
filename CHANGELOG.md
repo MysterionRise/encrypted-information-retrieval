@@ -11,6 +11,17 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ## [Unreleased]
 
+### Removed
+
+- The demo API routes `POST /v1/encrypt`, `POST /v1/decrypt`, `POST /v1/search/equality`,
+  `POST /v1/search/range`, `POST /v1/search/keyword`, `GET /v1/keys` and `POST /v1/keys/rotate`
+  (#36). They held random per-process keys in module globals, so their data did not survive a
+  restart, differed between workers and shared nothing with the stored documents. The API now
+  serves only the durable document routes plus `/health`, `/ready` and `/metrics`.
+  Library-level blind-index and ORE demos remain in `examples/portfolio_demo.py`.
+- The in-memory API-key registry (`register_api_key`, `clear_api_keys`), which only tests used,
+  and the request and response models of the removed routes.
+
 ### Changed
 
 - The package version is now `0.9.0` with the classifier `Development Status :: 3 - Alpha`,
