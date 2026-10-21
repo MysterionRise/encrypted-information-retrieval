@@ -52,7 +52,8 @@ For the API and PostgreSQL workflow:
 docker compose up --build
 ```
 
-Open the API docs at:
+Open the API docs at the URL below. Compose sets `ENCRYPTED_IR_ENABLE_DOCS=true`; without it,
+`/docs`, `/redoc` and `/openapi.json` return 404.
 
 ```text
 http://localhost:8000/docs
@@ -76,7 +77,41 @@ curl -X POST http://localhost:8000/v1/rag/retrieve \
   -d '{"query":"fraud risk","top_k":3,"include_plaintext":true}'
 ```
 
-The Compose stack enables `local-demo-key` through explicit dev-only auth. Disable `ENCRYPTED_IR_DEV_AUTH_ENABLED` and configure OIDC/JWKS before treating the API as anything beyond a local demo.
+The Compose stack enables `local-demo-key` through explicit dev-only auth. Dev auth is off by default, is refused unless `ENCRYPTED_IR_ENV=dev`, and needs `ENCRYPTED_IR_JWT_SECRET` of at least 32 bytes. Configure OIDC/JWKS before treating the API as anything beyond a local demo.
+
+To run the API without Docker, against a local SQLite file:
+
+```bash
+export ENCRYPTED_IR_ENV=dev
+export ENCRYPTED_IR_DEV_AUTH_ENABLED=true
+export ENCRYPTED_IR_JWT_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export ENCRYPTED_IR_DEV_API_KEY=local-demo-key
+export ENCRYPTED_IR_ENABLE_DOCS=true
+export DATABASE_URL=sqlite+pysqlite:///./encrypted_ir_dev.db
+uvicorn encrypted_ir.api.main:create_app --factory
+```
+
+Without `ENCRYPTED_IR_MASTER_KEY_B64` the app generates a random master key at startup, so documents
+from one run cannot be read in the next.
+
+Auth and HTTP settings (all optional except where noted):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ENCRYPTED_IR_DEV_AUTH_ENABLED` | `false` | Dev API key and HS256 dev tokens. Only allowed with `ENCRYPTED_IR_ENV=dev`. |
+| `ENCRYPTED_IR_JWT_SECRET` | none | HS256 secret for dev tokens; required, at least 32 bytes, when dev auth is on. |
+| `ENCRYPTED_IR_DEV_API_KEY` | none | Value accepted in `X-API-Key`. The API-key path is off when unset. |
+| `ENCRYPTED_IR_DEV_TENANT_ID` | `local-demo` | Tenant for the dev API key. |
+| `ENCRYPTED_IR_OIDC_ISSUER`, `_AUDIENCE`, `_JWKS_URL` | none | OIDC verification; all three are required in `prod`. |
+| `ENCRYPTED_IR_OIDC_ALGORITHMS` | `RS256` | Comma-separated subset of `RS256`, `PS256`, `ES256`. |
+| `ENCRYPTED_IR_JWT_LEEWAY_SECONDS` | `30` | Clock skew allowed for `exp` and `iat` (0 to 300). |
+| `ENCRYPTED_IR_JWKS_TIMEOUT_SECONDS` | `5` | Timeout for fetching the JWKS. |
+| `ENCRYPTED_IR_ENABLE_DOCS` | `false` | Serve `/docs`, `/redoc` and `/openapi.json`. |
+| `ENCRYPTED_IR_MAX_BODY_BYTES` | `10485760` | Largest accepted request body. |
+| `ENCRYPTED_IR_CORS_ORIGINS` | localhost origins | Comma-separated origins. `*` is refused in `prod` and never sent with credentials. |
+
+Every token must carry `exp`, `iat`, a tenant claim matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`
+and a non-empty roles claim; OIDC tokens also need `aud` and `iss`.
 
 See [docs/CTO_DEMO_SCRIPT.md](docs/CTO_DEMO_SCRIPT.md) for the full review flow, including the persistence check.
 
