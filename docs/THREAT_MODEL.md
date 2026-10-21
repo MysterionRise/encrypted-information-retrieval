@@ -33,11 +33,11 @@ This is the code behind `POST /v1/documents`, `POST /v1/documents/search`,
 
 | Data | Protection | Code |
 | --- | --- | --- |
-| Document content | AES-256-GCM with a random 96-bit nonce under a per-tenant key. No associated data binds the ciphertext to its tenant or document ([#40]). | `SearchableEncryption.encrypt_document` in `src/encrypted_ir/searchable.py` |
-| Keyword index | `HMAC-SHA256(per-tenant search key, lowercased keyword)`, one row per keyword per document. Deterministic. | `SearchableEncryption`, `DocumentService` |
-| Document metadata | Stored as plaintext JSON ([#40]). | `encrypted_ir_documents.metadata_json` |
-| Tenant keys | AES-GCM wrapped under the app master key, with no associated data ([#40]). | `src/encrypted_ir/key_manager.py` |
-| App master key | Environment variable, or AWS KMS `Decrypt` at startup. The KMS path is tested with mocks only; live validation is [#49]. | `src/encrypted_ir/master_key.py`, `src/encrypted_ir/kms_provider.py` |
+| Document content | AES-256-GCM with a random 96-bit nonce under a per-tenant key, in a versioned header that names the key. The associated data binds it to the tenant, the document ID and its purpose, so a swapped or edited ciphertext fails to decrypt ([#40], ADR-007). Rows written before that format stay readable without the binding. | `src/encrypted_ir/document_crypto.py`, `DocumentService` |
+| Keyword index | `HMAC-SHA256(per-tenant search key, lowercased keyword)`, one row per keyword per document. Deterministic. | `search_token` in `src/encrypted_ir/searchable.py`, `DocumentService` |
+| Document metadata | Sealed like the content, with its own purpose label so content and metadata cannot be swapped ([#40]). Legacy rows keep plaintext `metadata_json`. | `encrypted_ir_documents.encrypted_metadata` |
+| Tenant keys | AES-GCM wrapped under the app master key, bound by associated data to the tenant, key ID, key type and version, so a wrapped key copied to another tenant or relabelled does not unwrap ([#40]). | `src/encrypted_ir/key_manager.py` |
+| App master key | Environment variable, or AWS KMS `Decrypt` at startup with an encryption context (application, environment, purpose) and a pinned key ID. The KMS path is tested with mocks only; live validation is [#49]. | `src/encrypted_ir/master_key.py`, `src/encrypted_ir/kms_provider.py` |
 | Authentication | Production mode requires OIDC with RS256 tokens verified against a JWKS. Outside production, a dev API key and dev HS256 JWTs with a public default secret are enabled by default ([#41]). | `src/encrypted_ir/api/dependencies/auth.py`, `src/encrypted_ir/settings.py` |
 | Audit | Database rows. Plaintext, queries, tokens and key material are dropped before writing. The rows are not tamper-evident and cannot be exported ([#44]). | `DocumentService.record_audit_event` |
 | Rate limiting | In-memory and per process, so it is not shared across workers or replicas ([#47]). | `src/encrypted_ir/api/dependencies/rate_limiter.py` |
@@ -48,8 +48,9 @@ Leakage to A1, the database reader:
 
 - **Keyword equality and frequency within a tenant.** The same keyword produces the same token in
   every document of a tenant, so token counts mirror keyword frequencies.
-- **Document length**, approximately, from ciphertext length.
-- **Metadata**, in full, because it is plaintext.
+- **Document and metadata length**, approximately, from ciphertext length.
+- **Which key encrypted each document**, from the key ID in the row and in the ciphertext header.
+- **Metadata of legacy rows**, written before [#40], which stays plaintext until re-encrypted.
 
 Leakage to anyone who observes queries (A1 with query logs, or a host operator):
 
@@ -85,7 +86,6 @@ without the key.
 
 | Risk | Effect | Tracking |
 | --- | --- | --- |
-| Ciphertexts and wrapped keys are not bound to their context | A database writer can swap ciphertexts between rows or tenants without detection. | [#40] |
 | Concurrent first ingest in two processes | Two processes ingesting for a new tenant at the same moment can each create a key. Both keys stay valid and every process converges on the newest one, so this costs an extra key, not correctness. | [#39] (documented) |
 | Rotation does not re-encrypt documents | Retiring a compromised key leaves its documents under that key. | [#42] |
 | JWT `exp` not required; exception text in error bodies | Tokens without an expiry never expire. Internals leak in 401 responses and `/ready`. | [#41] |

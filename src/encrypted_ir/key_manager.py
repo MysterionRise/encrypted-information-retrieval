@@ -23,13 +23,30 @@ from collections import deque
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
+from .errors import KeyIntegrityError
+
 if TYPE_CHECKING:
     from .kms_provider import KMSProvider
     from .storage_backend import StorageBackend
+
+# Wrapped-key format 1: AES-256-GCM under the master key with associated data binding the key
+# to its tenant, ID, type and version. Rows without "wrap_format" in their metadata predate it
+# and were wrapped with no associated data.
+WRAP_FORMAT = 1
+_WRAP_AAD_LABEL = b"encrypted-ir/tenant-key/v1"
+
+
+def _length_prefixed(*parts: str | bytes) -> bytes:
+    encoded = bytearray()
+    for part in parts:
+        data = part.encode("utf-8") if isinstance(part, str) else part
+        encoded += len(data).to_bytes(4, "big") + data
+    return bytes(encoded)
 
 
 class KeyLifecycleState:
@@ -162,6 +179,7 @@ class KeyManager:
         master_key: bytes = None,
         storage_backend: StorageBackend = None,
         audit_reads: bool = False,
+        tenant_id: str | None = None,
     ):
         """
         Initialize key manager.
@@ -176,6 +194,9 @@ class KeyManager:
                        ``access_count`` and writes an audit entry. Off by default, so
                        read paths (search, decrypt) do not write to the backend.
                        ``access_count`` is always tracked in memory.
+            tenant_id: Tenant the keys belong to. Wrapped keys are bound to it through
+                       AES-GCM associated data. Defaults to the backend's ``tenant_id``
+                       (or "" when there is none) and must match it if both are given.
 
         The manager is safe to share between threads. With a storage backend, keys
         written by another process are picked up by :meth:`refresh` or loaded on demand
@@ -186,7 +207,16 @@ class KeyManager:
         elif len(master_key) != 32:
             raise ValueError("Master key must be 32 bytes (256 bits)")
 
+        backend_tenant = getattr(storage_backend, "tenant_id", None)
+        if not isinstance(backend_tenant, str):
+            backend_tenant = None
+        if tenant_id is None:
+            tenant_id = backend_tenant or ""
+        elif backend_tenant is not None and backend_tenant != tenant_id:
+            raise ValueError("tenant_id does not match the storage backend's tenant")
+
         self.master_key = master_key
+        self.tenant_id = tenant_id
         self._storage_backend = storage_backend
         self._kms_provider: KMSProvider | None = None
         self._encrypted_master_key: bytes | None = None
@@ -206,6 +236,7 @@ class KeyManager:
         kms_provider: KMSProvider,
         storage_backend: StorageBackend = None,
         encrypted_master_key: bytes = None,
+        tenant_id: str | None = None,
     ) -> KeyManager:
         """Create a KeyManager with KMS-protected master key.
 
@@ -217,6 +248,7 @@ class KeyManager:
             storage_backend: Optional persistent storage backend.
             encrypted_master_key: Previously KMS-encrypted master key
                 for recovery. If None, generates a new master key via KMS.
+            tenant_id: Tenant the keys belong to (see ``__init__``).
 
         Returns:
             KeyManager instance with KMS-protected master key.
@@ -227,7 +259,7 @@ class KeyManager:
         else:
             master_key, enc_mk = kms_provider.generate_data_key("AES_256")
 
-        instance = cls(master_key=master_key, storage_backend=storage_backend)
+        instance = cls(master_key=master_key, storage_backend=storage_backend, tenant_id=tenant_id)
         instance._kms_provider = kms_provider
         instance._encrypted_master_key = enc_mk
         return instance
@@ -277,19 +309,37 @@ class KeyManager:
         master_key = kdf.derive(password.encode())
         return master_key, salt
 
-    def _encrypt_key(self, key: bytes) -> bytes:
-        """Encrypt a key using the master key."""
+    def _wrap_aad(self, key_id: str, key_type: str, version: int) -> bytes:
+        """Associated data binding a wrapped key to its tenant, ID, type and version."""
+        return _length_prefixed(_WRAP_AAD_LABEL, self.tenant_id, key_id, key_type, str(version))
+
+    def _encrypt_key(self, key_id: str, key: bytes, metadata: KeyMetadata) -> bytes:
+        """Wrap a key under the master key, bound to this tenant and the key's metadata."""
         aesgcm = AESGCM(self.master_key)
         nonce = os.urandom(12)
-        ciphertext = aesgcm.encrypt(nonce, key, None)
-        return cast(bytes, nonce + ciphertext)
+        aad = self._wrap_aad(key_id, metadata.key_type, metadata.version)
+        return cast(bytes, nonce + aesgcm.encrypt(nonce, key, aad))
 
-    def _decrypt_key(self, encrypted_key: bytes) -> bytes:
-        """Decrypt a key using the master key."""
-        aesgcm = AESGCM(self.master_key)
-        nonce = encrypted_key[:12]
-        ciphertext = encrypted_key[12:]
-        return cast(bytes, aesgcm.decrypt(nonce, ciphertext, None))
+    def _decrypt_key(self, key_id: str, encrypted_key: bytes, meta_dict: dict) -> bytes:
+        """Unwrap a stored key.
+
+        Format 1 keys must unwrap under this tenant and the stored key ID, type and version;
+        keys stored before format 1 (no ``wrap_format``) unwrap with no associated data.
+
+        Raises:
+            KeyIntegrityError: If the key does not unwrap in this context.
+        """
+        aad = None
+        if meta_dict.get("wrap_format") == WRAP_FORMAT:
+            aad = self._wrap_aad(
+                key_id, str(meta_dict.get("key_type", "")), int(meta_dict.get("version", 1))
+            )
+        try:
+            return cast(
+                bytes, AESGCM(self.master_key).decrypt(encrypted_key[:12], encrypted_key[12:], aad)
+            )
+        except (InvalidTag, ValueError) as exc:
+            raise KeyIntegrityError(f"Key {key_id} failed to unwrap for this tenant") from exc
 
     def _generate_key_id(self, key_type: str) -> str:
         """Generate a unique key ID."""
@@ -329,9 +379,14 @@ class KeyManager:
         encrypted_keys, metadata_dicts = self._storage_backend.load_all()
         with self._lock:
             for key_id, encrypted_key in encrypted_keys.items():
+                meta_dict = metadata_dicts.get(key_id, {})
                 if key_id not in self._keys:
-                    self._keys[key_id] = self._decrypt_key(encrypted_key)
-            for key_id, meta_dict in metadata_dicts.items():
+                    try:
+                        self._keys[key_id] = self._decrypt_key(key_id, encrypted_key, meta_dict)
+                    except KeyIntegrityError:
+                        # A row that does not unwrap for this tenant is ignored rather than
+                        # breaking every key of the tenant; requesting it raises (see below).
+                        continue
                 self._metadata[key_id] = KeyMetadata.from_dict(meta_dict)
 
     def _ensure_loaded(self, key_id: str) -> bool:
@@ -344,8 +399,9 @@ class KeyManager:
         if stored is None:
             return False
         encrypted_key, meta_dict = stored
+        key = self._decrypt_key(key_id, encrypted_key, meta_dict)
         with self._lock:
-            self._keys[key_id] = self._decrypt_key(encrypted_key)
+            self._keys[key_id] = key
             self._metadata[key_id] = KeyMetadata.from_dict(meta_dict)
         return True
 
@@ -361,8 +417,9 @@ class KeyManager:
         """Persist a single key and its metadata to the storage backend."""
         if self._storage_backend is None:
             return
-        encrypted_key = self._encrypt_key(self._keys[key_id])
-        metadata_dict = self._metadata[key_id].to_dict()
+        metadata = self._metadata[key_id]
+        encrypted_key = self._encrypt_key(key_id, self._keys[key_id], metadata)
+        metadata_dict = {**metadata.to_dict(), "wrap_format": WRAP_FORMAT}
         self._storage_backend.save_key(key_id, encrypted_key, metadata_dict)
 
     def create_key(

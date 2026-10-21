@@ -15,10 +15,32 @@ class KMSProviderFactory(Protocol):
         """Create a KMS provider from settings."""
 
 
+APPLICATION_NAME = "encrypted-information-retrieval"
+MASTER_KEY_PURPOSE = "app-master-key"
+
+
+def master_key_encryption_context(environment: str) -> dict[str, str]:
+    """KMS encryption context for wrapping and unwrapping the app master key.
+
+    The same context must be used when the key is generated and when it is unwrapped, so a
+    master key wrapped for one environment does not unwrap in another. IAM policies can require
+    it with ``kms:EncryptionContext:application``, ``:environment`` and ``:purpose``.
+    """
+    return {
+        "application": APPLICATION_NAME,
+        "environment": environment,
+        "purpose": MASTER_KEY_PURPOSE,
+    }
+
+
 def _aws_provider_from_settings(settings: EncryptedIRSettings) -> KMSProvider:
     if not settings.aws_kms_key_id:
         raise ValueError("ENCRYPTED_IR_AWS_KMS_KEY_ID is required for AWS KMS")
-    return AWSKMSProvider(settings.aws_kms_key_id, region=settings.aws_region)
+    return AWSKMSProvider(
+        settings.aws_kms_key_id,
+        region=settings.aws_region,
+        encryption_context=master_key_encryption_context(settings.environment),
+    )
 
 
 def resolve_master_key(

@@ -72,12 +72,12 @@ These are the only routes besides the five above. The in-memory demo routes (`/v
 
 ### Storage
 
-Two Alembic migrations create the four tables (the second drops a soft-delete flag that was never
-set; documents are hard-deleted):
+Three Alembic migrations create the four tables (the second drops a soft-delete flag that was never
+set, because documents are hard-deleted; the third adds the sealed-metadata column):
 
 | Table | Contents |
 | --- | --- |
-| `encrypted_ir_documents` | Document ciphertext, key IDs, plaintext metadata JSON, token count |
+| `encrypted_ir_documents` | Sealed content and sealed metadata (ADR-007), format, key IDs, token count. Legacy rows keep plaintext `metadata_json`. |
 | `encrypted_ir_document_tokens` | `(tenant_id, token, doc_id)` keyword-token rows |
 | `encrypted_ir_keys` | Per-tenant keys wrapped under the app master key, plus metadata |
 | `encrypted_ir_audit_log` | Sanitized audit entries (API events and key events) |
@@ -90,9 +90,11 @@ no row-level security in the database.
 - **App master key.** One per deployment. In dev it is read from `ENCRYPTED_IR_MASTER_KEY_B64`
   (Compose sets a demo value); if unset, a random key is generated and lost on restart.
 - **Production key source.** Production settings require `ENCRYPTED_IR_KMS_PROVIDER=aws`, and
-  the master key is unwrapped once at startup with AWS KMS `Decrypt`.
+  the master key is unwrapped once at startup with AWS KMS `Decrypt`, pinned to the configured key
+  and the encryption context `{application, environment, purpose: app-master-key}`.
 - **Tenant keys.** Each tenant has a document-encryption key and a search key. Both are created
-  on first use and stored wrapped under the master key.
+  on first use and stored wrapped under the master key, bound to the tenant, key ID, type and
+  version ([#40]).
 - **Rotation.** The library can create new key versions and keep retired keys decryptable.
   Stored documents are not re-encrypted ([#42]).
 
@@ -828,6 +830,7 @@ graph TB
 
 [#36]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/36
 [#39]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/39
+[#40]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/40
 [#41]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/41
 [#42]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/42
 [#43]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/43

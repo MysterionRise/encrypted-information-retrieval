@@ -116,6 +116,11 @@ class AWSKMSProvider(KMSProvider):
             default region from AWS config/environment.
         boto3_session: Optional pre-configured boto3.Session. If None,
             creates a new session with default credentials.
+        encryption_context: Optional KMS encryption context sent with every
+            Encrypt, Decrypt and GenerateDataKey call. KMS binds a ciphertext to
+            the context it was created with, records it in CloudTrail, and lets IAM
+            policies require it (``kms:EncryptionContext:<key>`` conditions). A
+            ciphertext created with a context only decrypts with the same context.
     """
 
     def __init__(
@@ -123,6 +128,7 @@ class AWSKMSProvider(KMSProvider):
         key_id: str,
         region: str | None = None,
         boto3_session: Any | None = None,
+        encryption_context: dict[str, str] | None = None,
     ):
         try:
             import boto3
@@ -133,6 +139,7 @@ class AWSKMSProvider(KMSProvider):
             ) from e
 
         self._key_id = key_id
+        self._encryption_context = dict(encryption_context) if encryption_context else None
 
         if boto3_session is not None:
             self._client = boto3_session.client("kms", region_name=region)
@@ -154,6 +161,7 @@ class AWSKMSProvider(KMSProvider):
         response = self._client.generate_data_key(
             KeyId=self._key_id,
             KeySpec=key_spec,
+            **self._context_kwargs(),
         )
         return cast(bytes, response["Plaintext"]), cast(bytes, response["CiphertextBlob"])
 
@@ -176,6 +184,7 @@ class AWSKMSProvider(KMSProvider):
         response = self._client.encrypt(
             KeyId=self._key_id,
             Plaintext=plaintext,
+            **self._context_kwargs(),
         )
         return cast(bytes, response["CiphertextBlob"])
 
@@ -192,14 +201,28 @@ class AWSKMSProvider(KMSProvider):
         Raises:
             botocore.exceptions.ClientError: On AWS API errors.
         """
+        # KeyId pins decryption to the configured key instead of whichever key the
+        # ciphertext names.
         response = self._client.decrypt(
             CiphertextBlob=ciphertext,
+            KeyId=self._key_id,
+            **self._context_kwargs(),
         )
         return cast(bytes, response["Plaintext"])
 
     def get_key_id(self) -> str:
         """Get the configured AWS KMS key identifier."""
         return self._key_id
+
+    @property
+    def encryption_context(self) -> dict[str, str] | None:
+        """The KMS encryption context sent with every call, if any."""
+        return dict(self._encryption_context) if self._encryption_context else None
+
+    def _context_kwargs(self) -> dict[str, Any]:
+        if not self._encryption_context:
+            return {}
+        return {"EncryptionContext": dict(self._encryption_context)}
 
     def key_exists(self) -> bool:
         """Check if the KMS key exists and is enabled.
