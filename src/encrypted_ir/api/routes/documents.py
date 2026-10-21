@@ -183,7 +183,6 @@ async def get_document(
         actor=_actor(request),
         success=True,
         resource=doc_id,
-        details={"metadata_keys": sorted(record.metadata.keys())},
         request_id=request.state.request_id,
     )
     return DocumentGetResponse(

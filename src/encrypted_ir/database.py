@@ -53,6 +53,9 @@ documents_table = Table(
     Column("tenant_id", String(255), primary_key=True),
     Column("doc_id", String(255), primary_key=True),
     Column("encrypted_document", LargeBinary, nullable=False),
+    # Sealed metadata for "aes-256-gcm/v1" rows; NULL for legacy "aes-gcm" rows, whose
+    # metadata stays in metadata_json.
+    Column("encrypted_metadata", LargeBinary, nullable=True),
     Column("algorithm", String(64), nullable=False, default="aes-gcm"),
     Column("encryption_key_id", String(255), nullable=False),
     Column("search_key_id", String(255), nullable=False),

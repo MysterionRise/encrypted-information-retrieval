@@ -6,17 +6,26 @@ import os
 from datetime import datetime
 
 import pytest
-from sqlalchemy import event, select
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from sqlalchemy import event, insert, select, update
 
 from encrypted_ir.database import (
     create_database_engine,
     create_database_schema,
     document_tokens_table,
     documents_table,
+    key_store_table,
 )
 from encrypted_ir.document_service import DocumentService
-from encrypted_ir.errors import DocumentAlreadyExistsError, DocumentNotFoundError
-from encrypted_ir.searchable import extract_keywords, normalize_keyword
+from encrypted_ir.errors import (
+    DocumentAlreadyExistsError,
+    DocumentIntegrityError,
+    DocumentNotFoundError,
+    KeyIntegrityError,
+)
+from encrypted_ir.key_manager import KeyMetadata
+from encrypted_ir.searchable import SearchableEncryption, extract_keywords, normalize_keyword
+from encrypted_ir.storage_backend import DatabaseStorageBackend
 
 TENANT = "tenant-a"
 
@@ -280,3 +289,222 @@ class TestIngestConflictsAndDeletes:
 
         assert [c.doc_id for c in candidates] == ["kept"]
         assert candidates[0].plaintext == "fraud report kept"
+
+
+class TestContextBinding:
+    """Issue #40: stored ciphertexts and wrapped keys are bound to their row and tenant."""
+
+    @staticmethod
+    def _update_document(service, doc_id, tenant=TENANT, **values):
+        with service._engine.begin() as conn:
+            conn.execute(
+                update(documents_table)
+                .where(documents_table.c.tenant_id == tenant, documents_table.c.doc_id == doc_id)
+                .values(**values)
+            )
+
+    @staticmethod
+    def _row(service, doc_id, tenant=TENANT):
+        with service._engine.connect() as conn:
+            return conn.execute(
+                select(documents_table).where(
+                    documents_table.c.tenant_id == tenant, documents_table.c.doc_id == doc_id
+                )
+            ).one()
+
+    def test_new_rows_use_the_sealed_format_with_encrypted_metadata(self, service):
+        result = service.ingest_document(TENANT, "doc", "secret text", metadata={"tier": "gold"})
+        row = self._row(service, "doc")
+
+        assert result["algorithm"] == "aes-256-gcm/v1"
+        assert row.algorithm == "aes-256-gcm/v1"
+        assert row.metadata_json == {}
+        assert b"gold" not in bytes(row.encrypted_metadata)
+        assert b"secret text" not in bytes(row.encrypted_document)
+        assert service.get_document(TENANT, "doc").metadata == {"tier": "gold"}
+        assert service.search_documents(TENANT, "secret")[0].metadata == {"tier": "gold"}
+
+    def test_ciphertext_swapped_between_documents_is_rejected(self, service):
+        service.ingest_document(TENANT, "doc-1", "first secret")
+        service.ingest_document(TENANT, "doc-2", "second secret")
+        second = self._row(service, "doc-2")
+
+        self._update_document(service, "doc-1", encrypted_document=second.encrypted_document)
+
+        with pytest.raises(DocumentIntegrityError):
+            service.get_document(TENANT, "doc-1")
+
+    def test_content_and_metadata_cannot_be_swapped(self, service):
+        service.ingest_document(TENANT, "doc", "secret text", metadata={"a": 1})
+        row = self._row(service, "doc")
+
+        self._update_document(
+            service,
+            "doc",
+            encrypted_document=row.encrypted_metadata,
+            encrypted_metadata=row.encrypted_document,
+        )
+
+        with pytest.raises(DocumentIntegrityError):
+            service.get_document(TENANT, "doc")
+
+    def test_downgrade_to_the_legacy_algorithm_is_rejected(self, service):
+        service.ingest_document(TENANT, "doc", "secret text")
+
+        self._update_document(service, "doc", algorithm="aes-gcm")
+
+        with pytest.raises(DocumentIntegrityError):
+            service.get_document(TENANT, "doc")
+
+    def test_missing_sealed_metadata_is_rejected(self, service):
+        service.ingest_document(TENANT, "doc", "secret text")
+
+        self._update_document(service, "doc", encrypted_metadata=None)
+
+        with pytest.raises(DocumentIntegrityError):
+            service.get_document(TENANT, "doc")
+
+    def test_row_pointed_at_another_key_is_rejected(self, service):
+        service.ingest_document(TENANT, "doc", "secret text")
+        manager = service._key_manager(TENANT)
+        other_key = manager.create_key(DocumentService.DOC_ENCRYPTION_KEY_TYPE)
+
+        self._update_document(service, "doc", encryption_key_id=other_key)
+
+        with pytest.raises(DocumentIntegrityError):
+            service.get_document(TENANT, "doc")
+
+    def test_tampered_metadata_fails_closed_in_search(self, service):
+        service.ingest_document(TENANT, "doc", "fraud report", metadata={"a": 1})
+        tampered = bytearray(self._row(service, "doc").encrypted_metadata)
+        tampered[-1] ^= 0x01
+
+        self._update_document(service, "doc", encrypted_metadata=bytes(tampered))
+
+        with pytest.raises(DocumentIntegrityError):
+            service.search_documents(TENANT, "fraud")
+
+    def test_wrapped_key_copied_to_another_tenant_does_not_unwrap(self, engine, master_key):
+        service = DocumentService(engine, master_key)
+        service.ingest_document("tenant-a", "doc", "tenant a secret")
+        with engine.begin() as conn:
+            rows = conn.execute(
+                select(key_store_table).where(key_store_table.c.tenant_id == "tenant-a")
+            ).all()
+            for row in rows:
+                conn.execute(
+                    insert(key_store_table).values(
+                        tenant_id="tenant-b",
+                        key_id=row.key_id,
+                        encrypted_key=row.encrypted_key,
+                        metadata_json=row.metadata_json,
+                    )
+                )
+        copied_key_id = rows[0].key_id
+        manager_b = DocumentService(engine, master_key)._key_manager("tenant-b")
+
+        assert manager_b.list_keys(active_only=False) == []
+        with pytest.raises(KeyIntegrityError):
+            manager_b.get_key_for_decryption(copied_key_id)
+
+    def test_wrapped_key_metadata_is_authenticated(self, engine, master_key):
+        service = DocumentService(engine, master_key)
+        service.ingest_document(TENANT, "doc", "secret")
+        with engine.begin() as conn:
+            row = conn.execute(select(key_store_table)).first()
+            conn.execute(
+                update(key_store_table)
+                .where(key_store_table.c.key_id == row.key_id)
+                .values(metadata_json={**row.metadata_json, "version": 7})
+            )
+
+        with pytest.raises(KeyIntegrityError):
+            DocumentService(engine, master_key)._key_manager(TENANT).get_key_for_decryption(
+                row.key_id
+            )
+
+
+class TestLegacyRows:
+    """Rows and keys written before issue #40 stay readable (the user chose compatibility)."""
+
+    @staticmethod
+    def _write_legacy_tenant(engine, master_key, tenant_id):
+        """Write keys and one document exactly as the pre-#40 code did."""
+        encryption_key, search_key = os.urandom(32), os.urandom(32)
+        key_rows = []
+        for key_id, key_type, key in (
+            (
+                "document_encryption_legacy0000001",
+                DocumentService.DOC_ENCRYPTION_KEY_TYPE,
+                encryption_key,
+            ),
+            ("document_search_legacy000000001", DocumentService.DOC_SEARCH_KEY_TYPE, search_key),
+        ):
+            nonce = os.urandom(12)
+            wrapped = nonce + AESGCM(master_key).encrypt(nonce, key, None)
+            metadata = KeyMetadata(key_id=key_id, key_type=key_type, created_at=datetime.now())
+            key_rows.append(
+                {
+                    "tenant_id": tenant_id,
+                    "key_id": key_id,
+                    "encrypted_key": wrapped,
+                    "metadata_json": metadata.to_dict(),  # no wrap_format: legacy wrapping
+                }
+            )
+        blob, tokens = SearchableEncryption(encryption_key, search_key).encrypt_document(
+            "legacy fraud memo"
+        )
+        with engine.begin() as conn:
+            conn.execute(insert(key_store_table), key_rows)
+            conn.execute(
+                insert(documents_table).values(
+                    tenant_id=tenant_id,
+                    doc_id="legacy-doc",
+                    encrypted_document=blob,
+                    algorithm="aes-gcm",
+                    encryption_key_id=key_rows[0]["key_id"],
+                    search_key_id=key_rows[1]["key_id"],
+                    metadata_json={"source": "legacy"},
+                    token_count=len(tokens),
+                )
+            )
+            conn.execute(
+                insert(document_tokens_table),
+                [{"tenant_id": tenant_id, "token": t, "doc_id": "legacy-doc"} for t in tokens],
+            )
+        return key_rows[0]["key_id"]
+
+    def test_legacy_documents_and_keys_remain_readable(self, engine, master_key):
+        self._write_legacy_tenant(engine, master_key, TENANT)
+        service = DocumentService(engine, master_key)
+
+        record = service.get_document(TENANT, "legacy-doc")
+        matches = service.search_documents(TENANT, "fraud memo", "AND")
+
+        assert record.plaintext == "legacy fraud memo"
+        assert record.metadata == {"source": "legacy"}
+        assert [(m.doc_id, m.metadata) for m in matches] == [("legacy-doc", {"source": "legacy"})]
+
+    def test_new_documents_coexist_with_legacy_ones(self, engine, master_key):
+        legacy_key_id = self._write_legacy_tenant(engine, master_key, TENANT)
+        service = DocumentService(engine, master_key)
+
+        result = service.ingest_document(TENANT, "new-doc", "new fraud memo", metadata={"v": 2})
+
+        assert result["key_id"] == legacy_key_id  # the legacy key is still the active key
+        assert {m.doc_id for m in service.search_documents(TENANT, "fraud memo", "AND")} == {
+            "legacy-doc",
+            "new-doc",
+        }
+        assert service.get_document(TENANT, "new-doc").metadata == {"v": 2}
+
+    def test_legacy_key_is_rewrapped_with_context_on_next_save(self, engine, master_key):
+        legacy_key_id = self._write_legacy_tenant(engine, master_key, TENANT)
+        manager = DocumentService(engine, master_key)._key_manager(TENANT)
+
+        manager._persist_key(legacy_key_id)
+
+        stored = DatabaseStorageBackend(engine, TENANT).load_key(legacy_key_id)
+        assert stored is not None and stored[1]["wrap_format"] == 1
+        fresh = DocumentService(engine, master_key)._key_manager(TENANT)
+        assert fresh.get_key_for_decryption(legacy_key_id) == manager.get_key(legacy_key_id)

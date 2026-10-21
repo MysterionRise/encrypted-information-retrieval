@@ -92,7 +92,9 @@ Summarize the production path:
 
 Optional live-validation path if cloud credentials are available:
 - Generate an AWS KMS-wrapped app master key with
-  `python -m encrypted_ir.tools.generate_kms_master_key`.
+  `python -m encrypted_ir.tools.generate_kms_master_key --environment prod`. It is wrapped with
+  the encryption context `application`, `environment` and `purpose`; the README shows the IAM
+  condition that makes that context mandatory for `kms:Decrypt`.
 - Configure a real OIDC issuer, audience, JWKS URL, tenant claim, and roles
   claim.
 - Start the API with `ENCRYPTED_IR_ENV=prod` and verify `/ready` only reports
