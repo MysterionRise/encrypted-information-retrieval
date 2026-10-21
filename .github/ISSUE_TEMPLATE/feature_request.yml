@@ -1,0 +1,27 @@
+name: Feature or improvement
+description: Propose a change. Check docs/ROADMAP.md first; it may already be planned or explicitly not planned.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is missing or wrong today, with file references if you have them.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you would change.
+    validations:
+      required: true
+  - type: textarea
+    id: leakage
+    attributes:
+      label: Leakage and security impact
+      description: Does this change what the system leaks, who can decrypt what, or how keys are handled? If yes, how?
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How a reviewer can tell it is done, ideally as checkboxes that map to tests or evidence.

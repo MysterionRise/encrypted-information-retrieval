@@ -9,7 +9,6 @@ WORKDIR /app
 
 COPY requirements-api.txt requirements.txt pyproject.toml setup.py README.md alembic.ini ./
 COPY src ./src
-COPY alembic ./alembic
 
 RUN pip install --no-cache-dir -r requirements-api.txt \
     && pip install --no-cache-dir --no-deps -e .

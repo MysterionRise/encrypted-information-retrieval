@@ -1,100 +1,43 @@
-*.class
-
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
-
-# Package Files #
-*.jar
-*.war
-*.ear
-
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
-hs_err_pid*
-
-
-#haskell
-dist
-cabal-dev
-*.o
-*.hi
-*.chi
-*.chs.h
-.virthualenv
-out/
-# use glob syntax.
-syntax: glob
-*.ser
-*.class
-*~
-*.bak
-#*.off
-*.old
-
-# eclipse conf file
-.settings
-.classpath
-.project
-.manager
-.scala_dependencies
-
-# idea
-.idea
-*.iml
-
-# netbeans
-nbactions.xml
-
-# building
-target
-build
-null
-tmp*
-temp*
-dist
-test-output
-build.log
-
-# other scm
-.svn
-.CVS
-.hg*
-
-# switch to regexp syntax.
-#  syntax: regexp
-#  ^\.pc/
-
-#SHITTY output not in target directory
-build.log
-=======
-*.class
-*.log
-.cache
-# sbt specific
-dist/*
-target/
-lib_managed/
-src_managed/
-project/boot/
-project/plugins/project/
-
-# Scala-IDE specific
-.scala_dependencies
-/lib*.pyc
+# Python bytecode and caches
 __pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Benchmark results (machine-specific)
-benchmarks/results/
-
-# Gas Town (added by gt)
-.runtime/
-.claude/commands/
-.logs/
-.beads/
-
-# Python packaging
+# Packaging
+build/
+dist/
 *.egg-info/
+.eggs/
 
 # Virtual environments
 .venv/
 venv/
-tests/__init__.pyc
+
+# Test and coverage output
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+benchmarks/results/
+
+# Local databases and logs
+*.db
+*.sqlite3
+*.log
+
+# Editors and OS files
+.idea/
+.vscode/
+*.iml
+*.swp
+*~
+.DS_Store
+
+# Local tooling state
+.env
+.runtime/
+.logs/
+.beads/
+.claude/commands/

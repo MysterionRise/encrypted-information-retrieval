@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import cast
-
-from sqlalchemy import text
-from sqlalchemy.engine import Engine
 
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
+from sqlalchemy import text
+from sqlalchemy.engine import Engine
+
+# Migration scripts are package data, so this works from a source checkout and
+# from an installed wheel. The repository's alembic.ini points at the same place.
+SCRIPT_LOCATION = "encrypted_ir:alembic_migrations"
 
 
 def alembic_config(database_url: str | None = None) -> Config:
     """Build Alembic config for this project."""
-    root = Path(__file__).resolve().parents[2]
-    config = Config(str(root / "alembic.ini"))
+    config = Config()
+    config.set_main_option("script_location", SCRIPT_LOCATION)
     if database_url:
         config.set_main_option("sqlalchemy.url", database_url)
     return config
