@@ -46,7 +46,7 @@ setup: ## Install dependencies and set up development environment
 
 install-dev: ## Install development dependencies only
 	@echo "$(BLUE)Installing development dependencies...$(NC)"
-	$(PIP) install pytest pytest-cov pytest-benchmark black ruff mypy bandit safety pre-commit
+	$(PIP) install pytest pytest-cov pytest-benchmark black ruff mypy bandit pip-audit pre-commit
 	@echo "$(GREEN)✓ Dev dependencies installed$(NC)"
 
 test: ## Run all tests
@@ -101,12 +101,12 @@ type-check: ## Run type checking with mypy
 	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m mypy --disable-error-code redundant-cast src/encrypted_ir --ignore-missing-imports --no-strict-optional
 	@echo "$(GREEN)✓ Type checking complete$(NC)"
 
-security: ## Run security checks (bandit + safety)
+security: ## Run security checks (bandit + pip-audit), same as CI
 	@echo "$(BLUE)Running security checks...$(NC)"
 	@echo "$(BLUE)1. Scanning code for security issues (bandit)...$(NC)"
 	$(PYTHON) -m bandit -r src -ll -f screen
-	@echo "$(BLUE)2. Checking dependencies for vulnerabilities (safety)...$(NC)"
-	$(PYTHON) -m safety check --json || echo "$(YELLOW)⚠ Safety check requires internet connection$(NC)"
+	@echo "$(BLUE)2. Auditing dependencies for known vulnerabilities (pip-audit)...$(NC)"
+	$(PYTHON) -m pip_audit -r requirements.txt -r requirements-api.txt -r requirements-research.txt
 	@echo "$(GREEN)✓ Security checks complete$(NC)"
 
 clean: ## Clean build artifacts and cache

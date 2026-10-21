@@ -6,8 +6,22 @@ on:
   pull_request:
     branches: [ main, master, develop ]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+# Tool versions are pinned here and mirrored in .pre-commit-config.yaml.
+env:
+  BLACK_VERSION: "25.11.0"
+  RUFF_VERSION: "0.17.1"
+  MYPY_VERSION: "2.2.0"
+  BANDIT_VERSION: "1.9.4"
+
 jobs:
-  # Job 1: Code Quality Checks
+  # Code quality: formatting, lint (including import order via ruff "I"), types, static security.
   lint:
     name: Code Quality & Security
     runs-on: ubuntu-latest
@@ -21,37 +35,25 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install dependencies
+      - name: Install tools
         run: |
           python -m pip install --upgrade pip
-          pip install ruff bandit 'black==25.11.0' isort 'mypy==2.2.0'
+          pip install "black==${BLACK_VERSION}" "ruff==${RUFF_VERSION}" "mypy==${MYPY_VERSION}" "bandit==${BANDIT_VERSION}"
 
       - name: Check code formatting (black)
-        run: |
-          black --check src tests
-        continue-on-error: false
-
-      - name: Check import sorting (isort)
-        run: |
-          isort --check-only --profile black src tests
-        continue-on-error: true
+        run: black --check src tests examples
 
       - name: Lint with ruff
-        run: |
-          ruff check src tests
-        continue-on-error: false
+        run: ruff check src tests examples
 
       - name: Security check with bandit
-        run: |
-          bandit -r src -ll -f screen
-        continue-on-error: false
+        run: bandit -r src -ll -f screen
 
       - name: Type check with mypy
         run: |
           PYTHONPATH=src:$PYTHONPATH mypy --disable-error-code redundant-cast src/encrypted_ir --ignore-missing-imports --no-strict-optional
-        continue-on-error: false
 
-  # Job 2: Test Suite (Multiple Python Versions)
+  # Unit and integration tests against PostgreSQL on every supported Python.
   test:
     name: Test Suite (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -99,16 +101,13 @@ jobs:
       - name: Run tests
         env:
           POSTGRES_TEST_DATABASE_URL: postgresql+psycopg://encrypted_ir:encrypted_ir_test_password@localhost:5432/encrypted_ir_test
+        # --benchmark-disable runs each benchmarked function once without calibration;
+        # timings are measured only by the benchmarks job.
         run: |
-          PYTHONPATH=src:$PYTHONPATH python -m pytest -v -W ignore::DeprecationWarning --timeout=60
+          PYTHONPATH=src:$PYTHONPATH python -m pytest -v -rs -W ignore::DeprecationWarning --timeout=60 --benchmark-disable
         timeout-minutes: 10
 
-      - name: Test summary
-        if: always()
-        run: |
-          echo "::notice::Tests completed for Python ${{ matrix.python-version }}"
-
-  # Job 3: Test Coverage
+  # Coverage with an enforced floor. Measured 87.13% on 2026-10-20; the floor ratchets up, never down.
   coverage:
     name: Test Coverage
     runs-on: ubuntu-latest
@@ -128,24 +127,19 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-cov pytest-benchmark
 
-      - name: Run tests with coverage
+      - name: Run tests with coverage (fails under the floor)
         run: |
           PYTHONPATH=src:$PYTHONPATH python -m pytest \
+            --benchmark-disable \
             --cov=src/encrypted_ir \
             --cov-report=term-missing \
             --cov-report=xml \
             --cov-report=html \
+            --cov-fail-under=86 \
             -W ignore::DeprecationWarning
-
-      - name: Check coverage threshold
-        run: |
-          PYTHONPATH=src:$PYTHONPATH python -m pytest \
-            --cov=src/encrypted_ir \
-            --cov-fail-under=80 \
-            -W ignore::DeprecationWarning
-        continue-on-error: true
 
       - name: Upload coverage to Codecov
+        if: always()
         uses: codecov/codecov-action@v6
         with:
           files: ./coverage.xml
@@ -154,13 +148,14 @@ jobs:
           fail_ci_if_error: false
 
       - name: Upload HTML coverage report
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: htmlcov/
           retention-days: 30
 
-  # Job 4: Security Scanning
+  # Dependency and static security scanning. Both steps are blocking.
   security:
     name: Security Scanning
     runs-on: ubuntu-latest
@@ -177,17 +172,16 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install bandit safety
+          pip install "bandit==${BANDIT_VERSION}" pip-audit
 
       - name: Run bandit security scanner
         run: |
           bandit -r src -ll -f json -o bandit-report.json || true
           bandit -r src -ll -f screen
 
-      - name: Check dependencies for vulnerabilities
+      - name: Audit dependencies for known vulnerabilities (pip-audit)
         run: |
-          safety check --json || echo "::warning::Safety check found vulnerabilities"
-        continue-on-error: true
+          pip-audit -r requirements.txt -r requirements-api.txt -r requirements-research.txt
 
       - name: Upload security report
         uses: actions/upload-artifact@v7
@@ -197,11 +191,64 @@ jobs:
           path: bandit-report.json
           retention-days: 30
 
-  # Job 5: Benchmarks (Optional - only on main branch)
+  # Optional research modules (TenSEAL CKKS, pqcrypto ML-KEM/ML-DSA). Their tests skip
+  # when the extras are missing, so this job installs the extras and fails if they
+  # cannot be imported, which stops those tests from silently skipping.
+  research:
+    name: Research Modules (Python 3.11)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies with research extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-research.txt
+          pip install pytest pytest-timeout pytest-benchmark
+
+      - name: Verify research extras import
+        run: |
+          python -c "import tenseal; from pqcrypto.kem import ml_kem_768; from pqcrypto.sign import ml_dsa_65; print('research extras importable')"
+
+      - name: Run full suite with research extras
+        run: |
+          PYTHONPATH=src:$PYTHONPATH python -m pytest -rs -W ignore::DeprecationWarning --timeout=120 --benchmark-disable
+        timeout-minutes: 15
+
+  # Build the API image and run the Compose persistence smoke test from docs/CTO_DEMO_SCRIPT.md.
+  docker:
+    name: Docker Compose Smoke Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Build and start the stack
+        run: docker compose up -d --build
+
+      - name: Ingest, restart, and retrieve
+        run: ./scripts/compose_smoke.sh
+
+      - name: Show container logs
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
+  # Performance benchmarks on master only. Informational: not part of CI Success.
   benchmarks:
     name: Performance Benchmarks
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -216,16 +263,29 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest-benchmark
+          pip install pytest pytest-benchmark
 
       - name: Run benchmarks
         run: |
           mkdir -p benchmarks/results
-          PYTHONPATH=src:$PYTHONPATH python -m pytest \
+          PYTHONPATH=src:$PYTHONPATH python -m pytest tests/test_benchmarks.py \
             --benchmark-only \
             --benchmark-json=benchmarks/results/latest.json \
-            2>/dev/null || echo "No benchmarks found yet"
-        continue-on-error: true
+            -W ignore::DeprecationWarning
+
+      - name: Keep summary statistics only
+        # --benchmark-json embeds every raw timing (about 150 MB); keep min/mean/median/etc.
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+
+          path = pathlib.Path("benchmarks/results/latest.json")
+          report = json.loads(path.read_text())
+          for bench in report["benchmarks"]:
+              bench["stats"].pop("data", None)
+          path.write_text(json.dumps(report, indent=2))
+          PY
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v7
@@ -235,7 +295,7 @@ jobs:
           path: benchmarks/results/
           retention-days: 90
 
-  # Job 6: Build Check
+  # Package build check.
   build:
     name: Build Package
     runs-on: ubuntu-latest
@@ -268,28 +328,16 @@ jobs:
           path: dist/
           retention-days: 30
 
-  # Summary Job (runs after all other jobs)
+  # Single required status: every gating job must succeed.
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [lint, test, coverage, security, build]
+    needs: [lint, test, coverage, security, research, docker, build]
     if: always()
     steps:
-      - name: Check all jobs status
+      - name: Check all gating jobs
+        env:
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          if [ "${{ needs.lint.result }}" == "success" ] && \
-             [ "${{ needs.test.result }}" == "success" ] && \
-             [ "${{ needs.coverage.result }}" == "success" ] && \
-             [ "${{ needs.security.result }}" == "success" ] && \
-             [ "${{ needs.build.result }}" == "success" ]; then
-            echo "✅ All CI checks passed!"
-            exit 0
-          else
-            echo "❌ Some CI checks failed:"
-            echo "  Lint: ${{ needs.lint.result }}"
-            echo "  Test: ${{ needs.test.result }}"
-            echo "  Coverage: ${{ needs.coverage.result }}"
-            echo "  Security: ${{ needs.security.result }}"
-            echo "  Build: ${{ needs.build.result }}"
-            exit 1
-          fi
+          echo "$NEEDS" | jq -r 'to_entries[] | "  \(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success")' > /dev/null
