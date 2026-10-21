@@ -19,6 +19,7 @@ import json
 
 import jwt
 import pytest
+from sqlalchemy import select
 
 from encrypted_ir import __version__
 from encrypted_ir.api.dependencies.rate_limiter import (
@@ -26,6 +27,7 @@ from encrypted_ir.api.dependencies.rate_limiter import (
     RateLimiter,
     set_rate_limiter,
 )
+from encrypted_ir.database import audit_log_table
 
 REMOVED_DEMO_PATHS = (
     "/v1/encrypt",
@@ -263,7 +265,106 @@ class TestDurableDocuments:
         second = client.post("/v1/documents", json=body, headers=auth_headers)
 
         assert first.status_code == 200
-        assert second.status_code == 400
+        assert second.status_code == 409
+        assert second.json()["error"] == "conflict"
+        assert "test-tenant-001" not in second.text
+
+
+class TestDocumentValidation:
+    """Request limits from issue #39."""
+
+    @pytest.mark.parametrize(
+        "doc_id",
+        ["", ".", "..", ".hidden", "has/slash", "has space", "a" * 129, "ümlaut"],
+    )
+    def test_invalid_doc_id_rejected(self, client, auth_headers, doc_id):
+        resp = client.post(
+            "/v1/documents", json={"doc_id": doc_id, "content": "x"}, headers=auth_headers
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.parametrize("doc_id", ["a", "doc-1", "Doc_2.v3", "_leading", "a" * 128])
+    def test_valid_doc_id_accepted(self, client, auth_headers, doc_id):
+        resp = client.post(
+            "/v1/documents", json={"doc_id": doc_id, "content": "x"}, headers=auth_headers
+        )
+        assert resp.status_code == 200
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            {"keywords": ["k"] * 257},
+            {"keywords": ["k" * 129]},
+            {"keywords": [""]},
+            {"metadata": {f"key{i}": i for i in range(33)}},
+            {"metadata": {"blob": "x" * (16 * 1024)}},
+        ],
+    )
+    def test_limits_enforced(self, client, auth_headers, extra):
+        resp = client.post(
+            "/v1/documents",
+            json={"doc_id": "limits", "content": "x", **extra},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 422
+
+    def test_limits_at_the_boundary_are_accepted(self, client, auth_headers):
+        resp = client.post(
+            "/v1/documents",
+            json={
+                "doc_id": "boundary",
+                "content": "x",
+                "keywords": [f"k{i}" for i in range(256)],
+                "metadata": {f"key{i}": i for i in range(32)},
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["indexed_token_count"] == 256
+
+    def test_get_with_invalid_doc_id_rejected(self, client, auth_headers):
+        assert client.get("/v1/documents/.hidden", headers=auth_headers).status_code == 422
+
+
+class TestDocumentDelete:
+    def test_delete_flow(self, client, auth_headers, app):
+        _ingest(client, auth_headers, "to-delete", "fraud memo to delete")
+
+        deleted = client.delete("/v1/documents/to-delete", headers=auth_headers)
+        get_after = client.get("/v1/documents/to-delete", headers=auth_headers)
+        search_after = client.post("/v1/documents/search", json=SEARCH_BODY, headers=auth_headers)
+        delete_again = client.delete("/v1/documents/to-delete", headers=auth_headers)
+
+        assert deleted.status_code == 204
+        assert deleted.content == b""
+        assert get_after.status_code == 404
+        assert search_after.json()["count"] == 0
+        assert delete_again.status_code == 404
+
+        with app.state.database_engine.connect() as conn:
+            rows = [row.entry_json for row in conn.execute(select(audit_log_table.c.entry_json))]
+        deletes = [r for r in rows if r.get("event_type") == "document.delete"]
+        assert [(r["success"], r["resource"]) for r in deletes] == [
+            (True, "to-delete"),
+            (False, "to-delete"),
+        ]
+
+    def test_read_only_cannot_delete(self, client, auth_headers, read_only_headers):
+        _ingest(client, auth_headers, "protected", "fraud memo")
+
+        resp = client.delete("/v1/documents/protected", headers=read_only_headers)
+
+        assert resp.status_code == 403
+        assert client.get("/v1/documents/protected", headers=auth_headers).status_code == 200
+
+    def test_other_tenant_cannot_delete(self, client, auth_headers, make_token):
+        _ingest(client, auth_headers, "tenant-a-doc", "fraud memo")
+        tenant_b = _bearer(make_token("tenant-b", ["admin", "write", "read"]))
+
+        resp = client.delete("/v1/documents/tenant-a-doc", headers=tenant_b)
+
+        assert resp.status_code == 404
+        assert client.get("/v1/documents/tenant-a-doc", headers=auth_headers).status_code == 200
 
 
 class TestTenantIsolation:

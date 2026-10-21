@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from typing import Any, cast
+from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Path, Request, Response, status
 
 from encrypted_ir.document_service import DocumentService
+from encrypted_ir.errors import DocumentNotFoundError
 
 from ..dependencies.auth import Role, TenantInfo, require_role
 from ..dependencies.rate_limiter import RateLimiter, get_rate_limiter
 from ..models.requests import (
+    DOC_ID_PATTERN,
     DocumentIngestRequest,
     DocumentSearchRequest,
     RagRetrieveRequest,
@@ -26,6 +28,11 @@ from ..models.responses import (
 )
 
 router = APIRouter(tags=["documents"])
+
+DocId = Annotated[
+    str,
+    Path(pattern=DOC_ID_PATTERN, description="Document identifier"),
+]
 
 
 def _service(request: Request) -> DocumentService:
@@ -158,7 +165,7 @@ async def search_documents(
     description="Decrypt one authorized tenant-owned document by ID for retrieval pipelines.",
 )
 async def get_document(
-    doc_id: str,
+    doc_id: DocId,
     request: Request,
     tenant: TenantInfo = Depends(require_role(Role.READ, Role.WRITE, Role.ADMIN)),
     rate_limiter: RateLimiter = Depends(get_rate_limiter),
@@ -187,6 +194,42 @@ async def get_document(
         key_id=record.key_id,
         request_id=request.state.request_id,
     )
+
+
+@router.delete(
+    "/v1/documents/{doc_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    summary="Delete a stored document",
+    description=(
+        "Delete one tenant-owned document and all of its search tokens in a single "
+        "transaction. Returns 404 if the tenant has no document with this ID."
+    ),
+)
+async def delete_document(
+    doc_id: DocId,
+    request: Request,
+    tenant: TenantInfo = Depends(require_role(Role.WRITE, Role.ADMIN)),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
+) -> Response:
+    rate_limiter.check_limit(tenant.tenant_id, "document_delete")
+
+    try:
+        deleted = _service(request).delete_document(tenant.tenant_id, doc_id)
+        if not deleted:
+            raise DocumentNotFoundError(doc_id)
+    except Exception as exc:
+        _record_failure(request, tenant, "document.delete", exc, resource=doc_id)
+        raise
+    _service(request).record_audit_event(
+        tenant_id=tenant.tenant_id,
+        event_type="document.delete",
+        actor=_actor(request),
+        success=True,
+        resource=doc_id,
+        request_id=request.state.request_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(

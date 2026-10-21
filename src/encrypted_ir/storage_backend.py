@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from sqlalchemy import delete, insert, select
+from sqlalchemy import delete, insert, select, update
 from sqlalchemy.engine import Engine
 
 from .database import audit_log_table, create_database_schema, key_store_table
@@ -283,21 +283,25 @@ class DatabaseStorageBackend(StorageBackend):
         return self._tenant_id
 
     def save_key(self, key_id: str, encrypted_key: bytes, metadata: dict) -> None:
+        """Insert or update a key row (update first, insert only if no row exists)."""
         with self._engine.begin() as conn:
-            conn.execute(
-                delete(key_store_table).where(
+            result = conn.execute(
+                update(key_store_table)
+                .where(
                     key_store_table.c.tenant_id == self._tenant_id,
                     key_store_table.c.key_id == key_id,
                 )
+                .values(encrypted_key=encrypted_key, metadata_json=metadata)
             )
-            conn.execute(
-                insert(key_store_table).values(
-                    tenant_id=self._tenant_id,
-                    key_id=key_id,
-                    encrypted_key=encrypted_key,
-                    metadata_json=metadata,
+            if result.rowcount == 0:
+                conn.execute(
+                    insert(key_store_table).values(
+                        tenant_id=self._tenant_id,
+                        key_id=key_id,
+                        encrypted_key=encrypted_key,
+                        metadata_json=metadata,
+                    )
                 )
-            )
 
     def load_key(self, key_id: str) -> tuple[bytes, dict] | None:
         stmt = select(key_store_table.c.encrypted_key, key_store_table.c.metadata_json).where(

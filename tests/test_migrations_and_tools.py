@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+import pytest
 from alembic import command
+from alembic.autogenerate import compare_metadata
+from alembic.runtime.migration import MigrationContext
+from sqlalchemy import inspect
 
-from encrypted_ir.database import create_database_engine
+from encrypted_ir.database import create_database_engine, metadata
 from encrypted_ir.migrations import alembic_config, migration_head, migration_status
 from encrypted_ir.tools import benchmark_retrieval
 
@@ -21,6 +26,49 @@ def test_alembic_upgrade_reaches_head(tmp_path):
 
     assert status["current"] == migration_head(database_url)
     assert status["at_head"] is True
+
+
+def _document_columns(database_url):
+    engine = create_database_engine(database_url)
+    try:
+        return {column["name"] for column in inspect(engine).get_columns("encrypted_ir_documents")}
+    finally:
+        engine.dispose()
+
+
+def test_migration_0002_round_trip_on_sqlite(tmp_path):
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'roundtrip.db'}"
+    config = alembic_config(database_url)
+
+    command.upgrade(config, "head")
+    assert "deleted" not in _document_columns(database_url)
+
+    command.downgrade(config, "20260706_0001")
+    assert "deleted" in _document_columns(database_url)
+
+    command.upgrade(config, "head")
+    assert "deleted" not in _document_columns(database_url)
+
+
+@pytest.mark.parametrize("database_kind", ["sqlite", "postgres"])
+def test_migrated_schema_matches_models(tmp_path, database_kind):
+    """The Alembic head must produce exactly the tables the application code declares."""
+    if database_kind == "postgres":
+        database_url = os.environ.get("POSTGRES_TEST_DATABASE_URL")
+        if not database_url:
+            pytest.skip("POSTGRES_TEST_DATABASE_URL is not set")
+    else:
+        database_url = f"sqlite+pysqlite:///{tmp_path / 'drift.db'}"
+
+    command.upgrade(alembic_config(database_url), "head")
+    engine = create_database_engine(database_url)
+    try:
+        with engine.connect() as conn:
+            diff = compare_metadata(MigrationContext.configure(conn), metadata)
+    finally:
+        engine.dispose()
+
+    assert diff == []
 
 
 def test_retrieval_benchmark_writes_report(tmp_path, monkeypatch):

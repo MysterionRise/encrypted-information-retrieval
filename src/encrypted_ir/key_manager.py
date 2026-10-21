@@ -18,6 +18,8 @@ import base64
 import hashlib
 import json
 import os
+import threading
+from collections import deque
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -153,7 +155,14 @@ class KeyManager:
     Handles generation, storage, rotation, and lifecycle of encryption keys.
     """
 
-    def __init__(self, master_key: bytes = None, storage_backend: StorageBackend = None):
+    MAX_IN_MEMORY_AUDIT_ENTRIES = 10_000
+
+    def __init__(
+        self,
+        master_key: bytes = None,
+        storage_backend: StorageBackend = None,
+        audit_reads: bool = False,
+    ):
         """
         Initialize key manager.
 
@@ -163,6 +172,14 @@ class KeyManager:
             storage_backend: Optional persistent storage backend. When provided,
                            keys are persisted across process restarts. When None,
                            keys are stored in memory only.
+            audit_reads: When True, every successful key read persists the updated
+                       ``access_count`` and writes an audit entry. Off by default, so
+                       read paths (search, decrypt) do not write to the backend.
+                       ``access_count`` is always tracked in memory.
+
+        The manager is safe to share between threads. With a storage backend, keys
+        written by another process are picked up by :meth:`refresh` or loaded on demand
+        when an unknown key ID is requested.
         """
         if master_key is None:
             master_key = os.urandom(32)
@@ -173,9 +190,12 @@ class KeyManager:
         self._storage_backend = storage_backend
         self._kms_provider: KMSProvider | None = None
         self._encrypted_master_key: bytes | None = None
+        self._audit_reads = audit_reads
+        self._lock = threading.RLock()
         self._keys: dict[str, bytes] = {}
         self._metadata: dict[str, KeyMetadata] = {}
-        self._audit_log: list[dict] = []
+        # Used only without a storage backend; the backend is the audit store otherwise.
+        self._audit_log: deque[dict] = deque(maxlen=self.MAX_IN_MEMORY_AUDIT_ENTRIES)
 
         if self._storage_backend is not None:
             self._load_from_backend()
@@ -288,17 +308,54 @@ class KeyManager:
             "success": success,
             "details": details,
         }
-        self._audit_log.append(log_entry)
         if self._storage_backend is not None:
             self._storage_backend.save_audit_entry(log_entry)
+        else:
+            self._audit_log.append(log_entry)
 
     def _load_from_backend(self):
         """Load all keys and metadata from the storage backend into memory."""
+        self.refresh()
+
+    def refresh(self) -> None:
+        """Synchronize with the storage backend.
+
+        Unwraps keys that are not in memory yet and replaces the metadata of every stored
+        key with the stored version, so lifecycle changes made by another process (for
+        example a rotation) become visible. Reads only; it never writes to the backend.
+        """
+        if self._storage_backend is None:
+            return
         encrypted_keys, metadata_dicts = self._storage_backend.load_all()
-        for key_id, encrypted_key in encrypted_keys.items():
+        with self._lock:
+            for key_id, encrypted_key in encrypted_keys.items():
+                if key_id not in self._keys:
+                    self._keys[key_id] = self._decrypt_key(encrypted_key)
+            for key_id, meta_dict in metadata_dicts.items():
+                self._metadata[key_id] = KeyMetadata.from_dict(meta_dict)
+
+    def _ensure_loaded(self, key_id: str) -> bool:
+        """Load ``key_id`` from the backend if it is not in memory. Returns True if present."""
+        if key_id in self._keys:
+            return True
+        if self._storage_backend is None:
+            return False
+        stored = self._storage_backend.load_key(key_id)
+        if stored is None:
+            return False
+        encrypted_key, meta_dict = stored
+        with self._lock:
             self._keys[key_id] = self._decrypt_key(encrypted_key)
-        for key_id, meta_dict in metadata_dicts.items():
             self._metadata[key_id] = KeyMetadata.from_dict(meta_dict)
+        return True
+
+    def _record_read(self, key_id: str, operation: str) -> None:
+        """Count a successful read; persist and audit it only when ``audit_reads`` is on."""
+        with self._lock:
+            self._metadata[key_id].access_count += 1
+        if self._audit_reads:
+            self._persist_key(key_id)
+            self._log_access(key_id, operation, True)
 
     def _persist_key(self, key_id: str):
         """Persist a single key and its metadata to the storage backend."""
@@ -330,9 +387,6 @@ class KeyManager:
         key_id = self._generate_key_id(key_type)
         key = os.urandom(key_size)
 
-        # Store key
-        self._keys[key_id] = key
-
         # Create metadata
         metadata = KeyMetadata(
             key_id=key_id,
@@ -341,7 +395,9 @@ class KeyManager:
             rotation_period_days=rotation_period_days,
             description=description,
         )
-        self._metadata[key_id] = metadata
+        with self._lock:
+            self._keys[key_id] = key
+            self._metadata[key_id] = metadata
 
         self._persist_key(key_id)
         self._log_access(key_id, "create", True, f"Created {key_type} key")
@@ -361,7 +417,7 @@ class KeyManager:
             KeyError: If key not found
             ValueError: If key is expired or inactive
         """
-        if key_id not in self._keys:
+        if not self._ensure_loaded(key_id):
             self._log_access(key_id, "get", False, "Key not found")
             raise KeyError(f"Key {key_id} not found")
 
@@ -375,11 +431,7 @@ class KeyManager:
             self._log_access(key_id, "get", False, "Key is expired")
             raise ValueError(f"Key {key_id} is expired")
 
-        # Update access count
-        metadata.access_count += 1
-        self._persist_key(key_id)
-        self._log_access(key_id, "get", True)
-
+        self._record_read(key_id, "get")
         return self._keys[key_id]
 
     def get_key_for_decryption(self, key_id: str) -> bytes:
@@ -399,7 +451,7 @@ class KeyManager:
             KeyError: If key not found.
             ValueError: If key is destroyed.
         """
-        if key_id not in self._keys:
+        if not self._ensure_loaded(key_id):
             self._log_access(key_id, "get_for_decryption", False, "Key not found")
             raise KeyError(f"Key {key_id} not found")
 
@@ -409,10 +461,38 @@ class KeyManager:
             self._log_access(key_id, "get_for_decryption", False, "Key is destroyed")
             raise ValueError(f"Key {key_id} is destroyed and cannot be used")
 
-        metadata.access_count += 1
-        self._persist_key(key_id)
-        self._log_access(key_id, "get_for_decryption", True)
+        self._record_read(key_id, "get_for_decryption")
         return self._keys[key_id]
+
+    def get_or_create_active_key(self, key_type: str, description: str = "") -> str:
+        """Return the newest active key of ``key_type``, creating one if there is none.
+
+        The lock is held across refresh, selection and creation, so concurrent callers in
+        this process never create two keys. Across processes two keys can still be created
+        at the same moment; every caller then converges on the newest one, ordered by
+        ``created_at`` and then key ID.
+        """
+        with self._lock:
+            self.refresh()
+            newest = self._newest_active_key(key_type)
+            if newest is not None:
+                return newest
+            created = self.create_key(key_type, key_size=32, description=description)
+            self.refresh()
+            return self._newest_active_key(key_type) or created
+
+    def _newest_active_key(self, key_type: str) -> str | None:
+        candidates = [
+            key_id
+            for key_id, metadata in self._metadata.items()
+            if metadata.key_type == key_type
+            and metadata.active
+            and metadata.lifecycle_state == KeyLifecycleState.ACTIVE
+            and not metadata.is_expired()
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda key_id: (self._metadata[key_id].created_at, key_id))
 
     def rotate_key(self, key_id: str) -> str:
         """
@@ -602,7 +682,7 @@ class KeyManager:
         """
         if self._storage_backend is not None:
             return self._storage_backend.load_audit_log(key_id=key_id, limit=limit)
-        logs = self._audit_log
+        logs = list(self._audit_log)
         if key_id:
             logs = [log for log in logs if log["key_id"] == key_id]
         return list(reversed(logs[-limit:]))

@@ -26,8 +26,34 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 - The in-memory API-key registry (`register_api_key`, `clear_api_keys`), which only tests used,
   and the request and response models of the removed routes.
 
+### Fixed
+
+- AND search returned nothing once a tenant had more than one search key, for example after a
+  search-key rotation (#39). The score is now the number of distinct query keywords matched, and
+  AND requires all of them, whichever key produced each token. Destroyed search keys are skipped.
+- Key reads wrote to the database (#39). Every `get_key` rewrote the key row (delete, then insert)
+  and inserted an audit row, so a RAG request returning 25 documents with plaintext made more
+  than 150 writes, and concurrent reads could collide. Reads now count accesses in memory only, unless `audit_reads=True`. Saving a key
+  updates its row in place.
+- The per-tenant key cache never reloaded (#39). A worker that cached a tenant before another
+  worker created its keys created its own keys and could not read the other worker's documents.
+  The cache is now a bounded LRU with a 5-minute TTL, refreshes from the database before each
+  ingest and search, and loads unknown key IDs on demand.
+- The active key was chosen by random key-ID order (#39). It is now the newest active key by
+  creation time.
+- A duplicate `doc_id` returned 400 with the tenant ID in the message, and a concurrent duplicate
+  returned 500 (#39). Both return 409 with a generic message.
+- Keyword extraction filtered stop words and short words before stripping punctuation, so `The,`
+  and `(or)` were indexed and `...` became an empty keyword (#39). Punctuation is now stripped
+  first, empty keywords are never produced, and explicit keywords are normalized the same way as
+  queries (`AI,` matches `ai`).
+- `/v1/rag/retrieve` with `include_plaintext` failed with 404 when a candidate was deleted
+  between search and decrypt (#39). The candidate is now skipped.
+
 ### Changed
 
+- The never-set `encrypted_ir_documents.deleted` column is dropped (Alembic `20261021_0002`).
+  Deletes are hard deletes. Run `alembic upgrade head`.
 - **Breaking: research modules moved** (#37). Update imports as follows:
 
   | Before | After |
@@ -68,6 +94,15 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Added
 
+- `DELETE /v1/documents/{doc_id}` (#39). It deletes a document and its tokens in one transaction,
+  needs the write or admin role, returns 204 or 404, and writes the audit event
+  `document.delete`.
+- Request limits on `POST /v1/documents` (#39): `doc_id` must match
+  `^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$` (so `/`, `.` and `..` are rejected); at most 256 explicit
+  keywords of up to 128 characters; at most 32 metadata keys and 16 KB of metadata JSON. One
+  document yields at most 10,000 extracted keywords.
+- `KeyManager(audit_reads=True)` to persist access counts and audit every key read, plus
+  `KeyManager.refresh()` and `KeyManager.get_or_create_active_key()`.
 - `encrypted_ir.research`, a package for the unaudited prototypes (#37). Importing it issues an
   `encrypted_ir.errors.ResearchPrototypeWarning` (a `UserWarning`). Nothing in the core package or
   the API imports it, and its tests live in `tests/research/`.

@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import threading
+import time
+from collections import OrderedDict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import and_, delete, func, insert, select
+from sqlalchemy import Integer, and_, case, delete, func, insert, literal, select
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 from .database import audit_log_table, document_tokens_table, documents_table
-from .key_manager import KeyManager
-from .searchable import SearchableEncryption
+from .errors import DocumentAlreadyExistsError, DocumentNotFoundError
+from .key_manager import KeyLifecycleState, KeyManager
+from .searchable import SearchableEncryption, extract_keywords, normalize_keyword, search_token
 from .storage_backend import DatabaseStorageBackend
+
+MAX_QUERY_KEYWORDS = 32
 
 
 @dataclass
@@ -36,78 +44,79 @@ class RetrievalCandidate:
 
 
 class DocumentService:
-    """Persist encrypted documents and deterministic keyword search tokens."""
+    """Persist encrypted documents and deterministic keyword search tokens.
+
+    The service is safe to share between threads. Per-tenant key managers are cached in a
+    bounded LRU with a TTL; key reads never write to the database, and keys created by other
+    processes are picked up before every ingest and search.
+    """
 
     DOC_ENCRYPTION_KEY_TYPE = "document_encryption"
     DOC_SEARCH_KEY_TYPE = "document_search"
     ALGORITHM = "aes-gcm"
+    KEY_CACHE_MAX_TENANTS = 1024
+    KEY_CACHE_TTL_SECONDS = 300.0
 
-    def __init__(self, engine: Engine, master_key: bytes):
+    def __init__(
+        self,
+        engine: Engine,
+        master_key: bytes,
+        *,
+        key_cache_max_tenants: int = KEY_CACHE_MAX_TENANTS,
+        key_cache_ttl_seconds: float = KEY_CACHE_TTL_SECONDS,
+    ):
         self._engine = engine
         self._master_key = master_key
-        self._key_managers: dict[str, KeyManager] = {}
+        self._key_cache_max_tenants = key_cache_max_tenants
+        self._key_cache_ttl_seconds = key_cache_ttl_seconds
+        self._key_managers: OrderedDict[str, tuple[float, KeyManager]] = OrderedDict()
+        self._key_cache_lock = threading.Lock()
+
+    def _cached_key_manager(self, tenant_id: str) -> KeyManager | None:
+        entry = self._key_managers.get(tenant_id)
+        if entry is None:
+            return None
+        loaded_at, manager = entry
+        if time.monotonic() - loaded_at >= self._key_cache_ttl_seconds:
+            del self._key_managers[tenant_id]
+            return None
+        self._key_managers.move_to_end(tenant_id)
+        return manager
 
     def _key_manager(self, tenant_id: str) -> KeyManager:
-        if tenant_id not in self._key_managers:
-            backend = DatabaseStorageBackend(self._engine, tenant_id)
-            self._key_managers[tenant_id] = KeyManager(
-                master_key=self._master_key,
-                storage_backend=backend,
-            )
-        return self._key_managers[tenant_id]
+        with self._key_cache_lock:
+            cached = self._cached_key_manager(tenant_id)
+            if cached is not None:
+                return cached
+
+        # Build outside the cache lock so one tenant's database load does not block others.
+        manager = KeyManager(
+            master_key=self._master_key,
+            storage_backend=DatabaseStorageBackend(self._engine, tenant_id),
+        )
+        with self._key_cache_lock:
+            cached = self._cached_key_manager(tenant_id)
+            if cached is not None:
+                return cached
+            self._key_managers[tenant_id] = (time.monotonic(), manager)
+            while len(self._key_managers) > self._key_cache_max_tenants:
+                self._key_managers.popitem(last=False)
+        return manager
 
     @staticmethod
-    def _first_or_create_key(
-        key_manager: KeyManager,
-        key_type: str,
-        description: str,
-    ) -> str:
-        existing = key_manager.list_keys(key_type=key_type, active_only=True)
-        if existing:
-            return sorted(existing)[0]
-        return key_manager.create_key(key_type, key_size=32, description=description)
-
-    def _active_cipher(self, tenant_id: str) -> tuple[SearchableEncryption, str, str]:
-        key_manager = self._key_manager(tenant_id)
-        encryption_key_id = self._first_or_create_key(
-            key_manager,
-            self.DOC_ENCRYPTION_KEY_TYPE,
-            "RAG document encryption",
-        )
-        search_key_id = self._first_or_create_key(
-            key_manager,
-            self.DOC_SEARCH_KEY_TYPE,
-            "RAG document search tokens",
-        )
-        return (
-            SearchableEncryption(
-                key_manager.get_key(encryption_key_id),
-                key_manager.get_key(search_key_id),
-            ),
-            encryption_key_id,
-            search_key_id,
-        )
-
-    def _cipher_for_keys(
-        self,
-        tenant_id: str,
-        encryption_key_id: str,
-        search_key_id: str,
-    ) -> SearchableEncryption:
-        key_manager = self._key_manager(tenant_id)
-        return SearchableEncryption(
-            key_manager.get_key_for_decryption(encryption_key_id),
-            key_manager.get_key_for_decryption(search_key_id),
-        )
+    def _normalize_keywords(keywords: Iterable[str]) -> set[str]:
+        normalized = (normalize_keyword(keyword) for keyword in keywords)
+        return {keyword for keyword in normalized if keyword}
 
     @staticmethod
-    def _extract_query_keywords(query: str) -> set[str]:
-        probe = SearchableEncryption()
-        keywords = probe._extract_keywords(query)
+    def _extract_query_keywords(query: str) -> list[str]:
+        keywords = sorted(extract_keywords(query, max_keywords=MAX_QUERY_KEYWORDS))
         if keywords:
             return keywords
-        normalized = query.strip().lower()
-        return {normalized} if normalized else set()
+        # A query made only of short words or stop words is matched as one explicit keyword,
+        # for example "AI" against a document ingested with keywords=["AI"].
+        fallback = normalize_keyword(query)
+        return [fallback] if fallback else []
 
     def record_audit_event(
         self,
@@ -148,48 +157,59 @@ class DocumentService:
         doc_id: str,
         content: str,
         metadata: dict[str, Any] | None = None,
-        keywords: set[str] | None = None,
+        keywords: Iterable[str] | None = None,
     ) -> dict[str, Any]:
-        """Encrypt, index, and persist a document for a tenant."""
-        cipher, encryption_key_id, search_key_id = self._active_cipher(tenant_id)
-        encrypted_doc, tokens = cipher.encrypt_document(
-            content,
-            auto_extract_keywords=keywords is None,
-            keywords=keywords,
+        """Encrypt, index, and persist a document for a tenant.
+
+        Raises:
+            DocumentAlreadyExistsError: If the tenant already has a document with this ID,
+                including when a concurrent request inserts it first.
+        """
+        key_manager = self._key_manager(tenant_id)
+        encryption_key_id = key_manager.get_or_create_active_key(
+            self.DOC_ENCRYPTION_KEY_TYPE, "RAG document encryption"
         )
-        metadata = metadata or {}
-
-        with self._engine.begin() as conn:
-            exists = conn.execute(
-                select(documents_table.c.doc_id).where(
-                    documents_table.c.tenant_id == tenant_id,
-                    documents_table.c.doc_id == doc_id,
-                )
-            ).first()
-            if exists is not None:
-                raise ValueError(f"Document '{doc_id}' already exists for tenant '{tenant_id}'")
-
-            conn.execute(
-                insert(documents_table).values(
-                    tenant_id=tenant_id,
-                    doc_id=doc_id,
-                    encrypted_document=encrypted_doc,
-                    algorithm=self.ALGORITHM,
-                    encryption_key_id=encryption_key_id,
-                    search_key_id=search_key_id,
-                    metadata_json=metadata,
-                    token_count=len(tokens),
-                    deleted=False,
-                )
+        search_key_id = key_manager.get_or_create_active_key(
+            self.DOC_SEARCH_KEY_TYPE, "RAG document search tokens"
+        )
+        cipher = SearchableEncryption(
+            key_manager.get_key(encryption_key_id),
+            key_manager.get_key(search_key_id),
+        )
+        if keywords is None:
+            encrypted_doc, tokens = cipher.encrypt_document(content)
+        else:
+            encrypted_doc, tokens = cipher.encrypt_document(
+                content,
+                auto_extract_keywords=False,
+                keywords=self._normalize_keywords(keywords),
             )
-            if tokens:
+
+        try:
+            with self._engine.begin() as conn:
                 conn.execute(
-                    insert(document_tokens_table),
-                    [
-                        {"tenant_id": tenant_id, "token": token, "doc_id": doc_id}
-                        for token in tokens
-                    ],
+                    insert(documents_table).values(
+                        tenant_id=tenant_id,
+                        doc_id=doc_id,
+                        encrypted_document=encrypted_doc,
+                        algorithm=self.ALGORITHM,
+                        encryption_key_id=encryption_key_id,
+                        search_key_id=search_key_id,
+                        metadata_json=metadata or {},
+                        token_count=len(tokens),
+                    )
                 )
+                if tokens:
+                    conn.execute(
+                        insert(document_tokens_table),
+                        [
+                            {"tenant_id": tenant_id, "token": token, "doc_id": doc_id}
+                            for token in sorted(tokens)
+                        ],
+                    )
+        except IntegrityError as exc:
+            # The primary key (tenant_id, doc_id) is the only constraint a new row can hit.
+            raise DocumentAlreadyExistsError(doc_id) from exc
 
         return {
             "doc_id": doc_id,
@@ -199,19 +219,28 @@ class DocumentService:
             "indexed_token_count": len(tokens),
         }
 
-    def _query_tokens(self, tenant_id: str, query: str) -> list[str]:
-        key_manager = self._key_manager(tenant_id)
-        search_key_ids = key_manager.list_keys(
-            key_type=self.DOC_SEARCH_KEY_TYPE,
-            active_only=False,
-        )
+    def _query_token_groups(self, tenant_id: str, query: str) -> dict[str, int]:
+        """Map each query token to the index of the keyword it encodes.
+
+        A tenant can hold several search keys (after rotation, or when two processes created
+        one at the same time), so every keyword has one token per non-destroyed search key.
+        """
         keywords = self._extract_query_keywords(query)
-        tokens: list[str] = []
-        for search_key_id in search_key_ids:
+        if not keywords:
+            return {}
+        key_manager = self._key_manager(tenant_id)
+        key_manager.refresh()
+        groups: dict[str, int] = {}
+        for search_key_id in sorted(
+            key_manager.list_keys(key_type=self.DOC_SEARCH_KEY_TYPE, active_only=False)
+        ):
+            metadata = key_manager.get_metadata(search_key_id)
+            if metadata.lifecycle_state == KeyLifecycleState.DESTROYED:
+                continue
             search_key = key_manager.get_key_for_decryption(search_key_id)
-            cipher = SearchableEncryption(search_key=search_key)
-            tokens.extend(cipher.generate_search_query(keyword) for keyword in keywords)
-        return tokens
+            for index, keyword in enumerate(keywords):
+                groups[search_token(search_key, keyword)] = index
+        return groups
 
     def search_documents(
         self,
@@ -220,25 +249,34 @@ class DocumentService:
         operator: str = "OR",
         limit: int = 10,
     ) -> list[RetrievalCandidate]:
-        """Search encrypted document tokens and return ranked document IDs."""
-        tokens = self._query_tokens(tenant_id, query)
-        if not tokens:
+        """Search encrypted document tokens and return ranked document IDs.
+
+        The score is the number of distinct query keywords a document matches. ``AND``
+        returns only documents that match every keyword; ``OR`` returns any match.
+        """
+        groups = self._query_token_groups(tenant_id, query)
+        if not groups:
             return []
 
-        token_count = len(set(tokens))
+        keyword_count = len(set(groups.values()))
+        keyword_index = case(
+            {token: literal(index, Integer) for token, index in groups.items()},
+            value=document_tokens_table.c.token,
+        )
+        matched_keywords = func.count(keyword_index.distinct())
         score_stmt = (
             select(
                 document_tokens_table.c.doc_id.label("doc_id"),
-                func.count(document_tokens_table.c.token).label("score"),
+                matched_keywords.label("score"),
             )
             .where(
                 document_tokens_table.c.tenant_id == tenant_id,
-                document_tokens_table.c.token.in_(tokens),
+                document_tokens_table.c.token.in_(list(groups)),
             )
             .group_by(document_tokens_table.c.doc_id)
         )
         if operator == "AND":
-            score_stmt = score_stmt.having(func.count(document_tokens_table.c.token) >= token_count)
+            score_stmt = score_stmt.having(matched_keywords >= keyword_count)
         scores = score_stmt.subquery()
         stmt = (
             select(
@@ -255,10 +293,9 @@ class DocumentService:
                     ),
                 )
             )
-            .where(documents_table.c.deleted.is_(False))
+            .order_by(scores.c.score.desc(), documents_table.c.doc_id)
+            .limit(limit)
         )
-        stmt = stmt.order_by(scores.c.score.desc(), documents_table.c.doc_id)
-        stmt = stmt.limit(limit)
 
         with self._engine.connect() as conn:
             rows = conn.execute(stmt).all()
@@ -273,18 +310,24 @@ class DocumentService:
         ]
 
     def get_document(self, tenant_id: str, doc_id: str) -> DocumentRecord:
-        """Decrypt one document by ID for an authorized tenant."""
+        """Decrypt one document by ID for an authorized tenant.
+
+        Raises:
+            DocumentNotFoundError: If the tenant has no document with this ID.
+        """
         stmt = select(documents_table).where(
             documents_table.c.tenant_id == tenant_id,
             documents_table.c.doc_id == doc_id,
-            documents_table.c.deleted.is_(False),
         )
         with self._engine.connect() as conn:
             row = conn.execute(stmt).first()
         if row is None:
-            raise KeyError(f"Document '{doc_id}' not found")
+            raise DocumentNotFoundError(doc_id)
 
-        cipher = self._cipher_for_keys(tenant_id, row.encryption_key_id, row.search_key_id)
+        key_manager = self._key_manager(tenant_id)
+        cipher = SearchableEncryption(
+            encryption_key=key_manager.get_key_for_decryption(row.encryption_key_id)
+        )
         plaintext = cipher.decrypt_document(bytes(row.encrypted_document)).decode("utf-8")
         return DocumentRecord(
             doc_id=row.doc_id,
@@ -301,15 +344,29 @@ class DocumentService:
         top_k: int = 5,
         include_plaintext: bool = False,
     ) -> list[RetrievalCandidate]:
-        """Return ranked candidates for a downstream RAG pipeline."""
+        """Return ranked candidates for a downstream RAG pipeline.
+
+        A candidate deleted between the search and the decrypt is dropped rather than failing
+        the whole request.
+        """
         candidates = self.search_documents(tenant_id, query, operator="OR", limit=top_k)
-        if include_plaintext:
-            for candidate in candidates:
+        if not include_plaintext:
+            return candidates
+        retrieved = []
+        for candidate in candidates:
+            try:
                 candidate.plaintext = self.get_document(tenant_id, candidate.doc_id).plaintext
-        return candidates
+            except DocumentNotFoundError:
+                continue
+            retrieved.append(candidate)
+        return retrieved
 
     def delete_document(self, tenant_id: str, doc_id: str) -> bool:
-        """Delete a document and its tokens. Used by tests and future admin flows."""
+        """Delete a document and its tokens in one transaction.
+
+        Returns:
+            True if the document existed.
+        """
         with self._engine.begin() as conn:
             conn.execute(
                 delete(document_tokens_table).where(
