@@ -18,6 +18,7 @@ They are identified by ``documents.algorithm == "aes-gcm"`` and opened by :func:
 from __future__ import annotations
 
 import os
+from typing import cast
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -93,7 +94,7 @@ def seal(
     body = AESGCM(key).encrypt(
         nonce, plaintext, _associated_data(header, purpose, tenant_id, doc_id)
     )
-    return header + body
+    return header + cast(bytes, body)
 
 
 def _parse(blob: bytes) -> tuple[bytes, str, bytes, bytes]:
@@ -133,8 +134,9 @@ def open_sealed(
     if header_key_id != key_id:
         raise DocumentIntegrityError("Sealed document names a different key")
     try:
-        return AESGCM(key).decrypt(
-            nonce, body, _associated_data(header, purpose, tenant_id, doc_id)
+        return cast(
+            bytes,
+            AESGCM(key).decrypt(nonce, body, _associated_data(header, purpose, tenant_id, doc_id)),
         )
     except InvalidTag as exc:
         raise DocumentIntegrityError("Sealed document failed authentication") from exc
@@ -148,6 +150,6 @@ def open_legacy(key: bytes, blob: bytes) -> bytes:
         raise DocumentIntegrityError("Legacy document is too short")
     iv, tag, ciphertext = blob[:NONCE_SIZE], blob[NONCE_SIZE : NONCE_SIZE + TAG_SIZE], blob[28:]
     try:
-        return AESGCM(key).decrypt(iv, ciphertext + tag, None)
+        return cast(bytes, AESGCM(key).decrypt(iv, ciphertext + tag, None))
     except InvalidTag as exc:
         raise DocumentIntegrityError("Legacy document failed authentication") from exc
