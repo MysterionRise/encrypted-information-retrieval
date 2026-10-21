@@ -27,6 +27,8 @@ from ..models.responses import (
     RagRetrieveResponse,
 )
 
+# Handlers are plain ``def`` so FastAPI runs them in its thread pool: database and crypto work
+# never blocks the event loop that serves /health and /metrics.
 router = APIRouter(tags=["documents"])
 
 DocId = Annotated[
@@ -77,7 +79,7 @@ def _record_failure(
         "document content, stores search tokens, and persists tenant-scoped key metadata."
     ),
 )
-async def ingest_document(
+def ingest_document(
     body: DocumentIngestRequest,
     request: Request,
     tenant: TenantInfo = Depends(require_role(Role.WRITE, Role.ADMIN)),
@@ -117,7 +119,7 @@ async def ingest_document(
         "This endpoint is RAG-ready retrieval infrastructure; it does not call an LLM."
     ),
 )
-async def search_documents(
+def search_documents(
     body: DocumentSearchRequest,
     request: Request,
     tenant: TenantInfo = Depends(require_role(Role.READ, Role.WRITE, Role.ADMIN)),
@@ -164,7 +166,7 @@ async def search_documents(
     summary="Decrypt a stored document",
     description="Decrypt one authorized tenant-owned document by ID for retrieval pipelines.",
 )
-async def get_document(
+def get_document(
     doc_id: DocId,
     request: Request,
     tenant: TenantInfo = Depends(require_role(Role.READ, Role.WRITE, Role.ADMIN)),
@@ -205,7 +207,7 @@ async def get_document(
         "transaction. Returns 404 if the tenant has no document with this ID."
     ),
 )
-async def delete_document(
+def delete_document(
     doc_id: DocId,
     request: Request,
     tenant: TenantInfo = Depends(require_role(Role.WRITE, Role.ADMIN)),
@@ -240,7 +242,7 @@ async def delete_document(
         "No embeddings or LLM calls are performed in this prototype workflow."
     ),
 )
-async def retrieve_for_rag(
+def retrieve_for_rag(
     body: RagRetrieveRequest,
     request: Request,
     tenant: TenantInfo = Depends(require_role(Role.READ, Role.WRITE, Role.ADMIN)),

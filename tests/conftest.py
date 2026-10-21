@@ -24,10 +24,17 @@ from encrypted_ir.settings import EncryptedIRSettings
 SettingsFactory = Callable[..., EncryptedIRSettings]
 TokenFactory = Callable[..., str]
 
+TEST_JWT_SECRET = "test-only-dev-jwt-secret-0123456789abcdef"  # noqa: S105
+TEST_DEV_API_KEY = "test-only-dev-api-key"
+
 
 @pytest.fixture()
 def settings_factory() -> SettingsFactory:
-    """Return a factory for dev-mode settings backed by an in-memory database."""
+    """Return a factory for dev-mode settings backed by an in-memory database.
+
+    Dev auth is on, with a test-only JWT secret and dev API key; ``/docs`` stays off unless a
+    test passes ``enable_docs=True``.
+    """
 
     def _factory(**overrides: Any) -> EncryptedIRSettings:
         values: dict[str, Any] = {
@@ -37,6 +44,8 @@ def settings_factory() -> SettingsFactory:
             "generated_ephemeral_master_key": True,
             "auto_create_tables": True,
             "dev_auth_enabled": True,
+            "jwt_secret": TEST_JWT_SECRET,
+            "dev_api_key": TEST_DEV_API_KEY,
         }
         values.update(overrides)
         return EncryptedIRSettings(**values)

@@ -13,6 +13,27 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Security
 
+- **Tokens are fully validated** (#41). Dev and OIDC tokens must carry `exp` and `iat` (30 s
+  leeway, `ENCRYPTED_IR_JWT_LEEWAY_SECONDS`); OIDC tokens also need `aud` and `iss`, and are
+  accepted only with an allowlisted asymmetric algorithm (`ENCRYPTED_IR_OIDC_ALGORITHMS`, default
+  `RS256`; `PS256` and `ES256` allowed, `HS*` and `none` refused at startup). The tenant claim must
+  be a string matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`, so `_system` and other
+  underscore-prefixed tenants are rejected, and the roles claim is required in every mode
+  instead of defaulting to `read` under dev auth.
+- **Errors no longer echo internals** (#41). Every 401 returns `{"detail": "Not authenticated"}`
+  and every 403 `Insufficient permissions`; `ValueError` and `KeyError` responses carry generic
+  messages. The specific reason goes to an audit row (`auth.failure`, `authz.failure`,
+  `rate_limit.exceeded`) under the caller's tenant, or `_system` when unauthenticated, limited
+  to 60 rows per minute per process. `/metrics` counts every 401, 403 and 429.
+- **`/ready` returns booleans only** (#41); exception text, migration revisions, auth mode and
+  key source go to the log.
+- `X-Request-ID` is echoed only if it is 1 to 64 characters of `[A-Za-z0-9._-]`; anything else
+  is replaced with a UUID (#41).
+- Request bodies are limited by actual size, including chunked bodies without `Content-Length`;
+  an invalid `Content-Length` returns 400 (#41). The limit is `ENCRYPTED_IR_MAX_BODY_BYTES`.
+- CORS allows only `GET`, `POST` and `DELETE` and a fixed header list, and never sends
+  credentials with a `*` origin; `*` is refused in `prod` (#41).
+- Settings repr no longer shows the master key, JWT secret or dev API key (#41).
 - **Ciphertexts are bound to their context** (#40, ADR-007). Document content and metadata are
   sealed in a versioned header (`version || algorithm || key_id || nonce`), and the AES-GCM
   associated data covers the header, the tenant, the document ID and the purpose (content or
@@ -73,6 +94,21 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Changed
 
+- **Breaking: dev auth is off by default** (#41). `ENCRYPTED_IR_DEV_AUTH_ENABLED` defaults to
+  `false`, is refused unless `ENCRYPTED_IR_ENV=dev`, and needs `ENCRYPTED_IR_JWT_SECRET` of at
+  least 32 bytes; there is no built-in secret any more. The dev API key works only when
+  `ENCRYPTED_IR_DEV_API_KEY` is set. `docker-compose.yml` sets all three, so the Compose demo is
+  unchanged.
+- **Breaking: `/docs`, `/redoc` and `/openapi.json` are off by default** (#41). Set
+  `ENCRYPTED_IR_ENABLE_DOCS=true` to serve them; Compose does.
+- **Breaking: `/ready` response shape** (#41). `checks` maps `database`, `migrations`, `auth`
+  and `key_provider` to booleans instead of objects with `ok`, `error`, `mode` and `source`.
+- Auth configuration is read only from `EncryptedIRSettings` at app startup (#41). Importing
+  `encrypted_ir.api` no longer reads the environment, warns, or raises. If the app has no auth
+  config, every request is rejected.
+- Document routes, `/ready` and the auth dependencies are plain `def` functions, so FastAPI runs
+  them in its thread pool; a slow database or JWKS fetch no longer blocks `/health` and
+  `/metrics` (#41). The rate limiter is guarded by a lock.
 - **Breaking for KMS deployments:** an `ENCRYPTED_IR_ENCRYPTED_MASTER_KEY_B64` created before
   #40 was wrapped without an encryption context and no longer unwraps. Regenerate it with
   `python -m encrypted_ir.tools.generate_kms_master_key --environment <ENCRYPTED_IR_ENV>`, or
@@ -122,6 +158,13 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Added
 
+- Settings (#41): `ENCRYPTED_IR_DEV_API_KEY`, `ENCRYPTED_IR_DEV_TENANT_ID` and
+  `ENCRYPTED_IR_JWT_SECRET` now live in `EncryptedIRSettings`, alongside the new
+  `ENCRYPTED_IR_JWT_LEEWAY_SECONDS`, `ENCRYPTED_IR_OIDC_ALGORITHMS`,
+  `ENCRYPTED_IR_JWKS_TIMEOUT_SECONDS`, `ENCRYPTED_IR_ENABLE_DOCS` and
+  `ENCRYPTED_IR_MAX_BODY_BYTES`. The README lists them with their defaults.
+- `/metrics` fields `unauthorized_count`, `forbidden_count`, `rate_limited_count` and
+  `security_audit_dropped_count` (#41).
 - `DELETE /v1/documents/{doc_id}` (#39). It deletes a document and its tokens in one transaction,
   needs the write or admin role, returns 204 or 404, and writes the audit event
   `document.delete`.
