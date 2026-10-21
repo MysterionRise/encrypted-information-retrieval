@@ -13,6 +13,10 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Removed
 
+- `encrypted_ir.order_preserving` (OPE) and the `TransactionProcessing` and `FraudDetection` use
+  cases built on it (#37). This OPE was decryptable without the key: `plaintext = ciphertext //
+  (2**32 + 1)`. ORE is not a drop-in replacement, because this repository's ORE prototype also
+  reveals total order.
 - The demo API routes `POST /v1/encrypt`, `POST /v1/decrypt`, `POST /v1/search/equality`,
   `POST /v1/search/range`, `POST /v1/search/keyword`, `GET /v1/keys` and `POST /v1/keys/rotate`
   (#36). They held random per-process keys in module globals, so their data did not survive a
@@ -24,6 +28,34 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Changed
 
+- **Breaking: research modules moved** (#37). Update imports as follows:
+
+  | Before | After |
+  | --- | --- |
+  | `encrypted_ir.ore` / `from encrypted_ir import ORE` | `encrypted_ir.research.ore` |
+  | `encrypted_ir.fpe` / `FF1`, `FormatPreservingEncryption` | `encrypted_ir.research.fpe` |
+  | `encrypted_ir.homomorphic` / `BasicHomomorphicEncryption` | `encrypted_ir.research.homomorphic` |
+  | `encrypted_ir.post_quantum` / `MLKEM`, `MLDSA`, `HybridKEM`, `PostQuantumEncryption` | `encrypted_ir.research.post_quantum` |
+  | `encrypted_ir.differential_privacy` and its seven classes | `encrypted_ir.research.differential_privacy` |
+  | `encrypted_ir.use_cases` | `encrypted_ir.research.use_cases` |
+  | `encrypted_ir.searchable.ForwardPrivateSSE`, `BackwardPrivateIndex` | `encrypted_ir.research.forward_private_sse` |
+
+  The top-level package no longer sets the CKKS and post-quantum names to `None` when their
+  optional dependencies are missing. Importing those modules without the `research` extra raises
+  an `ImportError` that names the extra.
+- **Breaking: blind-index values change** (#37). Field keys are now derived from a
+  length-prefixed context (`encrypted-ir/blind-index/v2`, tenant, field), so tenant `a:b` with
+  field `c` no longer shares a key with tenant `a` and field `b:c`. Indexes created by earlier
+  versions must be rebuilt. Blind indexes are not stored by the durable document path.
+- **Breaking: `BlindIndexSearch.index_records` returns `dict[str, list[str]]`** (#37), mapping each
+  index to every record with that value. Previously records sharing a value overwrote each other
+  and `search` returned at most one of them. `BlindIndexConfig` now rejects an `output_length`
+  outside 8 to 32 bytes and an unknown `unicode_normalize` form; `None` disables normalization.
+- The ORE prototype's `ALGORITHM` identifier is now `ore-clww-prototype`. Ciphertexts are unchanged.
+- Tests no longer hide `DeprecationWarning`s: the global filter in `pyproject.toml`, CI and the
+  Makefile existed only for OPE.
+- The coverage CI job installs the research extras, so the prototypes' tests count toward the
+  coverage floor.
 - The package version is now `0.9.0` with the classifier `Development Status :: 3 - Alpha`,
   matching the project's prototype status. The earlier `1.0.0` string was never tagged or released.
 - The version has one source, `encrypted_ir.__version__`. `pyproject.toml`, the FastAPI app,
@@ -36,6 +68,9 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Added
 
+- `encrypted_ir.research`, a package for the unaudited prototypes (#37). Importing it issues an
+  `encrypted_ir.errors.ResearchPrototypeWarning` (a `UserWarning`). Nothing in the core package or
+  the API imports it, and its tests live in `tests/research/`.
 - `CHANGELOG.md`.
 - A release workflow (`.github/workflows/release.yml`). Pushing a `v*` tag checks that the tag
   matches the package version, builds the sdist and wheel, runs `twine check`, generates a

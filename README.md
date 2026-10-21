@@ -16,10 +16,20 @@ This repo is strongest as a CTO portfolio artifact: real enough to run locally w
 - Audit records that avoid plaintext, raw queries, tokens, and key material.
 - Benchmarks and evidence docs for local portfolio review.
 
+## Core Versus Research Code
+
+The `encrypted_ir` package exports only the durable document path and the standard constructions
+it is built from: AES-GCM documents with HMAC keyword tokens, AES-SIV, HMAC blind indexes, key
+management and the storage backends. Everything experimental lives in `encrypted_ir.research`:
+the CLWW-style ORE, FF1, CKKS, post-quantum KEM and signatures, differential privacy,
+forward-private SSE and the use-case demos. Importing that package issues a
+`ResearchPrototypeWarning`, nothing in the core package or the API imports it, and its tests run in
+`tests/research/`. See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for what each prototype leaks.
+
 ## Prototype Boundaries
 
 - This is not externally audited and is not production-certified cryptography.
-- Custom ORE and SSE helpers are prototype/research-oriented and need independent review before sensitive production use.
+- The research prototypes in `encrypted_ir.research` (ORE, forward-private SSE and others) are unaudited and need independent review before any sensitive use.
 - The local demo auth path is for development only; production requires real identity, policy, and secret management.
 - RAG support is retrieval-only. There are no embeddings, vector database, model calls, or prompt orchestration in this repo.
 - Docker Compose is a local evidence path, not a cloud deployment.
@@ -80,7 +90,7 @@ python3.11 -m pip install -r requirements.txt
 python3.11 -m pip install -e .
 ```
 
-Optional research dependencies for homomorphic encryption and post-quantum demos:
+Optional dependencies for the CKKS and post-quantum modules in `encrypted_ir.research`:
 
 ```bash
 python3.11 -m pip install -r requirements-research.txt
@@ -89,7 +99,7 @@ python3.11 -m pip install -r requirements-research.txt
 ## Useful Commands
 
 ```bash
-PYTHONPATH=src python3.11 -m pytest -q -W ignore::DeprecationWarning
+PYTHONPATH=src python3.11 -m pytest -q
 python3.11 -m black --check src tests examples
 python3.11 -m ruff check src tests examples
 PYTHONPATH=src python3.11 -m mypy --disable-error-code redundant-cast src/encrypted_ir --ignore-missing-imports --no-strict-optional

@@ -1,5 +1,8 @@
 """Tests for blind index module."""
 
+import hashlib
+import hmac
+
 import pytest
 
 from encrypted_ir.blind_index import (
@@ -251,10 +254,8 @@ class TestBlindIndexSearch:
         # Should have 3 indexes
         assert len(index_map) == 3
 
-        # Each index should map to a record
-        assert "rec1" in index_map.values()
-        assert "rec2" in index_map.values()
-        assert "rec3" in index_map.values()
+        # Each index should map to exactly one record
+        assert sorted(index_map.values()) == [["rec1"], ["rec2"], ["rec3"]]
 
     def test_index_records_missing_field(self):
         """Test indexing records with missing field."""
@@ -270,8 +271,7 @@ class TestBlindIndexSearch:
         index_map = search.index_records(records, "email", config)
 
         # Should only index rec1
-        assert len(index_map) == 1
-        assert "rec1" in index_map.values()
+        assert list(index_map.values()) == [["rec1"]]
 
     def test_search_single_match(self):
         """Test searching for a value."""
@@ -440,3 +440,86 @@ class TestSecurityProperties:
 
         # Same value, different fields → different indexes
         assert index_ssn != index_phone
+
+
+class TestKeyDerivationAndConfigValidation:
+    """Regression tests for the issue #37 fixes."""
+
+    MASTER_KEY = bytes(range(32))
+
+    def test_known_answer_vector(self):
+        """Pin the v2 key derivation so a KDF change cannot silently break stored indexes."""
+        generator = BlindIndexGenerator("tenant-1", self.MASTER_KEY)
+        config = BlindIndexConfig(field_name="email")
+
+        assert generator.create_index("Alice@Example.com ", config) == "gWUeDCGXmwkllX0pD+W+nQ=="
+
+    def test_known_answer_matches_documented_construction(self):
+        """The index is HMAC(HMAC(master, label || lp(tenant) || lp(field)), value)[:len]."""
+        context = (
+            b"encrypted-ir/blind-index/v2"
+            + len(b"tenant-1").to_bytes(4, "big")
+            + b"tenant-1"
+            + len(b"email").to_bytes(4, "big")
+            + b"email"
+        )
+        field_key = hmac.new(self.MASTER_KEY, context, hashlib.sha256).digest()
+        expected = hmac.new(field_key, b"alice@example.com", hashlib.sha256).digest()[:16]
+
+        generator = BlindIndexGenerator("tenant-1", self.MASTER_KEY)
+        raw = generator.create_index_raw("alice@example.com", BlindIndexConfig(field_name="email"))
+
+        assert raw == expected
+
+    def test_separator_in_tenant_or_field_does_not_collide(self):
+        """Tenant 'a:b' with field 'c' must not derive the same key as tenant 'a' with field 'b:c'."""
+        key_1 = BlindIndexGenerator("a:b", self.MASTER_KEY)._derive_field_key("c")
+        key_2 = BlindIndexGenerator("a", self.MASTER_KEY)._derive_field_key("b:c")
+
+        assert key_1 != key_2
+
+    def test_records_sharing_a_value_are_all_returned(self):
+        search = BlindIndexSearch("tenant_1", self.MASTER_KEY)
+        config = BlindIndexConfig(field_name="email")
+        records = {
+            "rec1": {"email": "shared@example.com"},
+            "rec2": {"email": "other@example.com"},
+            "rec3": {"email": "SHARED@example.com"},
+        }
+
+        index_map = search.index_records(records, "email", config)
+
+        assert search.search("shared@example.com", index_map, config) == ["rec1", "rec3"]
+        assert search.multi_search(["shared@example.com"], index_map, config) == {
+            "shared@example.com": ["rec1", "rec3"]
+        }
+
+    def test_search_result_is_a_copy(self):
+        search = BlindIndexSearch("tenant_1", self.MASTER_KEY)
+        config = BlindIndexConfig(field_name="email")
+        index_map = search.index_records({"rec1": {"email": "a@example.com"}}, "email", config)
+
+        search.search("a@example.com", index_map, config).append("injected")
+
+        assert search.search("a@example.com", index_map, config) == ["rec1"]
+
+    @pytest.mark.parametrize("length", [8, 16, 32])
+    def test_output_length_bounds_accepted(self, length):
+        assert BlindIndexConfig(field_name="f", output_length=length).output_length == length
+
+    @pytest.mark.parametrize("length", [0, 7, 33, 64, -1, True, 16.0, "16"])
+    def test_output_length_out_of_range_rejected(self, length):
+        with pytest.raises(ValueError, match="output_length"):
+            BlindIndexConfig(field_name="f", output_length=length)
+
+    @pytest.mark.parametrize("form", ["NFC", "NFD", "NFKC", "NFKD", None])
+    def test_unicode_forms_accepted(self, form):
+        config = BlindIndexConfig(field_name="f", unicode_normalize=form)
+        generator = BlindIndexGenerator("tenant_1", self.MASTER_KEY)
+
+        assert generator.create_index("value", config)
+
+    @pytest.mark.parametrize("form", ["", "nfkc", "NFKX"])
+    def test_invalid_unicode_form_rejected(self, form):
+        with pytest.raises(ValueError, match="unicode_normalize"):
+            BlindIndexConfig(field_name="f", unicode_normalize=form)
