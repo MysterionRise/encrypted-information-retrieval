@@ -38,7 +38,7 @@ This is the code behind `POST /v1/documents`, `POST /v1/documents/search`,
 | Document metadata | Sealed like the content, with its own purpose label so content and metadata cannot be swapped ([#40]). Legacy rows keep plaintext `metadata_json`. | `encrypted_ir_documents.encrypted_metadata` |
 | Tenant keys | AES-GCM wrapped under the app master key, bound by associated data to the tenant, key ID, key type and version, so a wrapped key copied to another tenant or relabelled does not unwrap ([#40]). | `src/encrypted_ir/key_manager.py` |
 | App master key | Environment variable, or AWS KMS `Decrypt` at startup with an encryption context (application, environment, purpose) and a pinned key ID. The KMS path is tested with mocks only; live validation is [#49]. | `src/encrypted_ir/master_key.py`, `src/encrypted_ir/kms_provider.py` |
-| Authentication | Production mode requires OIDC with RS256 tokens verified against a JWKS. Outside production, a dev API key and dev HS256 JWTs with a public default secret are enabled by default ([#41]). | `src/encrypted_ir/api/dependencies/auth.py`, `src/encrypted_ir/settings.py` |
+| Authentication | Production mode requires OIDC: tokens verified against a JWKS, with RS256, PS256 or ES256 only, and `exp`, `iat`, `aud` and `iss` required. Every token needs a tenant claim matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` (so not `_system`) and a non-empty roles claim. A dev API key and dev HS256 JWTs exist for local demos; they are off by default, refused unless `ENCRYPTED_IR_ENV=dev`, and need a secret of at least 32 bytes. Failures return a generic 401 ([#41]). | `src/encrypted_ir/api/dependencies/auth.py`, `src/encrypted_ir/settings.py` |
 | Audit | Database rows. Plaintext, queries, tokens and key material are dropped before writing. The rows are not tamper-evident and cannot be exported ([#44]). | `DocumentService.record_audit_event` |
 | Rate limiting | In-memory and per process, so it is not shared across workers or replicas ([#47]). | `src/encrypted_ir/api/dependencies/rate_limiter.py` |
 
@@ -88,7 +88,8 @@ without the key.
 | --- | --- | --- |
 | Concurrent first ingest in two processes | Two processes ingesting for a new tenant at the same moment can each create a key. Both keys stay valid and every process converges on the newest one, so this costs an extra key, not correctness. | [#39] (documented) |
 | Rotation does not re-encrypt documents | Retiring a compromised key leaves its documents under that key. | [#42] |
-| JWT `exp` not required; exception text in error bodies | Tokens without an expiry never expire. Internals leak in 401 responses and `/ready`. | [#41] |
+| Rejected-request audit is rate-bounded | Beyond 60 rows per minute per process, 401, 403 and 429 responses are counted in `/metrics` but not audited one by one. | [#41] (documented), [#44] |
+| OIDC not validated against a live identity provider | Verification is tested with a fake JWKS; issuer-specific claim shapes may differ. | [#48] |
 | `/metrics` unauthenticated and keyed by raw path | Document IDs are visible to anyone who can reach the endpoint. | [#43] |
 | Audit rows not tamper-evident | A database writer can alter or remove audit history. | [#44] |
 | Docker image lacks boto3 | The KMS production path cannot start from the shipped image. | [#45] |
@@ -124,4 +125,5 @@ roadmap's "Not planned" section explains why each is out of scope for now.
 [#44]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/44
 [#45]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/45
 [#47]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/47
+[#48]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/48
 [#49]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/49

@@ -30,6 +30,7 @@ services:
       ENCRYPTED_IR_DEV_API_KEY: local-demo-key
       ENCRYPTED_IR_DEV_TENANT_ID: local-demo
       ENCRYPTED_IR_JWT_SECRET: local-docker-demo-secret-change-me
+      ENCRYPTED_IR_ENABLE_DOCS: "true"
     ports:
       - "8000:8000"
 

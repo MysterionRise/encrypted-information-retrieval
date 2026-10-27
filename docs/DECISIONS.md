@@ -701,24 +701,32 @@ keyword)` tokens stored one row per keyword per document.
 ## ADR-013: OIDC/JWKS in Production, Explicit Dev Auth Otherwise
 
 **Date**: 2026-07-06 (recorded 2026-10-20)
-**Status**: Accepted. Implemented. Hardening is tracked in [#41].
+**Status**: Accepted. Implemented, and hardened in [#41]. Live IdP evidence is [#48].
 
 ### Decision
 
 - **Production mode** (`ENCRYPTED_IR_ENV=prod`):
   - Requires OIDC issuer, audience and JWKS URL.
-  - Verifies RS256 bearer tokens against the JWKS.
-  - Takes the tenant and roles from configurable claims.
+  - Verifies bearer tokens against the JWKS with an allowlist of asymmetric algorithms
+    (`RS256` by default; `PS256` and `ES256` may be enabled; `HS*` and `none` are refused at
+    startup).
+  - Requires `exp`, `iat`, `aud` and `iss`, with a configurable leeway (30 s by default).
+  - Takes the tenant and roles from configurable claims. The tenant must match
+    `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`; the roles claim is required and must name known roles.
   - Rejects dev auth.
-- **Other modes:** an explicit dev API key and dev HS256 tokens exist so the local demo needs no identity
-  provider.
+- **Dev mode only** (`ENCRYPTED_IR_ENV=dev`): an explicit dev API key and dev HS256 tokens exist so
+  the local demo needs no identity provider. Both are off by default. Dev tokens need a secret of
+  at least 32 bytes and the same claims as OIDC tokens except `aud` and `iss`.
+- All configuration comes from validated settings at startup, and every failure returns the same
+  401 body.
 
 ### Consequences
 
-- The local demo works without cloud accounts.
-- Dev auth is on by default outside production, with a public default HS256 secret.
-- `exp` is not yet required.
-- [#41] tightens both. Live IdP evidence is [#48].
+- The local demo works without cloud accounts, but must opt in to dev auth (Compose does).
+- A token can no longer live forever, impersonate the reserved `_system` tenant, or get a role
+  it does not name.
+- Clients cannot tell an expired token from a forged one; operators read the reason in the
+  audit log.
 
 ---
 
