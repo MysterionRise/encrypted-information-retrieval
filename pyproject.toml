@@ -42,7 +42,7 @@ aws = [
 research = [
     "numpy>=1.24.0",
     "tenseal>=0.3.14",
-    "pqcrypto>=0.4.0,<1.0",  # 1.0 renamed the API; port tracked in #38
+    "pqcrypto>=0.4.0,<2.0",  # 1.0 renamed the API; port tracked in #38
 ]
 dev = [
     "pytest>=7.4.0",
