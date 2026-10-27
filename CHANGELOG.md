@@ -11,8 +11,29 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ## [Unreleased]
 
+### Security
+
+- **Ciphertexts are bound to their context** (#40, ADR-007). Document content and metadata are
+  sealed in a versioned header (`version || algorithm || key_id || nonce`), and the AES-GCM
+  associated data covers the header, the tenant, the document ID and the purpose (content or
+  metadata). Swapping ciphertexts between rows, tenants or purposes, editing the header, or
+  pointing a row at another key now fails to decrypt instead of returning the wrong plaintext.
+  Integrity failures return a generic 500 and write a failure audit row.
+- **Document metadata is encrypted** (#40). New rows store it sealed in `encrypted_metadata` and
+  leave `metadata_json` empty. Search, get and RAG return it decrypted to the owning tenant.
+  Audit rows no longer record metadata key names.
+- **Wrapped tenant keys are bound** to their tenant, key ID, key type and version (#40). A wrapped
+  key copied to another tenant, or with edited metadata, no longer unwraps, and such a row no
+  longer breaks the other keys of the tenant.
+- **AWS KMS calls carry an encryption context** (#40): `application`, `environment` and
+  `purpose`, plus a pinned `KeyId` on `Decrypt`. IAM can require the context with
+  `kms:EncryptionContext:*` conditions; the README shows one.
+
 ### Removed
 
+- `VersionedBlob` and `KeyRotationManager.resolve_key_for_blob` (#40). Nothing used them, and the
+  32-bit key hash could not tell versioned blobs from legacy ones reliably. The document header
+  in `encrypted_ir.document_crypto` replaces them.
 - `encrypted_ir.order_preserving` (OPE) and the `TransactionProcessing` and `FraudDetection` use
   cases built on it (#37). This OPE was decryptable without the key: `plaintext = ciphertext //
   (2**32 + 1)`. ORE is not a drop-in replacement, because this repository's ORE prototype also
@@ -52,6 +73,13 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Changed
 
+- **Breaking for KMS deployments:** an `ENCRYPTED_IR_ENCRYPTED_MASTER_KEY_B64` created before
+  #40 was wrapped without an encryption context and no longer unwraps. Regenerate it with
+  `python -m encrypted_ir.tools.generate_kms_master_key --environment <ENCRYPTED_IR_ENV>`, or
+  re-encrypt the existing blob with `aws kms re-encrypt` and the new destination context.
+- New documents use the `aes-256-gcm/v1` format; `POST /v1/documents` reports it as
+  `algorithm`. Rows written earlier (`aes-gcm`) and keys wrapped earlier stay readable. Alembic
+  `20261021_0003` adds the `encrypted_metadata` column; run `alembic upgrade head`.
 - The never-set `encrypted_ir_documents.deleted` column is dropped (Alembic `20261021_0002`).
   Deletes are hard deletes. Run `alembic upgrade head`.
 - **Breaking: research modules moved** (#37). Update imports as follows:

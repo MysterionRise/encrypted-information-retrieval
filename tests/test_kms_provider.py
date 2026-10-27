@@ -1,5 +1,6 @@
 """Tests for cloud KMS provider module."""
 
+import base64
 import os
 import shutil
 import tempfile
@@ -338,7 +339,9 @@ class TestAWSKMSProvider:
         result = provider.decrypt(ciphertext)
 
         assert result == plaintext
-        mock_boto3_client.decrypt.assert_called_once_with(CiphertextBlob=ciphertext)
+        mock_boto3_client.decrypt.assert_called_once_with(
+            CiphertextBlob=ciphertext, KeyId="alias/test-key"
+        )
 
     def test_get_key_id(self, provider):
         """get_key_id returns the configured key ID."""
@@ -406,7 +409,8 @@ class TestKeyManagerFromKMSWithAWSMock:
             ciphertext = tag + Plaintext
             return {"CiphertextBlob": ciphertext}
 
-        def mock_decrypt(CiphertextBlob):
+        def mock_decrypt(CiphertextBlob, KeyId):
+            assert KeyId == "arn:aws:kms:us-east-1:123:key/abc"
             plaintext = CiphertextBlob[16:]
             return {"Plaintext": plaintext}
 
@@ -458,3 +462,103 @@ class TestKeyManagerFromKMSWithAWSMock:
             assert manager2.get_key(key_id) == original_key
         finally:
             shutil.rmtree(storage_dir)
+
+
+class TestEncryptionContext:
+    """Issue #40: KMS calls carry an encryption context bound to the deployment."""
+
+    @pytest.fixture
+    def client(self):
+        return MagicMock()
+
+    def _provider(self, client, context):
+        with patch.dict("sys.modules", {"boto3": MagicMock()}):
+            provider = AWSKMSProvider("alias/app", region="eu-west-1", encryption_context=context)
+        provider._client = client
+        return provider
+
+    def test_context_sent_on_every_call(self, client):
+        context = {"application": "app", "environment": "prod", "purpose": "app-master-key"}
+        provider = self._provider(client, context)
+        client.generate_data_key.return_value = {"Plaintext": b"p", "CiphertextBlob": b"c"}
+        client.encrypt.return_value = {"CiphertextBlob": b"c"}
+        client.decrypt.return_value = {"Plaintext": b"p"}
+
+        provider.generate_data_key()
+        provider.encrypt(b"secret")
+        provider.decrypt(b"blob")
+
+        client.generate_data_key.assert_called_once_with(
+            KeyId="alias/app", KeySpec="AES_256", EncryptionContext=context
+        )
+        client.encrypt.assert_called_once_with(
+            KeyId="alias/app", Plaintext=b"secret", EncryptionContext=context
+        )
+        client.decrypt.assert_called_once_with(
+            CiphertextBlob=b"blob", KeyId="alias/app", EncryptionContext=context
+        )
+        assert provider.encryption_context == context
+
+    def test_no_context_means_no_parameter(self, client):
+        provider = self._provider(client, None)
+        client.encrypt.return_value = {"CiphertextBlob": b"c"}
+
+        provider.encrypt(b"secret")
+
+        client.encrypt.assert_called_once_with(KeyId="alias/app", Plaintext=b"secret")
+        assert provider.encryption_context is None
+
+    def test_settings_provider_uses_environment_context(self):
+        from encrypted_ir.master_key import _aws_provider_from_settings
+        from encrypted_ir.settings import EncryptedIRSettings
+
+        settings = EncryptedIRSettings(
+            environment="prod",
+            master_key=None,
+            kms_provider="aws",
+            aws_kms_key_id="alias/app",
+            aws_region="eu-west-1",
+            encrypted_master_key=b"wrapped",
+        )
+        with patch.dict("sys.modules", {"boto3": MagicMock()}):
+            provider = _aws_provider_from_settings(settings)
+
+        assert provider.encryption_context == {
+            "application": "encrypted-information-retrieval",
+            "environment": "prod",
+            "purpose": "app-master-key",
+        }
+
+    def test_generate_tool_wraps_with_the_environment_context(self, monkeypatch, capsys):
+        from encrypted_ir.tools import generate_kms_master_key
+
+        created = {}
+
+        class FakeProvider:
+            def __init__(self, key_id, region=None, encryption_context=None):
+                created.update(key_id=key_id, region=region, context=encryption_context)
+
+            def encrypt(self, plaintext):
+                created["plaintext_length"] = len(plaintext)
+                return b"wrapped-master-key"
+
+        monkeypatch.setattr(generate_kms_master_key, "AWSKMSProvider", FakeProvider)
+
+        generate_kms_master_key.main(
+            ["--kms-key-id", "alias/app", "--region", "eu-west-1", "--environment", "dev"]
+        )
+
+        assert capsys.readouterr().out.strip() == (
+            "ENCRYPTED_IR_ENCRYPTED_MASTER_KEY_B64="
+            + base64.b64encode(b"wrapped-master-key").decode("ascii")
+        )
+        assert created == {
+            "key_id": "alias/app",
+            "region": "eu-west-1",
+            "context": {
+                "application": "encrypted-information-retrieval",
+                "environment": "dev",
+                "purpose": "app-master-key",
+            },
+            "plaintext_length": 32,
+        }

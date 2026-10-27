@@ -113,7 +113,24 @@ Generate a KMS-wrapped master key when AWS credentials and a KMS key are availab
 ```bash
 python -m encrypted_ir.tools.generate_kms_master_key \
   --kms-key-id alias/encrypted-ir \
-  --region us-east-1
+  --region us-east-1 \
+  --environment prod
+```
+
+The key is wrapped with the KMS encryption context `application=encrypted-information-retrieval`,
+`environment=<--environment>` and `purpose=app-master-key`, and the API unwraps it with the same
+context, so set `--environment` to the `ENCRYPTED_IR_ENV` it will run under. A key generated before
+this context existed must be regenerated. To make the context mandatory, add a condition to the
+API role's `kms:Decrypt` permission:
+
+```json
+"Condition": {
+  "StringEquals": {
+    "kms:EncryptionContext:application": "encrypted-information-retrieval",
+    "kms:EncryptionContext:environment": "prod",
+    "kms:EncryptionContext:purpose": "app-master-key"
+  }
+}
 ```
 
 Run the retrieval benchmark locally:

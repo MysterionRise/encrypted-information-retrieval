@@ -426,9 +426,42 @@ Key management complexity is a top operational challenge (59% of IT professional
 
 ## ADR-007: Crypto-Agile Design with Algorithm Identifiers
 
-**Date**: 2025-01-11
-**Status**: Accepted, not implemented. The ciphertext header below does not exist. Document ciphertexts are `iv || tag || ciphertext` with no header or associated data ([#40]).
+**Date**: 2025-01-11 (revised 2026-10-21)
+**Status**: Accepted and implemented for stored documents ([#40]). The 2025 draft below the line
+proposed a fixed 16-byte key ID and several algorithm IDs; what shipped is narrower and is described
+first.
 **Decision Makers**: Security Architecture Team
+
+### As implemented
+
+Document content and document metadata are sealed by `encrypted_ir.document_crypto`:
+
+```
+version (u8 = 1) || algorithm (u8 = 1, AES-256-GCM) || key_id_len (u8, 1..255) || key_id (UTF-8)
+|| nonce (12 bytes) || ciphertext || tag (16 bytes)
+
+AES-GCM associated data = header || lp("encrypted-ir/document/v1") || lp(purpose)
+                          || lp(tenant_id) || lp(doc_id)          lp = 4-byte big-endian length prefix
+purpose = "content" | "metadata"
+```
+
+- The row's `algorithm` column is `aes-256-gcm/v1` for this format. Rows written before it keep
+  `aes-gcm` (`iv || tag || ciphertext`, no associated data) and stay readable; the rotation tool in
+  [#42] will re-encrypt them. Changing a new row's `algorithm` to `aes-gcm` cannot downgrade it,
+  because the legacy path then fails the GCM tag check.
+- Decryption checks that the header's version, algorithm and key ID match the row, and that the
+  associated data matches the tenant, document and purpose. Swapping ciphertexts between rows,
+  tenants or purposes, editing the header, or pointing the row at another key all fail.
+- Tenant keys are wrapped under the app master key with associated data
+  `lp("encrypted-ir/tenant-key/v1") || lp(tenant_id) || lp(key_id) || lp(key_type) || lp(version)`
+  and `wrap_format: 1` in their metadata. Keys without `wrap_format` were wrapped with no associated
+  data; they still unwrap and are re-wrapped the next time they are saved.
+- The app master key is wrapped by AWS KMS with the encryption context `application`,
+  `environment` and `purpose` (`app-master-key`).
+- The header reveals the key ID and format version to anyone who can read the row; both were
+  already visible in the row's columns.
+
+### Original 2025 design (not implemented as written)
 
 ### Context
 
@@ -441,51 +474,15 @@ Cryptographic algorithms have finite lifespans. We must prepare for:
 
 **Design for crypto-agility: include algorithm identifiers in ciphertext headers; support versioned keys.**
 
-### Rationale
+### Alternatives Considered
 
-**Pros**:
-- ✅ **Future-proof**: Seamless algorithm migration
-- ✅ **Gradual rollout**: Support old + new algorithms simultaneously
-- ✅ **Audit trail**: Track which algorithm version encrypted each record
-- ✅ **Compliance**: Meet PQC migration mandates
-
-**Cons**:
-- ⚠️ **Complexity**: Versioning logic in encrypt/decrypt paths
-- ⚠️ **Storage overhead**: ~16 bytes per ciphertext for header
-
-**Alternatives Considered**:
 - **Fixed algorithms**: Rejected (requires full data re-encryption for algorithm changes)
 - **External mapping**: Rejected (lose self-describing property)
 
-### Ciphertext Format
-
-```
-┌─────────────────────────────────────────────────────┐
-│ Encrypted Ciphertext Structure                      │
-├─────────────────────────────────────────────────────┤
-│ [Version: 1 byte]                                   │
-│ [Algorithm ID: 1 byte]                              │
-│   - 0x01: AES-256-SIV                               │
-│   - 0x02: AES-256-GCM                               │
-│   - 0x03: ChaCha20-Poly1305                         │
-│   - 0x10: Kyber768 + AES-256-GCM (PQC hybrid)       │
-│ [Key ID: 16 bytes]                                  │
-│ [IV/Nonce: variable, algorithm-dependent]           │
-│ [Ciphertext: variable]                              │
-│ [Authentication Tag: 16 bytes]                      │
-└─────────────────────────────────────────────────────┘
-```
-
 ### Consequences
 
-- **Migration**: Decrypt with old algorithm, re-encrypt with new (lazy migration)
-- **Backward compatibility**: Old ciphertexts remain valid until rotation
-- **PQC readiness**: Smooth transition to Kyber/Dilithium in 2025-2026
-
-### Compliance Mapping
-
-- Target: **NIST PQC migration**: Algorithm agility enables hybrid mode
-- Target: **PCI DSS 12.3.4**: Documented cryptographic architecture
+- **Migration**: Decrypt with the old format, re-encrypt with the new one (the rotation tool, [#42]).
+- **Backward compatibility**: Old ciphertexts remain readable until they are re-encrypted.
 
 ### References
 
@@ -677,7 +674,7 @@ supported for tests and local runs.
 ## ADR-012: AES-GCM Documents with HMAC Keyword Tokens on the Durable Path
 
 **Date**: 2026-07-06 (recorded 2026-10-20)
-**Status**: Accepted. Implemented in `DocumentService` through `SearchableEncryption`.
+**Status**: Accepted. Implemented in `DocumentService`, with the sealed format of ADR-007.
 
 ### Context
 
@@ -687,15 +684,17 @@ to reason about.
 
 ### Decision
 
-Encrypt document bodies with AES-256-GCM under a per-tenant key. Index them with deterministic
-`HMAC-SHA256(per-tenant search key, keyword)` tokens stored one row per keyword per document.
+Encrypt document bodies and their metadata with AES-256-GCM under a per-tenant key, bound to the
+tenant and document (ADR-007). Index them with deterministic `HMAC-SHA256(per-tenant search key,
+keyword)` tokens stored one row per keyword per document.
 
 ### Consequences
 
 - The leakage is explicit and documented per endpoint: keyword equality and frequency within a tenant,
   query repetition, result sizes and access patterns.
 - No forward or backward privacy.
-- Binding ciphertexts to their tenant and document with associated data is tracked in [#40].
+- Ciphertexts and wrapped keys are bound to their tenant, document and key ([#40]). Metadata is
+  encrypted, so search results decrypt it per match.
 
 ---
 

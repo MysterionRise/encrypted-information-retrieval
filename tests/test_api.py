@@ -19,7 +19,7 @@ import json
 
 import jwt
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from encrypted_ir import __version__
 from encrypted_ir.api.dependencies.rate_limiter import (
@@ -27,7 +27,7 @@ from encrypted_ir.api.dependencies.rate_limiter import (
     RateLimiter,
     set_rate_limiter,
 )
-from encrypted_ir.database import audit_log_table
+from encrypted_ir.database import audit_log_table, documents_table
 
 REMOVED_DEMO_PATHS = (
     "/v1/encrypt",
@@ -218,7 +218,7 @@ class TestDurableDocuments:
         assert ingest.status_code == 200
         ingest_data = ingest.json()
         assert ingest_data["doc_id"] == "risk-report-1"
-        assert ingest_data["algorithm"] == "aes-gcm"
+        assert ingest_data["algorithm"] == "aes-256-gcm/v1"
         assert ingest_data["indexed_token_count"] > 0
 
         search = client.post(
@@ -365,6 +365,37 @@ class TestDocumentDelete:
 
         assert resp.status_code == 404
         assert client.get("/v1/documents/tenant-a-doc", headers=auth_headers).status_code == 200
+
+
+class TestIntegrityFailures:
+    def test_tampered_ciphertext_returns_generic_500_and_audits(self, client, auth_headers, app):
+        _ingest(client, auth_headers, "doc-1", "first secret")
+        _ingest(client, auth_headers, "doc-2", "second secret")
+        engine = app.state.database_engine
+        with engine.begin() as conn:
+            second = conn.execute(
+                select(documents_table.c.encrypted_document).where(
+                    documents_table.c.doc_id == "doc-2"
+                )
+            ).scalar_one()
+            conn.execute(
+                update(documents_table)
+                .where(documents_table.c.doc_id == "doc-1")
+                .values(encrypted_document=second)
+            )
+
+        resp = client.get("/v1/documents/doc-1", headers=auth_headers)
+
+        assert resp.status_code == 500
+        assert resp.json()["error"] == "internal_error"
+        assert "second secret" not in resp.text
+        assert "authentication" not in resp.text
+        with engine.connect() as conn:
+            rows = [row.entry_json for row in conn.execute(select(audit_log_table.c.entry_json))]
+        failures = [
+            r for r in rows if r.get("event_type") == "document.decrypt" and not r["success"]
+        ]
+        assert failures[-1]["details"]["error_type"] == "DocumentIntegrityError"
 
 
 class TestTenantIsolation:
