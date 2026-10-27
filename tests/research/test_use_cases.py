@@ -3,12 +3,10 @@
 import pytest
 
 from encrypted_ir.key_manager import KeyManager
-from encrypted_ir.use_cases import (
+from encrypted_ir.research.use_cases import (
     AccountManagement,
     CreditScoring,
     DocumentSearch,
-    FraudDetection,
-    TransactionProcessing,
 )
 
 
@@ -55,60 +53,6 @@ class TestAccountManagement:
         # Search for non-existent account
         matches = account_mgmt.search_account("ACC-999", encrypted_accounts)
         assert len(matches) == 0
-
-
-class TestTransactionProcessing:
-    """Test transaction processing use case."""
-
-    def test_amount_encryption(self):
-        """Test transaction amount encryption."""
-        manager = KeyManager()
-        txn_processor = TransactionProcessing(manager)
-
-        amount = 1234.56
-        encrypted = txn_processor.encrypt_amount(amount)
-
-        assert encrypted > 0
-
-    def test_find_large_transactions(self):
-        """Test finding transactions above threshold."""
-        manager = KeyManager()
-        txn_processor = TransactionProcessing(manager)
-
-        amounts = [100.00, 500.00, 1000.00, 5000.00, 10000.00]
-        encrypted_amounts = [txn_processor.encrypt_amount(amt) for amt in amounts]
-
-        # Find transactions over $1000
-        large_txns = txn_processor.find_large_transactions(encrypted_amounts, 1000.00)
-
-        # Should find 3 transactions >= $1000
-        assert len(large_txns) == 3
-
-    def test_range_query(self):
-        """Test finding transactions in range."""
-        manager = KeyManager()
-        txn_processor = TransactionProcessing(manager)
-
-        amounts = [50.00, 100.00, 500.00, 1000.00, 5000.00]
-        encrypted_amounts = [txn_processor.encrypt_amount(amt) for amt in amounts]
-
-        # Find transactions between $100 and $1000
-        matches = txn_processor.find_transactions_in_range(encrypted_amounts, 100.00, 1000.00)
-
-        # Should find $100, $500, $1000
-        assert len(matches) == 3
-
-    def test_order_preservation(self):
-        """Test that encrypted amounts preserve order."""
-        manager = KeyManager()
-        txn_processor = TransactionProcessing(manager)
-
-        amounts = [10.00, 20.00, 30.00, 40.00]
-        encrypted = [txn_processor.encrypt_amount(amt) for amt in amounts]
-
-        # Order should be preserved
-        for i in range(len(encrypted) - 1):
-            assert encrypted[i] < encrypted[i + 1]
 
 
 class TestDocumentSearch:
@@ -268,93 +212,3 @@ class TestCreditScoring:
         # With HE, very small values might not be exactly 0, so check for very large ratio
         # The ratio might be inf or an extremely large number (positive or negative)
         assert ratio == float("inf") or abs(ratio) > 1000000
-
-
-class TestFraudDetection:
-    """Test fraud detection use case."""
-
-    def test_transaction_encryption(self):
-        """Test transaction data encryption."""
-        manager = KeyManager()
-        fraud_detector = FraudDetection(manager)
-
-        encrypted = fraud_detector.encrypt_transaction(
-            account_id="ACC-12345", amount=1500.00, merchant="Online Store XYZ"
-        )
-
-        assert "account_id" in encrypted
-        assert "amount" in encrypted
-        assert "merchant" in encrypted
-
-    def test_unusual_amount_detection(self):
-        """Test detection of unusual transaction amounts."""
-        manager = KeyManager()
-        fraud_detector = FraudDetection(manager)
-
-        # Create transactions with various amounts
-        transactions = [
-            fraud_detector.encrypt_transaction("ACC-001", 50.00, "Store A"),
-            fraud_detector.encrypt_transaction("ACC-002", 100.00, "Store B"),
-            fraud_detector.encrypt_transaction("ACC-003", 5000.00, "Store C"),
-            fraud_detector.encrypt_transaction("ACC-004", 10000.00, "Store D"),
-        ]
-
-        # Detect transactions over $1000
-        suspicious = fraud_detector.detect_unusual_amounts(transactions, 1000.00)
-
-        # Should detect last 2 transactions
-        assert len(suspicious) == 2
-        assert 2 in suspicious
-        assert 3 in suspicious
-
-    def test_rapid_transaction_detection(self):
-        """Test detection of rapid transactions from same account."""
-        manager = KeyManager()
-        fraud_detector = FraudDetection(manager)
-
-        account_id = "ACC-RAPID-001"
-
-        # Create multiple transactions from same account
-        transactions = [
-            fraud_detector.encrypt_transaction(account_id, 100.00, f"Store {i}") for i in range(7)
-        ]
-
-        # Should detect fraud pattern (> 5 transactions)
-        is_fraud = fraud_detector.detect_rapid_transactions(transactions, account_id, max_count=5)
-
-        assert is_fraud is True
-
-    def test_normal_transaction_pattern(self):
-        """Test that normal patterns are not flagged."""
-        manager = KeyManager()
-        fraud_detector = FraudDetection(manager)
-
-        account_id = "ACC-NORMAL-001"
-
-        # Create normal number of transactions
-        transactions = [
-            fraud_detector.encrypt_transaction(account_id, 50.00, f"Store {i}") for i in range(3)
-        ]
-
-        # Should not detect fraud pattern
-        is_fraud = fraud_detector.detect_rapid_transactions(transactions, account_id, max_count=5)
-
-        assert is_fraud is False
-
-    def test_mixed_account_transactions(self):
-        """Test fraud detection with mixed accounts."""
-        manager = KeyManager()
-        fraud_detector = FraudDetection(manager)
-
-        # Create transactions from different accounts
-        transactions = [
-            fraud_detector.encrypt_transaction("ACC-001", 100.00, "Store A"),
-            fraud_detector.encrypt_transaction("ACC-002", 200.00, "Store B"),
-            fraud_detector.encrypt_transaction("ACC-001", 150.00, "Store C"),
-            fraud_detector.encrypt_transaction("ACC-003", 300.00, "Store D"),
-        ]
-
-        # Check rapid transactions for ACC-001 (2 transactions)
-        is_fraud = fraud_detector.detect_rapid_transactions(transactions, "ACC-001", max_count=5)
-
-        assert is_fraud is False

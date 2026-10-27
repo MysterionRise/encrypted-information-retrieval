@@ -2,7 +2,7 @@
 
 import pytest
 
-from encrypted_ir.fpe import FF1, FormatPreservingEncryption
+from encrypted_ir.research.fpe import FF1, FormatPreservingEncryption
 
 
 class TestFF1Basic:

@@ -40,8 +40,16 @@ from cryptography.hazmat.primitives.serialization import (
     PrivateFormat,
     PublicFormat,
 )
-from pqcrypto.kem import ml_kem_512, ml_kem_768, ml_kem_1024
-from pqcrypto.sign import ml_dsa_44, ml_dsa_65, ml_dsa_87
+
+try:
+    from pqcrypto.kem import ml_kem_512, ml_kem_768, ml_kem_1024
+    from pqcrypto.sign import ml_dsa_44, ml_dsa_65, ml_dsa_87
+except ImportError as exc:
+    raise ImportError(
+        "encrypted_ir.research.post_quantum needs pqcrypto below 1.0. Install the research "
+        "extra: pip install 'encrypted-information-retrieval[research]' "
+        "or pip install -r requirements-research.txt"
+    ) from exc
 
 # ---------------------------------------------------------------------------
 # ML-KEM parameter set registry

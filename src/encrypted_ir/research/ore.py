@@ -8,8 +8,9 @@ blocks 0..i-1, and a right value (block_i + HMAC(k_right, i || prefix)) mod 2^16
 
 What this is not: the Lewi-Wu (2016) left/right construction. In Lewi-Wu,
 stored right ciphertexts cannot be compared with each other; here they can.
-The ALGORITHM identifier and the HMAC labels still say "ore-lewi-wu" so that
-existing ciphertexts and keys stay valid. Renaming is tracked in issue #37.
+The ALGORITHM identifier is "ore-clww-prototype". The HMAC subkey labels still
+say "ore-lewi-wu" because they define the ciphertexts: changing them would make
+every existing ciphertext incomparable with new ones.
 
 Leakage, to anyone who holds the ciphertexts (no key is needed):
 - Total order. compare() reads only the two ciphertexts and never uses the
@@ -56,7 +57,7 @@ class ORE:
     See the module docstring.
     """
 
-    ALGORITHM = "ore-lewi-wu"
+    ALGORITHM = "ore-clww-prototype"
     KEY_SIZE = 32
     BLOCK_BITS = 8
     NUM_BLOCKS = 4  # 4 blocks of 8 bits = 32-bit plaintext
@@ -82,6 +83,7 @@ class ORE:
             raise ValueError(f"Key must be {self.KEY_SIZE} bytes ({self.KEY_SIZE * 8} bits)")
 
         self.key = key
+        # The labels keep their historical "ore-lewi-wu" names: they define the ciphertexts.
         self._k_left = hmac.new(key, b"ore-lewi-wu-left", hashlib.sha256).digest()
         self._k_right = hmac.new(key, b"ore-lewi-wu-right", hashlib.sha256).digest()
         self._cache: dict[int, bytes] = {}
