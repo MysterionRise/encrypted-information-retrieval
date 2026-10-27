@@ -6,6 +6,7 @@ import tempfile
 from datetime import datetime
 
 import pytest
+from sqlalchemy import event
 
 from encrypted_ir.database import create_database_engine, create_database_schema
 from encrypted_ir.key_manager import KeyManager
@@ -302,9 +303,9 @@ class TestKeyManagerWithFileBackend:
             assert mgr2.get_key(key_id) is not None
 
     def test_audit_log_persists(self, storage_dir, master_key):
-        """Audit log entries persist across restarts."""
+        """Audit log entries persist across restarts when read auditing is on."""
         backend1 = FileStorageBackend(storage_dir, master_key)
-        mgr1 = KeyManager(master_key=master_key, storage_backend=backend1)
+        mgr1 = KeyManager(master_key=master_key, storage_backend=backend1, audit_reads=True)
 
         key_id = mgr1.create_key("deterministic")
         mgr1.get_key(key_id)
@@ -351,9 +352,9 @@ class TestKeyManagerWithFileBackend:
         assert mgr_verify.get_key(kid2) is not None
 
     def test_access_count_persists(self, storage_dir, master_key):
-        """Access counts are updated in the backend."""
+        """Access counts are updated in the backend when read auditing is on."""
         backend1 = FileStorageBackend(storage_dir, master_key)
-        mgr1 = KeyManager(master_key=master_key, storage_backend=backend1)
+        mgr1 = KeyManager(master_key=master_key, storage_backend=backend1, audit_reads=True)
 
         key_id = mgr1.create_key("deterministic")
         for _ in range(3):
@@ -422,3 +423,96 @@ class TestDatabaseStorageBackend:
 
         assert manager2.get_key(key_id) == original
         assert manager2.get_metadata(key_id).description == "db-backed key"
+
+
+class TestReadsDoNotWrite:
+    """Issue #39: key reads must not write unless read auditing is enabled."""
+
+    @pytest.fixture()
+    def engine(self):
+        engine = create_database_engine("sqlite+pysqlite:///:memory:")
+        create_database_schema(engine)
+        return engine
+
+    @staticmethod
+    def _count_writes(engine, action):
+        statements = []
+
+        def _record(conn, cursor, statement, parameters, context, executemany):
+            if statement.lstrip().split(" ", 1)[0].upper() in {"INSERT", "UPDATE", "DELETE"}:
+                statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", _record)
+        try:
+            action()
+        finally:
+            event.remove(engine, "before_cursor_execute", _record)
+        return statements
+
+    def test_default_reads_do_not_write(self, engine):
+        manager = KeyManager(storage_backend=DatabaseStorageBackend(engine, "tenant-a"))
+        key_id = manager.create_key("document_encryption")
+
+        writes = self._count_writes(
+            engine,
+            lambda: [manager.get_key(key_id), manager.get_key_for_decryption(key_id)],
+        )
+
+        assert writes == []
+        assert manager.get_metadata(key_id).access_count == 2
+
+    def test_audit_reads_persists_and_audits(self, engine):
+        manager = KeyManager(
+            storage_backend=DatabaseStorageBackend(engine, "tenant-a"), audit_reads=True
+        )
+        key_id = manager.create_key("document_encryption")
+
+        writes = self._count_writes(engine, lambda: manager.get_key(key_id))
+
+        assert len(writes) == 2  # key row update and audit insert
+        assert writes[0].lstrip().upper().startswith("UPDATE")
+
+    def test_save_key_updates_in_place(self, engine):
+        backend = DatabaseStorageBackend(engine, "tenant-a")
+        backend.save_key("k1", b"first", {"v": 1})
+
+        writes = self._count_writes(engine, lambda: backend.save_key("k1", b"second", {"v": 2}))
+
+        assert [w.lstrip().split(" ", 1)[0].upper() for w in writes] == ["UPDATE"]
+        assert backend.load_key("k1") == (b"second", {"v": 2})
+
+    def test_missing_key_is_loaded_from_backend(self, engine):
+        writer = KeyManager(storage_backend=DatabaseStorageBackend(engine, "tenant-a"))
+        reader = KeyManager(
+            master_key=writer.master_key,
+            storage_backend=DatabaseStorageBackend(engine, "tenant-a"),
+        )
+        key_id = writer.create_key("document_encryption")
+
+        assert reader.get_key_for_decryption(key_id) == writer.get_key(key_id)
+
+    def test_refresh_picks_up_rotation_by_another_manager(self, engine):
+        first = KeyManager(storage_backend=DatabaseStorageBackend(engine, "tenant-a"))
+        second = KeyManager(
+            master_key=first.master_key,
+            storage_backend=DatabaseStorageBackend(engine, "tenant-a"),
+        )
+        key_id = first.get_or_create_active_key("document_search")
+        assert second.get_or_create_active_key("document_search") == key_id
+
+        new_key_id = first.rotate_key(key_id)
+        second.refresh()
+
+        assert second.get_metadata(key_id).active is False
+        assert second.get_or_create_active_key("document_search") == new_key_id
+
+    def test_get_or_create_returns_newest_active_key(self, engine):
+        manager = KeyManager(storage_backend=DatabaseStorageBackend(engine, "tenant-a"))
+        older = manager.create_key("document_encryption")
+        newer = manager.create_key("document_encryption")
+        manager.get_metadata(older).created_at = datetime(2020, 1, 1)
+        manager.get_metadata(newer).created_at = datetime(2030, 1, 1)
+        manager._persist_key(older)
+        manager._persist_key(newer)
+
+        assert manager.get_or_create_active_key("document_encryption") == newer

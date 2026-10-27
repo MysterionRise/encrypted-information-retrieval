@@ -289,7 +289,7 @@ def test_document_operation_failures_write_sanitized_audit_rows():
         headers=headers,
     )
 
-    assert duplicate.status_code == 400
+    assert duplicate.status_code == 409
     assert missing.status_code == 404
     assert search.status_code == 500
     assert rag.status_code == 500

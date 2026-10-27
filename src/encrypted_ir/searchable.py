@@ -19,6 +19,48 @@ from typing import cast
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+STOP_WORDS = frozenset({"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for"})
+_PUNCTUATION = '.,!?;:"()[]{}'
+MIN_KEYWORD_LENGTH = 3
+MAX_DOCUMENT_KEYWORDS = 10_000
+
+
+def normalize_keyword(keyword: str) -> str:
+    """Lowercase ``keyword`` and strip surrounding whitespace and punctuation.
+
+    Returns an empty string when nothing is left. Explicit keywords and query terms use this
+    form, so ``"AI,"`` and ``"ai"`` produce the same search token.
+    """
+    return keyword.strip().lower().strip(_PUNCTUATION)
+
+
+def extract_keywords(text: str, max_keywords: int = MAX_DOCUMENT_KEYWORDS) -> set[str]:
+    """Extract searchable keywords from free text.
+
+    Each whitespace-separated word is normalized first (lowercased, surrounding punctuation
+    removed), then dropped if it is shorter than three characters or a stop word. Empty
+    keywords are never returned. At most ``max_keywords`` distinct keywords are kept, in
+    order of first appearance, which bounds the number of token rows one document can create.
+    """
+    keywords: dict[str, None] = {}
+    for word in text.split():
+        keyword = normalize_keyword(word)
+        if len(keyword) < MIN_KEYWORD_LENGTH or keyword in STOP_WORDS:
+            continue
+        keywords.setdefault(keyword, None)
+        if len(keywords) >= max_keywords:
+            break
+    return set(keywords)
+
+
+def search_token(search_key: bytes, keyword: str) -> str:
+    """Return the base64 HMAC-SHA256 token for ``keyword`` under ``search_key``.
+
+    This is the token format stored by the durable document path.
+    """
+    token = hmac.new(search_key, keyword.lower().encode("utf-8"), hashlib.sha256).digest()
+    return base64.b64encode(token).decode("ascii")
+
 
 class BooleanQuery:
     """
@@ -118,14 +160,9 @@ class SearchableEncryption:
             text: Input text
 
         Returns:
-            Set of lowercase keywords
+            Set of normalized keywords (see :func:`extract_keywords`)
         """
-        # Simple word extraction - in production, use more sophisticated NLP
-        words = text.lower().split()
-        # Remove short words and common stop words
-        stop_words = {"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for"}
-        keywords = {w.strip('.,!?;:"()[]{}') for w in words if len(w) > 2 and w not in stop_words}
-        return keywords
+        return extract_keywords(text)
 
     def _generate_search_token(self, keyword: str) -> str:
         """
@@ -137,9 +174,7 @@ class SearchableEncryption:
         Returns:
             Base64-encoded search token
         """
-        # Use HMAC with search key to create deterministic token
-        token = hmac.new(self.search_key, keyword.lower().encode("utf-8"), hashlib.sha256).digest()
-        return base64.b64encode(token).decode("ascii")
+        return search_token(self.search_key, keyword)
 
     def encrypt_document(
         self,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from sqlalchemy import (
     JSON,
-    Boolean,
     Column,
     DateTime,
     Integer,
@@ -29,7 +28,13 @@ key_store_table = Table(
     Column("key_id", String(255), primary_key=True),
     Column("encrypted_key", LargeBinary, nullable=False),
     Column("metadata_json", JSON, nullable=False),
-    Column("updated_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
+    Column(
+        "updated_at",
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    ),
 )
 
 audit_log_table = Table(
@@ -53,9 +58,14 @@ documents_table = Table(
     Column("search_key_id", String(255), nullable=False),
     Column("metadata_json", JSON, nullable=False, default=dict),
     Column("token_count", Integer, nullable=False, default=0),
-    Column("deleted", Boolean, nullable=False, default=False),
     Column("created_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
-    Column("updated_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
+    Column(
+        "updated_at",
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    ),
 )
 
 document_tokens_table = Table(

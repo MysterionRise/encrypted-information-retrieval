@@ -86,9 +86,7 @@ without the key.
 | Risk | Effect | Tracking |
 | --- | --- | --- |
 | Ciphertexts and wrapped keys are not bound to their context | A database writer can swap ciphertexts between rows or tenants without detection. | [#40] |
-| AND search with more than one search key | Returns no results after a search-key rotation. | [#39] |
-| Key cache is not shared across workers | A multi-worker deployment can create duplicate tenant keys and fail reads. | [#39] |
-| Key reads write to the database | Every decrypt rewrites the key row and inserts an audit row. Concurrent reads can conflict. | [#39] |
+| Concurrent first ingest in two processes | Two processes ingesting for a new tenant at the same moment can each create a key. Both keys stay valid and every process converges on the newest one, so this costs an extra key, not correctness. | [#39] (documented) |
 | Rotation does not re-encrypt documents | Retiring a compromised key leaves its documents under that key. | [#42] |
 | JWT `exp` not required; exception text in error bodies | Tokens without an expiry never expire. Internals leak in 401 responses and `/ready`. | [#41] |
 | `/metrics` unauthenticated and keyed by raw path | Document IDs are visible to anyone who can reach the endpoint. | [#43] |
