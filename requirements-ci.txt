@@ -90,7 +90,7 @@ pytest-cov==7.1.0
     # via -r requirements-ci.in
 pytest-timeout==2.4.0
     # via -r requirements-ci.in
-sqlalchemy==2.1.5
+sqlalchemy==2.1.6
     # via
     #   -r requirements.txt
     #   alembic
