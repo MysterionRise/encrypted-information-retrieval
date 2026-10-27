@@ -63,12 +63,13 @@ The design accepts that trade-off for a prototype and documents it per endpoint 
 
 ## Library and research primitives
 
-None of these are used by the durable path. Some back the demo routes, whose removal is tracked
-in [#36]. The research modules are slated for quarantine under `encrypted_ir.research` ([#37]).
+None of these are used by the durable path or reachable through the API; the demo routes that
+exposed some of them were removed in [#36]. The research modules are slated for quarantine under
+`encrypted_ir.research` ([#37]).
 
 | Primitive | Construction | Leakage and known issues | Tracking |
 | --- | --- | --- | --- |
-| Deterministic encryption (`deterministic.py`) | AES-SIV (RFC 5297) from `cryptography` | Equality of plaintexts under the same key. Callers pass no associated data. | [#36] |
+| Deterministic encryption (`deterministic.py`) | AES-SIV (RFC 5297) from `cryptography` | Equality of plaintexts under the same key. Callers pass no associated data. | [#38] |
 | Blind index (`blind_index.py`) | HMAC-SHA256 truncated to 128 bits, per-tenant and per-field derived keys | Equality within tenant and field. About 2^64 collision resistance. The key-derivation context `tenant:field` is ambiguous, and `index_records` keeps one record per value. | [#37] |
 | ORE (`ore.py`) | CLWW-style prefix ORE over 32-bit integers, **not** Lewi-Wu | `compare()` needs no key, so whoever holds the ciphertexts learns their **total order**, the same as OPE. Also leaks plaintext byte differences, the most significant byte given one known pair, and equality. `encrypt_float` truncates instead of rounding. | [#34], [#37], [#38] |
 | OPE (`order_preserving.py`) | Home-grown linear mapping plus HMAC noise | **Decryptable without the key** (`p = ct // (2^32 + 1)`). Deprecated, but still used by the demo use cases. | [#37] |

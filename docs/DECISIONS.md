@@ -764,7 +764,7 @@ exported next to the durable-path code. Several of them describe stronger guaran
 ## ADR-016: Remove the Demo-Only API Routes
 
 **Date**: 2026-10-20
-**Status**: Accepted. Implementation tracked in [#36].
+**Status**: Accepted and implemented ([#36]).
 
 ### Context
 
