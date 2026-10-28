@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
+import json
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 TENANT_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
@@ -15,6 +18,21 @@ MIN_JWT_SECRET_BYTES = 32
 DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024
 MAX_JWT_LEEWAY_SECONDS = 300
 LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
+
+CLIENT_RATE_LIMIT = "client"
+"""Per-client-address limit applied to every request except ``/health``, before routing."""
+
+# (max_requests, window_seconds) per operation. Per-tenant operations are checked after auth;
+# "client" is keyed by the client address and also covers unauthenticated requests.
+DEFAULT_RATE_LIMITS: Mapping[str, tuple[int, int]] = {
+    "document_ingest": (60, 60),
+    "document_search": (120, 60),
+    "document_get": (120, 60),
+    "document_delete": (60, 60),
+    "rag_retrieve": (120, 60),
+    CLIENT_RATE_LIMIT: (600, 60),
+}
+DEFAULT_RATE_LIMIT_MAX_KEYS = 10_000
 
 
 def _parse_bool(value: str | None, default: bool) -> bool:
@@ -45,6 +63,36 @@ def _parse_float(value: str | None, name: str, default: float) -> float:
         return float(value)
     except ValueError as e:
         raise ValueError(f"{name} must be a number") from e
+
+
+def _parse_rate_limits(value: str | None) -> dict[str, tuple[int, int]]:
+    """Parse ``ENCRYPTED_IR_RATE_LIMITS``: JSON ``{"operation": [max_requests, window_seconds]}``."""
+    if not value or not value.strip():
+        return {}
+    try:
+        raw = json.loads(value)
+    except json.JSONDecodeError as e:
+        raise ValueError("ENCRYPTED_IR_RATE_LIMITS must be valid JSON") from e
+    if not isinstance(raw, dict):
+        raise ValueError("ENCRYPTED_IR_RATE_LIMITS must be a JSON object")
+    limits: dict[str, tuple[int, int]] = {}
+    for operation, pair in raw.items():
+        if (
+            not isinstance(pair, list)
+            or len(pair) != 2
+            or not all(isinstance(v, int) and not isinstance(v, bool) for v in pair)
+        ):
+            raise ValueError(
+                "ENCRYPTED_IR_RATE_LIMITS values must be [max_requests, window_seconds] integers"
+            )
+        limits[str(operation)] = (pair[0], pair[1])
+    return limits
+
+
+def _parse_list(value: str | None) -> tuple[str, ...]:
+    if not value:
+        return ()
+    return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
 def _parse_algorithms(value: str | None) -> tuple[str, ...]:
@@ -104,6 +152,15 @@ class EncryptedIRSettings:
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES
     log_level: str = "INFO"
     metrics_token: str | None = field(default=None, repr=False)
+    rate_limits: Mapping[str, tuple[int, int]] = field(default_factory=dict)
+    rate_limit_max_keys: int = DEFAULT_RATE_LIMIT_MAX_KEYS
+    trusted_proxies: tuple[str, ...] = ()
+
+    @property
+    def effective_rate_limits(self) -> dict[str, tuple[int, int]]:
+        """The default limits with ``rate_limits`` overrides applied."""
+        return {**DEFAULT_RATE_LIMITS, **self.rate_limits}
+
     kms_provider: str | None = None
     aws_kms_key_id: str | None = None
     aws_region: str | None = None
@@ -158,6 +215,7 @@ class EncryptedIRSettings:
 
         self._validate_auth()
         self._validate_http()
+        self._validate_rate_limits()
 
     def _validate_auth(self) -> None:
         if self.dev_auth_enabled:
@@ -195,6 +253,26 @@ class EncryptedIRSettings:
             raise ValueError("ENCRYPTED_IR_MAX_BODY_BYTES must be positive")
         if self.is_production and "*" in self.cors_origins:
             raise ValueError("ENCRYPTED_IR_CORS_ORIGINS must list explicit origins in prod")
+
+    def _validate_rate_limits(self) -> None:
+        for operation, (max_requests, window_seconds) in self.rate_limits.items():
+            if operation not in DEFAULT_RATE_LIMITS:
+                raise ValueError(
+                    f"ENCRYPTED_IR_RATE_LIMITS has unknown operation {operation!r}; known: "
+                    f"{', '.join(sorted(DEFAULT_RATE_LIMITS))}"
+                )
+            if max_requests <= 0 or window_seconds <= 0:
+                raise ValueError("ENCRYPTED_IR_RATE_LIMITS values must be positive")
+        if self.rate_limit_max_keys <= 0:
+            raise ValueError("ENCRYPTED_IR_RATE_LIMIT_MAX_KEYS must be positive")
+        for proxy in self.trusted_proxies:
+            try:
+                ipaddress.ip_network(proxy, strict=False)
+            except ValueError as e:
+                raise ValueError(
+                    f"ENCRYPTED_IR_TRUSTED_PROXIES entries must be IP addresses or networks, "
+                    f"got {proxy!r}"
+                ) from e
 
     @classmethod
     def from_env(cls) -> EncryptedIRSettings:
@@ -239,6 +317,13 @@ class EncryptedIRSettings:
             enable_docs=_parse_bool(os.environ.get("ENCRYPTED_IR_ENABLE_DOCS"), False),
             log_level=(os.environ.get("ENCRYPTED_IR_LOG_LEVEL") or "INFO").upper(),
             metrics_token=os.environ.get("ENCRYPTED_IR_METRICS_TOKEN") or None,
+            rate_limits=_parse_rate_limits(os.environ.get("ENCRYPTED_IR_RATE_LIMITS")),
+            rate_limit_max_keys=_parse_int(
+                os.environ.get("ENCRYPTED_IR_RATE_LIMIT_MAX_KEYS"),
+                "ENCRYPTED_IR_RATE_LIMIT_MAX_KEYS",
+                DEFAULT_RATE_LIMIT_MAX_KEYS,
+            ),
+            trusted_proxies=_parse_list(os.environ.get("ENCRYPTED_IR_TRUSTED_PROXIES")),
             max_body_bytes=_parse_int(
                 os.environ.get("ENCRYPTED_IR_MAX_BODY_BYTES"),
                 "ENCRYPTED_IR_MAX_BODY_BYTES",

@@ -8,9 +8,11 @@ outside all user middleware, with no request ID and no metrics). For each reques
    it as the logging correlation ID, so every line logged while handling the request carries it;
 2. resolves the route *template* (``/v1/documents/{doc_id}``), used for metrics labels, the
    access log and the audit resource, so concrete document IDs never appear in any of them;
-3. adds ``X-Request-ID`` and ``X-Response-Time-Ms`` to the response;
-4. turns an unhandled exception into the standard JSON 500 body, after logging its traceback;
-5. after the response: records Prometheus metrics, writes one JSON access-log line, and counts
+3. applies the per-client-address rate limit (every path except ``/health``, before routing and
+   before authentication, so unauthenticated requests are limited too);
+4. adds ``X-Request-ID`` and ``X-Response-Time-Ms`` to the response;
+5. turns an unhandled exception into the standard JSON 500 body, after logging its traceback;
+6. after the response: records Prometheus metrics, writes one JSON access-log line, and counts
    and (rate-bounded) audits 401, 403 and 429 responses.
 """
 
@@ -29,12 +31,16 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from encrypted_ir.logging import bind_correlation_id, reset_correlation_id
 from encrypted_ir.metrics import UNMATCHED_ROUTE, method_label
 
+from .dependencies.rate_limiter import CLIENT_RATE_LIMIT, retry_after_header
 from .middleware import error_body, sanitize_request_id
 
 logger = logging.getLogger(__name__)
 access_logger = logging.getLogger("encrypted_ir.api.access")
 
 SYSTEM_TENANT_ID = "_system"
+
+# Liveness probes must keep answering while a client is being throttled.
+CLIENT_LIMIT_EXEMPT_PATHS = frozenset({"/health"})
 
 # Rejections that are counted in /metrics and written (rate-bounded) to the audit log.
 SECURITY_EVENTS = {
@@ -97,7 +103,17 @@ class RequestContextMiddleware:
 
         try:
             try:
-                await self.app(scope, receive, send_with_context)
+                retry_after = self._client_retry_after(fastapi_app, scope)
+                if retry_after is None:
+                    await self.app(scope, receive, send_with_context)
+                else:
+                    state["rejection_reason"] = "client_rate_limited"
+                    response = JSONResponse(
+                        status_code=429,
+                        content=error_body("rate_limited", "Too many requests", request_id),
+                        headers={"Retry-After": retry_after_header(retry_after)},
+                    )
+                    await response(scope, receive, send_with_context)
             except Exception:
                 logger.exception(
                     "Unhandled error while handling request",
@@ -119,6 +135,19 @@ class RequestContextMiddleware:
                 await self._after_response(fastapi_app, scope, route, status_code, start)
         finally:
             reset_correlation_id(token)
+
+    @staticmethod
+    def _client_retry_after(app: Any, scope: Scope) -> float | None:
+        """Apply the per-client limit; None if allowed, else seconds until it would be."""
+        if scope["path"] in CLIENT_LIMIT_EXEMPT_PATHS:
+            return None
+        limiter = getattr(app.state, "rate_limiter", None)
+        if limiter is None:
+            return None
+        client = scope.get("client")
+        key = str(client[0]) if client else "unknown"
+        result: float | None = limiter.try_acquire(key, CLIENT_RATE_LIMIT)
+        return result
 
     async def _after_response(
         self, app: Any, scope: Scope, route: str, status_code: int, start: float
@@ -146,7 +175,7 @@ class RequestContextMiddleware:
         """Count a 401/403/429 and write a rate-bounded audit row for it."""
         state = scope["state"]
         event_type, default_reason = SECURITY_EVENTS[status_code]
-        reason = state.get("auth_failure", default_reason)
+        reason = state.get("rejection_reason") or state.get("auth_failure") or default_reason
         metrics = getattr(app.state, "metrics", None)
         if metrics is not None:
             metrics.record_rejection(status_code, reason)
