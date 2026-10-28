@@ -484,6 +484,35 @@ class TestConcurrentWrites:
         )
         assert [c.doc_id for c in service.search_documents(TENANT, "racing")] == ["racing"]
 
+    def test_ingest_accepts_a_key_that_starts_rotating_between_lookups(
+        self, engine, master_key, service, monkeypatch
+    ):
+        service.ingest_document(TENANT, "first", "fraud memo")
+        old_encryption_key = _doc_keys(engine)["first"][0]
+        manager = service._key_manager(TENANT)
+        real_lookup = manager.get_or_create_active_key
+        started = []
+
+        def start_rotation_then_lookup(key_type, description=""):
+            if key_type == SEARCH and not started:  # the encryption key is already chosen
+                started.append(rotate_tenant_keys(engine, master_key, TENANT, max_batches=0))
+            return real_lookup(key_type, description)
+
+        monkeypatch.setattr(manager, "get_or_create_active_key", start_rotation_then_lookup)
+        result = service.ingest_document(TENANT, "racing", "racing fraud memo")
+
+        [started_report] = started
+        assert result["key_id"] == old_encryption_key  # ROTATING still accepts writes
+        assert _doc_keys(engine)["racing"] == (
+            old_encryption_key,
+            started_report.target_search_key_id,
+        )
+        report = rotate_tenant_keys(engine, master_key, TENANT, resume=True)
+        assert report.complete
+        targets = (report.target_encryption_key_id, report.target_search_key_id)
+        assert set(_doc_keys(engine).values()) == {targets}
+        assert [c.doc_id for c in service.search_documents(TENANT, "racing")] == ["racing"]
+
     def test_a_document_rewritten_mid_batch_is_not_overwritten(
         self, engine, master_key, service, monkeypatch
     ):
