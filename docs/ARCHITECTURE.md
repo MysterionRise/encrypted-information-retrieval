@@ -68,7 +68,7 @@ These are the only routes besides the five above. The in-memory demo routes (`/v
 | Route | Backing | Note |
 | --- | --- | --- |
 | `GET /health`, `GET /ready` | Process state; database, migration, auth and key-provider checks | `/ready` is unauthenticated and returns pass/fail booleans; failure details go to the log ([#41]). |
-| `GET /metrics` | Process-global JSON counters | Unauthenticated and keyed by raw path ([#43]). |
+| `GET /metrics` | Per-process Prometheus registry | Labels are route templates, methods and status codes, never document IDs. Optional bearer token ([#43]). |
 
 ### Storage
 

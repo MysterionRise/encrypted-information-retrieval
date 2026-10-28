@@ -73,25 +73,6 @@ class HealthResponse(BaseModel):
     uptime_seconds: float = Field(..., description="Seconds since startup")
 
 
-class MetricsResponse(BaseModel):
-    """Prometheus-style metrics."""
-
-    request_count: int = Field(default=0, description="Total requests served")
-    error_count: int = Field(default=0, description="Total errors")
-    active_tenants: int = Field(default=0, description="Number of active tenants")
-    requests_by_endpoint: dict[str, int] = Field(
-        default_factory=dict, description="Request counts per endpoint"
-    )
-    avg_latency_ms: float = Field(default=0.0, description="Average latency in ms")
-    unauthorized_count: int = Field(default=0, description="401 responses")
-    forbidden_count: int = Field(default=0, description="403 responses")
-    rate_limited_count: int = Field(default=0, description="429 responses")
-    security_audit_dropped_count: int = Field(
-        default=0,
-        description="401/403/429 responses not written to the audit log because of its rate bound",
-    )
-
-
 class ReadinessResponse(BaseModel):
     """Readiness check response."""
 

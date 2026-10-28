@@ -235,6 +235,23 @@ jobs:
       - name: Ingest, restart, and retrieve
         run: ./scripts/compose_smoke.sh
 
+      - name: Image HEALTHCHECK reports healthy
+        run: |
+          container="$(docker compose ps -q api)"
+          for _ in $(seq 1 30); do
+            health="$(docker inspect --format '{{.State.Health.Status}}' "$container")"
+            echo "api health: $health"
+            [ "$health" = "healthy" ] && exit 0
+            sleep 2
+          done
+          exit 1
+
+      - name: Metrics expose route templates, never document IDs
+        run: |
+          curl -fsS http://localhost:8000/metrics > metrics.txt
+          grep -q 'encrypted_ir_http_requests_total{.*route="/v1/rag/retrieve"' metrics.txt
+          if grep -q 'smoke-' metrics.txt; then echo "document ID leaked into /metrics"; exit 1; fi
+
       - name: Show container logs
         if: failure()
         run: docker compose logs --no-color

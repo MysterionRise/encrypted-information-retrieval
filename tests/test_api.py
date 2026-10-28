@@ -20,6 +20,7 @@ import json
 import jwt
 import pytest
 from fastapi.testclient import TestClient
+from prometheus_client.parser import text_string_to_metric_families
 from sqlalchemy import select, update
 
 from encrypted_ir import __version__
@@ -30,6 +31,7 @@ from encrypted_ir.api.dependencies.rate_limiter import (
 )
 from encrypted_ir.api.main import create_app
 from encrypted_ir.database import audit_log_table, documents_table
+from tests.conftest import metric
 
 REMOVED_DEMO_PATHS = (
     "/v1/encrypt",
@@ -92,20 +94,44 @@ class TestHealthCheck:
 
 
 class TestMetrics:
-    def test_metrics_returns_200(self, client):
+    def test_metrics_are_prometheus_text(self, client):
         resp = client.get("/metrics")
         assert resp.status_code == 200
-        data = resp.json()
-        assert "request_count" in data
-        assert "error_count" in data
-        assert "active_tenants" in data
+        assert resp.headers["content-type"].startswith("text/plain")
+        families = {f.name for f in text_string_to_metric_families(resp.text)}
+        assert {
+            "encrypted_ir_http_requests",
+            "encrypted_ir_http_request_duration_seconds",
+            "encrypted_ir_auth_rejections",
+            "encrypted_ir_key_cache_tenants",
+        } <= families
 
-    def test_metrics_counts_requests(self, client):
+    def test_metrics_count_requests_by_route_template(self, app, client, auth_headers):
         client.get("/health")
         client.get("/health")
-        resp = client.get("/metrics")
-        data = resp.json()
-        assert data["request_count"] >= 2
+        client.get("/v1/documents/secret-doc-id-123", headers=auth_headers)
+
+        assert (
+            metric(
+                app,
+                "encrypted_ir_http_requests_total",
+                route="/health",
+                method="GET",
+                status="200",
+            )
+            == 2
+        )
+        assert (
+            metric(
+                app,
+                "encrypted_ir_http_requests_total",
+                route="/v1/documents/{doc_id}",
+                method="GET",
+                status="404",
+            )
+            == 1
+        )
+        assert "secret-doc-id-123" not in client.get("/metrics").text
 
 
 # =============================================================================

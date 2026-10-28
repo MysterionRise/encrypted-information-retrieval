@@ -90,7 +90,7 @@ without the key.
 | Rotation does not re-encrypt documents | Retiring a compromised key leaves its documents under that key. | [#42] |
 | Rejected-request audit is rate-bounded | Beyond 60 rows per minute per process, 401, 403 and 429 responses are counted in `/metrics` but not audited one by one. | [#41] (documented), [#44] |
 | OIDC not validated against a live identity provider | Verification is tested with a fake JWKS; issuer-specific claim shapes may differ. | [#48] |
-| `/metrics` unauthenticated and keyed by raw path | Document IDs are visible to anyone who can reach the endpoint. | [#43] |
+| `/metrics` open by default | Anyone who can reach the port sees per-route request volumes and the number of cached tenants (no document IDs). Set `ENCRYPTED_IR_METRICS_TOKEN` or restrict the port. | [#43] (documented) |
 | Audit rows not tamper-evident | A database writer can alter or remove audit history. | [#44] |
 | Docker image lacks boto3 | The KMS production path cannot start from the shipped image. | [#45] |
 
