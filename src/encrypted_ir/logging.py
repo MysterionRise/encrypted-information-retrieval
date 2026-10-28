@@ -1,53 +1,35 @@
 """
 Structured Logging Module
 
-Provides structured JSON logging with correlation IDs,
-PII redaction, and configurable log levels for encrypted IR operations.
+Provides structured JSON logging with correlation IDs and redaction for encrypted IR
+operations. Every record passes through :func:`encrypted_ir.redaction.redact`, including the
+formatted exception, so plaintext, keys and personal data are not written to the log.
 
-Ensures that plaintext data and cryptographic keys are never logged,
-supporting DORA Art. 17, PCI DSS 10.2.2, and NYDFS 500.06 compliance.
+In the API, the correlation ID is the request's ``X-Request-ID``: the request middleware sets
+it for the duration of each request, so every line logged while handling a request carries it.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import re
+import sys
 import threading
-import time
 import uuid
-from contextvars import ContextVar
-from typing import Any
+from collections.abc import Iterable
+from contextvars import ContextVar, Token
+from datetime import UTC, datetime
+from typing import IO, Any
+
+from .redaction import redact, redact_text
 
 # Context variable for correlation ID propagation across async boundaries
 _correlation_id: ContextVar[str | None] = ContextVar("correlation_id", default=None)
 
-# Patterns that indicate sensitive data - compiled once at module load
-_PII_PATTERNS = [
-    (re.compile(r"\b[A-Za-z0-9+/]{40,}={0,2}\b"), "[REDACTED_KEY]"),
-    (re.compile(r"\b(?:\d[ -]*?){13,19}\b"), "[REDACTED_CARD]"),
-    (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[REDACTED_SSN]"),
-    (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"), "[REDACTED_EMAIL]"),
-]
-
-# Keys whose values should always be redacted in log output
-_SENSITIVE_KEYS = frozenset(
-    {
-        "key",
-        "keys",
-        "secret",
-        "password",
-        "token",
-        "plaintext",
-        "master_key",
-        "encryption_key",
-        "search_key",
-        "private_key",
-        "secret_key",
-        "credentials",
-        "api_key",
-    }
-)
+_STANDARD_RECORD_ATTRS = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {
+    "message",
+    "asctime",
+}
 
 
 def get_correlation_id() -> str:
@@ -59,9 +41,24 @@ def get_correlation_id() -> str:
     return cid
 
 
-def set_correlation_id(correlation_id: str) -> None:
+def set_correlation_id(correlation_id: str | None) -> None:
     """Set the correlation ID for the current context."""
     _correlation_id.set(correlation_id)
+
+
+def current_correlation_id() -> str | None:
+    """Return the current correlation ID without generating one."""
+    return _correlation_id.get()
+
+
+def bind_correlation_id(correlation_id: str | None) -> Token[str | None]:
+    """Set the correlation ID for the current context and return a token to undo it."""
+    return _correlation_id.set(correlation_id)
+
+
+def reset_correlation_id(token: Token[str | None]) -> None:
+    """Restore the correlation ID that was current before :func:`bind_correlation_id`."""
+    _correlation_id.reset(token)
 
 
 def new_correlation_id() -> str:
@@ -72,91 +69,47 @@ def new_correlation_id() -> str:
 
 
 def redact_pii(text: str) -> str:
-    """Redact PII patterns from a string.
+    """Redact key-like base64, card numbers, SSNs and email addresses from a string.
 
-    Scans for credit card numbers, SSNs, email addresses, and
-    base64-encoded keys/secrets.
-
-    Args:
-        text: Input string to redact.
-
-    Returns:
-        String with sensitive patterns replaced by redaction markers.
+    Kept for compatibility; it is :func:`encrypted_ir.redaction.redact_text`.
     """
-    for pattern, replacement in _PII_PATTERNS:
-        text = pattern.sub(replacement, text)
-    return text
-
-
-def _redact_value(key: str, value: Any) -> Any:
-    """Redact a value if its key indicates sensitivity."""
-    if isinstance(key, str) and key.lower() in _SENSITIVE_KEYS:
-        return "[REDACTED]"
-    if isinstance(value, str):
-        return redact_pii(value)
-    return value
-
-
-def _sanitize_dict(data: dict[str, Any]) -> dict[str, Any]:
-    """Recursively sanitize a dictionary, redacting sensitive values."""
-    sanitized: dict[str, Any] = {}
-    for k, v in data.items():
-        if isinstance(v, dict):
-            sanitized[k] = _sanitize_dict(v)
-        elif isinstance(v, (list, tuple)):
-            sanitized[k] = [
-                _sanitize_dict(item) if isinstance(item, dict) else _redact_value(k, item)
-                for item in v
-            ]
-        else:
-            sanitized[k] = _redact_value(k, v)
-    return sanitized
+    return redact_text(text)
 
 
 class StructuredFormatter(logging.Formatter):
     """JSON formatter that outputs structured log records.
 
-    Each log line is a single JSON object with fields:
-        timestamp, level, logger, message, correlation_id,
-        plus any extra context passed via the `extra` kwarg.
+    Each log line is a single JSON object with fields ``timestamp`` (UTC, ISO 8601 with
+    milliseconds), ``level``, ``logger``, ``message`` and ``correlation_id`` (``null`` outside a
+    request), plus any extra context passed via ``extra=`` and the formatted ``exception``. The
+    whole object, exception text included, goes through :func:`encrypted_ir.redaction.redact`.
     """
 
     def format(self, record: logging.LogRecord) -> str:
         log_entry: dict[str, Any] = {
-            "timestamp": self.formatTime(record, self.datefmt or "%Y-%m-%dT%H:%M:%S.%fZ"),
+            "timestamp": self.formatTime(record),
             "level": record.levelname,
             "logger": record.name,
-            "message": redact_pii(record.getMessage()),
-            "correlation_id": get_correlation_id(),
+            "message": record.getMessage(),
+            "correlation_id": current_correlation_id(),
         }
 
         # Merge extra context (anything not in standard LogRecord attrs)
-        standard_attrs = set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__)
         for attr, value in record.__dict__.items():
-            if attr not in standard_attrs and attr not in ("message", "msg", "args"):
+            if attr not in _STANDARD_RECORD_ATTRS:
                 log_entry[attr] = value
-
-        # Sanitize the whole entry
-        log_entry = _sanitize_dict(log_entry)
 
         if record.exc_info and record.exc_info[0] is not None:
             log_entry["exception"] = self.formatException(record.exc_info)
 
-        return json.dumps(log_entry, default=str)
+        return json.dumps(redact(log_entry), default=str)
 
     def formatTime(  # noqa: N802
         self, record: logging.LogRecord, datefmt: str | None = None
     ) -> str:
-        """ISO-8601 timestamp with millisecond precision."""
-        ct = self.converter(record.created)
-        if datefmt:
-            try:
-                s = time.strftime(datefmt, ct)
-            except (ValueError, TypeError):
-                s = time.strftime("%Y-%m-%dT%H:%M:%S", ct)
-        else:
-            s = time.strftime("%Y-%m-%dT%H:%M:%S", ct)
-        return f"{s}.{int(record.msecs):03d}Z"
+        """UTC ISO-8601 timestamp with millisecond precision, e.g. 2026-10-28T09:15:02.123Z."""
+        moment = datetime.fromtimestamp(record.created, tz=UTC)
+        return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 class LoggingConfig:
@@ -178,19 +131,26 @@ class LoggingConfig:
         level: str = "INFO",
         handler: logging.Handler | None = None,
         enable_console: bool = True,
+        stream: IO[str] | None = None,
+        extra_loggers: Iterable[str] = (),
     ):
         """Initialize logging configuration.
 
         Args:
             level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
             handler: Custom log handler. If None and enable_console is True,
-                     uses StreamHandler to stderr.
+                     uses a StreamHandler on ``stream``.
             enable_console: Whether to add a console handler if no custom
                           handler is provided.
+            stream: Stream for the console handler (default: stdout).
+            extra_loggers: Other loggers to route through the same JSON handler, such as
+                ``uvicorn.error``. They stop propagating so lines are not written twice.
         """
         self.level = getattr(logging, level.upper(), logging.INFO)
         self._handler = handler
         self._enable_console = enable_console
+        self._stream = stream
+        self._extra_loggers = tuple(extra_loggers)
         self._configured = False
         self._lock = threading.Lock()
 
@@ -200,19 +160,21 @@ class LoggingConfig:
             if self._configured:
                 return
 
-            root_logger = logging.getLogger("encrypted_ir")
-            root_logger.setLevel(self.level)
-            root_logger.handlers.clear()
-
             formatter = StructuredFormatter()
+            handler = self._handler
+            if handler is None and self._enable_console:
+                handler = logging.StreamHandler(self._stream or sys.stdout)
+            if handler is not None:
+                handler.setFormatter(formatter)
 
-            if self._handler is not None:
-                self._handler.setFormatter(formatter)
-                root_logger.addHandler(self._handler)
-            elif self._enable_console:
-                console = logging.StreamHandler()
-                console.setFormatter(formatter)
-                root_logger.addHandler(console)
+            for name in ("encrypted_ir", *self._extra_loggers):
+                logger = logging.getLogger(name)
+                logger.setLevel(self.level)
+                logger.handlers.clear()
+                if handler is not None:
+                    logger.addHandler(handler)
+                if name != "encrypted_ir":
+                    logger.propagate = False
 
             self._configured = True
 

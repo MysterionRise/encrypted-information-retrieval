@@ -37,8 +37,8 @@ class TestPIIRedaction:
         assert "[REDACTED_EMAIL]" in result
 
     def test_redacts_base64_keys(self):
-        # 44-char base64 string (256-bit key)
-        key = "A" * 44
+        # base64 of a 256-bit key
+        key = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
         text = f"Key is {key}"
         result = redact_pii(text)
         assert key not in result

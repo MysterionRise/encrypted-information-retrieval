@@ -14,6 +14,7 @@ ALLOWED_OIDC_ALGORITHMS = frozenset({"RS256", "PS256", "ES256"})
 MIN_JWT_SECRET_BYTES = 32
 DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024
 MAX_JWT_LEEWAY_SECONDS = 300
+LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
 
 def _parse_bool(value: str | None, default: bool) -> bool:
@@ -101,6 +102,8 @@ class EncryptedIRSettings:
     roles_claim: str = "roles"
     enable_docs: bool = False
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES
+    log_level: str = "INFO"
+    metrics_token: str | None = field(default=None, repr=False)
     kms_provider: str | None = None
     aws_kms_key_id: str | None = None
     aws_region: str | None = None
@@ -182,6 +185,12 @@ class EncryptedIRSettings:
             raise ValueError("ENCRYPTED_IR_JWKS_TIMEOUT_SECONDS must be between 0 and 60")
 
     def _validate_http(self) -> None:
+        if self.log_level.upper() not in LOG_LEVELS:
+            raise ValueError(
+                f"ENCRYPTED_IR_LOG_LEVEL must be one of {', '.join(sorted(LOG_LEVELS))}"
+            )
+        if self.metrics_token is not None and len(self.metrics_token.encode()) < 16:
+            raise ValueError("ENCRYPTED_IR_METRICS_TOKEN must be at least 16 bytes when set")
         if self.max_body_bytes <= 0:
             raise ValueError("ENCRYPTED_IR_MAX_BODY_BYTES must be positive")
         if self.is_production and "*" in self.cors_origins:
@@ -228,6 +237,8 @@ class EncryptedIRSettings:
             tenant_claim=os.environ.get("ENCRYPTED_IR_TENANT_CLAIM", "tenant_id"),
             roles_claim=os.environ.get("ENCRYPTED_IR_ROLES_CLAIM", "roles"),
             enable_docs=_parse_bool(os.environ.get("ENCRYPTED_IR_ENABLE_DOCS"), False),
+            log_level=(os.environ.get("ENCRYPTED_IR_LOG_LEVEL") or "INFO").upper(),
+            metrics_token=os.environ.get("ENCRYPTED_IR_METRICS_TOKEN") or None,
             max_body_bytes=_parse_int(
                 os.environ.get("ENCRYPTED_IR_MAX_BODY_BYTES"),
                 "ENCRYPTED_IR_MAX_BODY_BYTES",

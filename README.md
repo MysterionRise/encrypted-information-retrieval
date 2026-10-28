@@ -109,9 +109,19 @@ Auth and HTTP settings (all optional except where noted):
 | `ENCRYPTED_IR_ENABLE_DOCS` | `false` | Serve `/docs`, `/redoc` and `/openapi.json`. |
 | `ENCRYPTED_IR_MAX_BODY_BYTES` | `10485760` | Largest accepted request body. |
 | `ENCRYPTED_IR_CORS_ORIGINS` | localhost origins | Comma-separated origins. `*` is refused in `prod` and never sent with credentials. |
+| `ENCRYPTED_IR_LOG_LEVEL` | `INFO` | Level for the JSON logs on stdout. |
+| `ENCRYPTED_IR_METRICS_TOKEN` | none | When set (at least 16 bytes), `GET /metrics` requires `Authorization: Bearer <token>`. |
 
 Every token must carry `exp`, `iat`, a tenant claim matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`
 and a non-empty roles claim; OIDC tokens also need `aud` and `iss`.
+
+The API logs JSON lines to stdout: one access line per request (method, route template, status,
+latency, tenant) and any warnings, each carrying the request's `X-Request-ID` as
+`correlation_id`. Values that look like keys, card numbers or email addresses are redacted.
+`GET /metrics` serves Prometheus text: requests by route *template* (never a document ID),
+method and status, latency histograms, auth rejections and the key-cache size. Metrics are per
+process, so run one uvicorn worker per container (the Docker image does) or aggregate at the
+scraper.
 
 See [docs/CTO_DEMO_SCRIPT.md](docs/CTO_DEMO_SCRIPT.md) for the full review flow, including the persistence check.
 

@@ -8,7 +8,6 @@ from .responses import (
     DocumentSearchResponse,
     ErrorResponse,
     HealthResponse,
-    MetricsResponse,
     RagCandidate,
     RagRetrieveResponse,
     ReadinessResponse,
@@ -25,7 +24,6 @@ __all__ = [
     "RagCandidate",
     "RagRetrieveResponse",
     "HealthResponse",
-    "MetricsResponse",
     "ReadinessResponse",
     "ErrorResponse",
 ]

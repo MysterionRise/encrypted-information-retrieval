@@ -18,7 +18,6 @@ from fastapi.testclient import TestClient
 
 from encrypted_ir.api.dependencies.rate_limiter import RateLimiter, set_rate_limiter
 from encrypted_ir.api.main import create_app
-from encrypted_ir.api.routes.admin import reset_metrics
 from encrypted_ir.settings import EncryptedIRSettings
 
 SettingsFactory = Callable[..., EncryptedIRSettings]
@@ -55,8 +54,7 @@ def settings_factory() -> SettingsFactory:
 
 @pytest.fixture()
 def app(settings_factory: SettingsFactory) -> FastAPI:
-    """Create a fresh app with reset process-global metrics and rate limits."""
-    reset_metrics()
+    """Create a fresh app (with its own metrics registry) and reset the global rate limiter."""
     set_rate_limiter(RateLimiter())
     return create_app(settings_factory())
 
@@ -94,6 +92,12 @@ def make_token(app: FastAPI) -> TokenFactory:
 def bearer(token: str) -> dict[str, str]:
     """Build an Authorization header for ``token``."""
     return {"Authorization": f"Bearer {token}"}
+
+
+def metric(app: FastAPI, name: str, **labels: str) -> float:
+    """Read one sample from ``app``'s Prometheus registry (0.0 if it was never recorded)."""
+    value = app.state.metrics.registry.get_sample_value(name, labels)
+    return 0.0 if value is None else float(value)
 
 
 @pytest.fixture()
