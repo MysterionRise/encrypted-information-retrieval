@@ -43,8 +43,14 @@ demos remain at library level in `examples/portfolio_demo.py`.
 
 Metadata is encrypted with the document key since [#40](https://github.com/MysterionRise/encrypted-information-retrieval/issues/40)
 and is returned decrypted only to callers of the owning tenant. Rows written before that keep
-their metadata as plaintext JSON until the rotation tool in [#42](https://github.com/MysterionRise/encrypted-information-retrieval/issues/42)
-re-encrypts them.
+their metadata as plaintext JSON until the rotation tool
+(`python -m encrypted_ir.tools.rotate_tenant_keys`, [#42](https://github.com/MysterionRise/encrypted-information-retrieval/issues/42)) re-encrypts them.
+
+Each row also stores its keyword list, sealed under the document key, so rotation can rebuild the
+search tokens. That reveals nothing new to a database reader, who already sees the token count.
+During a rotation, a reader of the database can see which documents have moved to the new keys.
+Searches compute tokens under every search key the tenant still has, so a query observer sees one
+token per keyword per search key.
 
 ## Current Production Boundary
 
