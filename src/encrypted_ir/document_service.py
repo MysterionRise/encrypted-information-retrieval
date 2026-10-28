@@ -355,10 +355,13 @@ class DocumentService:
         search_key_id = key_manager.get_or_create_active_key(
             self.DOC_SEARCH_KEY_TYPE, "RAG document search tokens"
         )
-        search_key = key_manager.get_key(search_key_id)
+        # A rotation can start between the two lookups and mark the first key ROTATING. That
+        # key still accepts writes (the rotation moves them later), so fetch the keys in any
+        # usable state and let require_writable_keys decide inside the transaction.
+        search_key = key_manager.get_key_for_decryption(search_key_id)
         tokens = {search_token(search_key, keyword) for keyword in keywords}
         columns = seal_document(
-            key_manager.get_key(encryption_key_id),
+            key_manager.get_key_for_decryption(encryption_key_id),
             encryption_key_id,
             tenant_id,
             doc_id,
