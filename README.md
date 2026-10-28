@@ -13,7 +13,7 @@ This repo is strongest as a CTO portfolio artifact: real enough to run locally w
 - Tenant-scoped deterministic keyword tokens for retrieval.
 - Key lifecycle primitives, file/database storage backends, and AWS KMS abstraction.
 - OIDC/JWKS production configuration path plus local demo auth for Compose.
-- Audit records that avoid plaintext, raw queries, tokens, and key material.
+- Audit records in a per-tenant HMAC chain, with an export tool that verifies it; they avoid plaintext, raw queries, tokens, and key material.
 - Benchmarks and evidence docs for local portfolio review.
 
 ## Core Versus Research Code
@@ -185,6 +185,17 @@ API role's `kms:Decrypt` permission:
   }
 }
 ```
+
+Export and verify a tenant's audit chain, using the same `DATABASE_URL` and master-key settings as
+the API:
+
+```bash
+python -m encrypted_ir.tools.export_audit --tenant local-demo --output audit.jsonl
+```
+
+It verifies the whole chain, prints the head (`head_seq`, `head_hash`) to stderr and exits 2 if the
+chain is broken. Keep the head somewhere the database's writers cannot change, and pass it back as
+`--check-head SEQ:HASH` on later exports to detect rows dropped from the end.
 
 Run the retrieval benchmark locally:
 

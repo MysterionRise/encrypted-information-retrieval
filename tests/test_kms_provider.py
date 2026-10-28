@@ -211,10 +211,6 @@ class TestKeyManagerFromKMS:
         manager.delete_key(new_key_id)
         assert manager.get_metadata(new_key_id).active is False
 
-        # Audit
-        logs = manager.get_audit_log()
-        assert len(logs) >= 3
-
     def test_from_kms_export_import(self):
         """Export/import works with KMS-created manager."""
         provider = MockKMSProvider()

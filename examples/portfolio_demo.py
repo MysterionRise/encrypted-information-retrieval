@@ -9,11 +9,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from encrypted_ir import audit
 from encrypted_ir.audit import AuditEventType
 from encrypted_ir.blind_index import BlindIndexConfig, BlindIndexSearch
+from encrypted_ir.database import create_database_engine, create_database_schema
 from encrypted_ir.key_manager import KeyManager
 from encrypted_ir.research.ore import ORE
 from encrypted_ir.searchable import SearchableEncryption
+from encrypted_ir.storage_backend import DatabaseStorageBackend
 
 
 def _blind_index_demo() -> dict[str, Any]:
@@ -106,7 +109,15 @@ def _ore_range_demo() -> dict[str, Any]:
 
 
 def _key_lifecycle_demo() -> dict[str, Any]:
-    manager = KeyManager(master_key=b"M" * 32)
+    master_key = b"M" * 32
+    tenant_id = "tenant-alpha"
+    engine = create_database_engine("sqlite+pysqlite:///:memory:")
+    create_database_schema(engine)
+    manager = KeyManager(
+        master_key=master_key,
+        storage_backend=DatabaseStorageBackend(engine, tenant_id),
+        audit_reads=True,
+    )
     old_key_id = manager.create_key(
         "document_search",
         key_size=32,
@@ -116,13 +127,19 @@ def _key_lifecycle_demo() -> dict[str, Any]:
     manager.get_key(old_key_id)
     new_key_id = manager.rotate_key(old_key_id)
 
-    audit_operations = [entry["operation"] for entry in manager.get_audit_log(limit=10)]
+    with engine.connect() as conn:
+        rows, head = audit.load_chain(conn, tenant_id)
+    verification = audit.verify_chain(
+        rows, head, tenant_id, audit.derive_audit_key(master_key, tenant_id)
+    )
+    engine.dispose()
     return {
         "created_key_type": manager.get_metadata(new_key_id).key_type,
         "old_key_state": manager.get_metadata(old_key_id).lifecycle_state,
         "new_key_active": manager.get_metadata(new_key_id).active,
         "active_key_count": len(manager.list_keys(key_type="document_search")),
-        "audit_operations_latest_first": audit_operations,
+        "audit_events_in_order": [row.event_type for row in rows],
+        "audit_chain_verified": verification.ok,
     }
 
 
@@ -146,8 +163,8 @@ def build_demo_summary() -> dict[str, Any]:
                 "authorized retrieval context."
             ),
             "auditable_events": [
-                AuditEventType.SEARCH_KEYWORD.value,
-                AuditEventType.DECRYPT.value,
+                AuditEventType.DOCUMENT_SEARCH.value,
+                AuditEventType.DOCUMENT_DECRYPT.value,
                 AuditEventType.KEY_ROTATE.value,
             ],
         },

@@ -23,7 +23,9 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.engine import Engine
 
-from .database import audit_log_table, create_database_schema, key_store_table
+from . import audit as audit_chain
+from .audit import AuditWrite
+from .database import create_database_schema, key_store_table
 
 
 class StorageBackend(abc.ABC):
@@ -32,21 +34,34 @@ class StorageBackend(abc.ABC):
     Implementations must provide thread-safe persistent storage for:
     - Encrypted key material
     - Key metadata
-    - Audit log entries
+
+    A backend may also keep the tenant's audit chain (see :mod:`encrypted_ir.audit`): it then
+    appends audit writes, in the same transaction as the key change when one is given. The
+    default implementation has no audit store and ignores them.
 
     Future implementations could include database-backed storage,
     HSM/KMS integration, or cloud key management services.
     """
 
     @abc.abstractmethod
-    def save_key(self, key_id: str, encrypted_key: bytes, metadata: dict) -> None:
+    def save_key(
+        self,
+        key_id: str,
+        encrypted_key: bytes,
+        metadata: dict,
+        audit: AuditWrite | None = None,
+    ) -> None:
         """Persist a key and its metadata.
 
         Args:
             key_id: Unique key identifier.
             encrypted_key: Key material encrypted with the master key.
             metadata: Key metadata as a dictionary.
+            audit: Audit event to append in the same transaction, if the backend audits.
         """
+
+    def append_audit(self, write: AuditWrite) -> None:  # noqa: B027
+        """Append an audit event on its own. Backends without an audit store ignore it."""
 
     @abc.abstractmethod
     def load_key(self, key_id: str) -> tuple[bytes, dict] | None:
@@ -79,26 +94,6 @@ class StorageBackend(abc.ABC):
         """
 
     @abc.abstractmethod
-    def save_audit_entry(self, entry: dict) -> None:
-        """Persist an audit log entry.
-
-        Args:
-            entry: Audit log entry as a dictionary.
-        """
-
-    @abc.abstractmethod
-    def load_audit_log(self, key_id: str | None = None, limit: int = 100) -> list[dict]:
-        """Load audit log entries.
-
-        Args:
-            key_id: Filter by key ID (None for all).
-            limit: Maximum entries to return.
-
-        Returns:
-            List of audit entries, most recent first.
-        """
-
-    @abc.abstractmethod
     def load_all(self) -> tuple[dict[str, bytes], dict[str, dict]]:
         """Load all keys and metadata from storage.
 
@@ -118,11 +113,12 @@ class FileStorageBackend(StorageBackend):
     Directory structure:
         storage_dir/
             keystore.enc    - Encrypted key store (keys + metadata)
-            audit.jsonl     - Append-only audit log (one JSON entry per line)
+
+    It has no audit store: key events are not audited. Use :class:`DatabaseStorageBackend`
+    for an audited, tamper-evident key store.
     """
 
     KEYSTORE_FILENAME = "keystore.enc"
-    AUDIT_FILENAME = "audit.jsonl"
 
     def __init__(self, storage_dir: str, encryption_key: bytes):
         """Initialize file storage backend.
@@ -143,7 +139,6 @@ class FileStorageBackend(StorageBackend):
         self._storage_dir.mkdir(parents=True, exist_ok=True)
         self._encryption_key = encryption_key
         self._keystore_path = self._storage_dir / self.KEYSTORE_FILENAME
-        self._audit_path = self._storage_dir / self.AUDIT_FILENAME
 
     def _encrypt_data(self, data: bytes) -> bytes:
         """Encrypt data with AES-GCM. Returns nonce + ciphertext."""
@@ -199,7 +194,13 @@ class FileStorageBackend(StorageBackend):
 
         os.replace(str(tmp_path), str(self._keystore_path))
 
-    def save_key(self, key_id: str, encrypted_key: bytes, metadata: dict) -> None:
+    def save_key(
+        self,
+        key_id: str,
+        encrypted_key: bytes,
+        metadata: dict,
+        audit: AuditWrite | None = None,
+    ) -> None:
         store = self._read_store()
         store["keys"][key_id] = base64.b64encode(encrypted_key).decode("ascii")
         store["metadata"][key_id] = metadata
@@ -226,37 +227,6 @@ class FileStorageBackend(StorageBackend):
         store = self._read_store()
         return list(store["keys"].keys())
 
-    def save_audit_entry(self, entry: dict) -> None:
-        line = json.dumps(entry) + "\n"
-        with open(self._audit_path, "a") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
-            try:
-                f.write(line)
-                f.flush()
-                os.fsync(f.fileno())
-            finally:
-                fcntl.flock(f, fcntl.LOCK_UN)
-
-    def load_audit_log(self, key_id: str | None = None, limit: int = 100) -> list[dict]:
-        if not self._audit_path.exists():
-            return []
-
-        entries = []
-        with open(self._audit_path) as f:
-            fcntl.flock(f, fcntl.LOCK_SH)
-            try:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    entry = json.loads(line)
-                    if key_id is None or entry.get("key_id") == key_id:
-                        entries.append(entry)
-            finally:
-                fcntl.flock(f, fcntl.LOCK_UN)
-
-        return list(reversed(entries[-limit:]))
-
     def load_all(self) -> tuple[dict[str, bytes], dict[str, dict]]:
         store = self._read_store()
         keys = {key_id: base64.b64decode(key_b64) for key_id, key_b64 in store["keys"].items()}
@@ -282,8 +252,14 @@ class DatabaseStorageBackend(StorageBackend):
         """Tenant identifier this backend is scoped to."""
         return self._tenant_id
 
-    def save_key(self, key_id: str, encrypted_key: bytes, metadata: dict) -> None:
-        """Insert or update a key row (update first, insert only if no row exists)."""
+    def save_key(
+        self,
+        key_id: str,
+        encrypted_key: bytes,
+        metadata: dict,
+        audit: AuditWrite | None = None,
+    ) -> None:
+        """Insert or update a key row, and append ``audit`` in the same transaction."""
         with self._engine.begin() as conn:
             result = conn.execute(
                 update(key_store_table)
@@ -302,6 +278,8 @@ class DatabaseStorageBackend(StorageBackend):
                         metadata_json=metadata,
                     )
                 )
+            if audit is not None:
+                audit_chain.append(conn, self._tenant_id, audit.event, audit.audit_key)
 
     def load_key(self, key_id: str) -> tuple[bytes, dict] | None:
         stmt = select(key_store_table.c.encrypted_key, key_store_table.c.metadata_json).where(
@@ -331,26 +309,10 @@ class DatabaseStorageBackend(StorageBackend):
         with self._engine.connect() as conn:
             return [row.key_id for row in conn.execute(stmt)]
 
-    def save_audit_entry(self, entry: dict) -> None:
+    def append_audit(self, write: AuditWrite) -> None:
+        """Append an audit event to this tenant's chain in its own transaction."""
         with self._engine.begin() as conn:
-            conn.execute(
-                insert(audit_log_table).values(
-                    tenant_id=self._tenant_id,
-                    key_id=entry.get("key_id"),
-                    entry_json=entry,
-                )
-            )
-
-    def load_audit_log(self, key_id: str | None = None, limit: int = 100) -> list[dict]:
-        stmt = select(audit_log_table.c.entry_json).where(
-            audit_log_table.c.tenant_id == self._tenant_id
-        )
-        if key_id is not None:
-            stmt = stmt.where(audit_log_table.c.key_id == key_id)
-        stmt = stmt.order_by(audit_log_table.c.id.desc()).limit(limit)
-
-        with self._engine.connect() as conn:
-            return [dict(row.entry_json) for row in conn.execute(stmt)]
+            audit_chain.append(conn, self._tenant_id, write.event, write.audit_key)
 
     def load_all(self) -> tuple[dict[str, bytes], dict[str, dict]]:
         stmt = select(

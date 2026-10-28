@@ -19,7 +19,6 @@ import hashlib
 import json
 import os
 import threading
-from collections import deque
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -28,6 +27,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
+from .audit import AuditEvent, AuditEventType, AuditWrite, derive_audit_key
 from .errors import KeyIntegrityError
 
 if TYPE_CHECKING:
@@ -172,8 +172,6 @@ class KeyManager:
     Handles generation, storage, rotation, and lifecycle of encryption keys.
     """
 
-    MAX_IN_MEMORY_AUDIT_ENTRIES = 10_000
-
     def __init__(
         self,
         master_key: bytes = None,
@@ -197,6 +195,11 @@ class KeyManager:
             tenant_id: Tenant the keys belong to. Wrapped keys are bound to it through
                        AES-GCM associated data. Defaults to the backend's ``tenant_id``
                        (or "" when there is none) and must match it if both are given.
+
+        Key events (create, deactivate, rotate, import, failed reads) are written to the
+        storage backend's audit chain (see :mod:`encrypted_ir.audit`), in the same
+        transaction as the key change when there is one. Without a backend, or with a
+        backend that has no audit store, nothing is audited.
 
         The manager is safe to share between threads. With a storage backend, keys
         written by another process are picked up by :meth:`refresh` or loaded on demand
@@ -224,8 +227,6 @@ class KeyManager:
         self._lock = threading.RLock()
         self._keys: dict[str, bytes] = {}
         self._metadata: dict[str, KeyMetadata] = {}
-        # Used only without a storage backend; the backend is the audit store otherwise.
-        self._audit_log: deque[dict] = deque(maxlen=self.MAX_IN_MEMORY_AUDIT_ENTRIES)
 
         if self._storage_backend is not None:
             self._load_from_backend()
@@ -349,19 +350,40 @@ class KeyManager:
         key_id = hashlib.sha256(id_data).hexdigest()[:16]
         return f"{key_type}_{key_id}"
 
-    def _log_access(self, key_id: str, operation: str, success: bool, details: str = ""):
-        """Log key access for audit trail."""
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "key_id": key_id,
-            "operation": operation,
-            "success": success,
-            "details": details,
-        }
+    @staticmethod
+    def _event(
+        event_type: AuditEventType, key_id: str, success: bool, **details: Any
+    ) -> AuditEvent:
+        """An audit event about ``key_id``. Details never carry key material."""
+        return AuditEvent(
+            event_type=event_type,
+            actor="key-manager",
+            success=success,
+            resource=key_id,
+            details=details,
+            key_id=None if key_id == "*" else key_id,
+        )
+
+    def _audit_write(self, event: AuditEvent) -> AuditWrite:
+        return AuditWrite(event, derive_audit_key(self.master_key, self.tenant_id))
+
+    def _audit(self, event: AuditEvent) -> None:
+        """Append ``event`` to the backend's audit chain in its own transaction."""
         if self._storage_backend is not None:
-            self._storage_backend.save_audit_entry(log_entry)
-        else:
-            self._audit_log.append(log_entry)
+            self._storage_backend.append_audit(self._audit_write(event))
+
+    def _log_access(self, key_id: str, operation: str, success: bool, details: str = "") -> None:
+        """Audit an operation recorded by ``KeyRotationManager`` (to be removed with it)."""
+        self._audit(
+            AuditEvent(
+                event_type=f"key.{operation}",
+                actor="key-manager",
+                success=success,
+                resource=key_id,
+                details={"note": details},
+                key_id=None if key_id in ("*", "kek") else key_id,
+            )
+        )
 
     def _load_from_backend(self):
         """Load all keys and metadata from the storage backend into memory."""
@@ -410,17 +432,24 @@ class KeyManager:
         with self._lock:
             self._metadata[key_id].access_count += 1
         if self._audit_reads:
-            self._persist_key(key_id)
-            self._log_access(key_id, operation, True)
+            self._persist_key(
+                key_id,
+                audit=self._event(AuditEventType.KEY_READ, key_id, True, operation=operation),
+            )
 
-    def _persist_key(self, key_id: str):
-        """Persist a single key and its metadata to the storage backend."""
+    def _persist_key(self, key_id: str, audit: AuditEvent | None = None):
+        """Persist a key and its metadata, with ``audit`` in the same transaction."""
         if self._storage_backend is None:
             return
         metadata = self._metadata[key_id]
         encrypted_key = self._encrypt_key(key_id, self._keys[key_id], metadata)
         metadata_dict = {**metadata.to_dict(), "wrap_format": WRAP_FORMAT}
-        self._storage_backend.save_key(key_id, encrypted_key, metadata_dict)
+        self._storage_backend.save_key(
+            key_id,
+            encrypted_key,
+            metadata_dict,
+            audit=None if audit is None else self._audit_write(audit),
+        )
 
     def create_key(
         self,
@@ -456,8 +485,9 @@ class KeyManager:
             self._keys[key_id] = key
             self._metadata[key_id] = metadata
 
-        self._persist_key(key_id)
-        self._log_access(key_id, "create", True, f"Created {key_type} key")
+        self._persist_key(
+            key_id, audit=self._event(AuditEventType.KEY_CREATE, key_id, True, key_type=key_type)
+        )
         return key_id
 
     def get_key(self, key_id: str) -> bytes:
@@ -475,17 +505,17 @@ class KeyManager:
             ValueError: If key is expired or inactive
         """
         if not self._ensure_loaded(key_id):
-            self._log_access(key_id, "get", False, "Key not found")
+            self._audit(self._event(AuditEventType.KEY_READ, key_id, False, reason="not_found"))
             raise KeyError(f"Key {key_id} not found")
 
         metadata = self._metadata[key_id]
 
         if not metadata.active:
-            self._log_access(key_id, "get", False, "Key is inactive")
+            self._audit(self._event(AuditEventType.KEY_READ, key_id, False, reason="inactive"))
             raise ValueError(f"Key {key_id} is inactive")
 
         if metadata.is_expired():
-            self._log_access(key_id, "get", False, "Key is expired")
+            self._audit(self._event(AuditEventType.KEY_READ, key_id, False, reason="expired"))
             raise ValueError(f"Key {key_id} is expired")
 
         self._record_read(key_id, "get")
@@ -509,13 +539,13 @@ class KeyManager:
             ValueError: If key is destroyed.
         """
         if not self._ensure_loaded(key_id):
-            self._log_access(key_id, "get_for_decryption", False, "Key not found")
+            self._audit(self._event(AuditEventType.KEY_READ, key_id, False, reason="not_found"))
             raise KeyError(f"Key {key_id} not found")
 
         metadata = self._metadata[key_id]
 
         if metadata.lifecycle_state == KeyLifecycleState.DESTROYED:
-            self._log_access(key_id, "get_for_decryption", False, "Key is destroyed")
+            self._audit(self._event(AuditEventType.KEY_READ, key_id, False, reason="destroyed"))
             raise ValueError(f"Key {key_id} is destroyed and cannot be used")
 
         self._record_read(key_id, "get_for_decryption")
@@ -586,9 +616,11 @@ class KeyManager:
         # Mark old key as inactive
         old_metadata.active = False
         old_metadata.lifecycle_state = KeyLifecycleState.RETIRED
-        self._persist_key(key_id)
         self._persist_key(new_key_id)
-        self._log_access(key_id, "rotate", True, f"Rotated to {new_key_id}")
+        self._persist_key(
+            key_id,
+            audit=self._event(AuditEventType.KEY_ROTATE, key_id, True, successor_key_id=new_key_id),
+        )
 
         return new_key_id
 
@@ -608,8 +640,7 @@ class KeyManager:
         # Mark as inactive instead of actually deleting
         # (crypto-shredding - key deletion = data deletion)
         self._metadata[key_id].active = False
-        self._persist_key(key_id)
-        self._log_access(key_id, "delete", True, "Key marked inactive")
+        self._persist_key(key_id, audit=self._event(AuditEventType.KEY_DEACTIVATE, key_id, True))
 
     def list_keys(self, key_type: str = None, active_only: bool = True) -> list[str]:
         """
@@ -724,22 +755,6 @@ class KeyManager:
         for key_id in export_data["keys"]:
             self._persist_key(key_id)
 
-        self._log_access("*", "import", True, f"Imported {len(export_data['keys'])} keys")
-
-    def get_audit_log(self, key_id: str = None, limit: int = 100) -> list[dict]:
-        """
-        Get audit log entries.
-
-        Args:
-            key_id: Filter by key ID (None = all keys)
-            limit: Maximum number of entries to return
-
-        Returns:
-            List of audit log entries (most recent first)
-        """
-        if self._storage_backend is not None:
-            return self._storage_backend.load_audit_log(key_id=key_id, limit=limit)
-        logs = list(self._audit_log)
-        if key_id:
-            logs = [log for log in logs if log["key_id"] == key_id]
-        return list(reversed(logs[-limit:]))
+        self._audit(
+            self._event(AuditEventType.KEY_IMPORT, "*", True, count=len(export_data["keys"]))
+        )

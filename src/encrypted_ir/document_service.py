@@ -14,8 +14,9 @@ from sqlalchemy import Integer, and_, case, delete, func, insert, literal, selec
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
-from . import document_crypto
-from .database import audit_log_table, document_tokens_table, documents_table
+from . import audit, document_crypto
+from .audit import AuditEvent, AuditEventType, ChainVerification, derive_audit_key
+from .database import document_tokens_table, documents_table
 from .errors import DocumentAlreadyExistsError, DocumentIntegrityError, DocumentNotFoundError
 from .key_manager import KeyLifecycleState, KeyManager
 from .searchable import extract_keywords, normalize_keyword, search_token
@@ -168,6 +169,9 @@ class DocumentService:
         )
         return json.loads(metadata_bytes), plaintext.decode("utf-8")
 
+    def _audit_key(self, tenant_id: str) -> bytes:
+        return derive_audit_key(self._master_key, tenant_id)
+
     def record_audit_event(
         self,
         tenant_id: str,
@@ -176,30 +180,22 @@ class DocumentService:
         success: bool,
         resource: str = "",
         details: dict[str, Any] | None = None,
-        request_id: str = "",
+        request_id: str | None = None,
     ) -> None:
-        """Persist a sanitized API security audit event."""
-        sanitized_details = {
-            key: ("[REDACTED_BYTES]" if isinstance(value, bytes) else value)
-            for key, value in (details or {}).items()
-            if key not in {"plaintext", "content", "token", "tokens", "query"}
-        }
-        record = {
-            "event_type": event_type,
-            "actor": actor,
-            "success": success,
-            "resource": resource,
-            "details": sanitized_details,
-            "request_id": request_id,
-        }
+        """Append an audit event to the tenant's chain in its own transaction.
+
+        Used for events that have no write of their own to share a transaction with (reads,
+        rejected requests, failures). ``details`` is redacted before it is stored.
+        """
+        event = AuditEvent(event_type, actor, success, resource, details or {}, request_id)
         with self._engine.begin() as conn:
-            conn.execute(
-                insert(audit_log_table).values(
-                    tenant_id=tenant_id,
-                    key_id=None,
-                    entry_json=record,
-                )
-            )
+            audit.append(conn, tenant_id, event, self._audit_key(tenant_id))
+
+    def verify_audit_chain(self, tenant_id: str) -> ChainVerification:
+        """Verify ``tenant_id``'s audit chain from its first entry to the head row."""
+        with self._engine.connect() as conn:
+            rows, head = audit.load_chain(conn, tenant_id)
+        return audit.verify_chain(rows, head, tenant_id, self._audit_key(tenant_id))
 
     def ingest_document(
         self,
@@ -208,8 +204,14 @@ class DocumentService:
         content: str,
         metadata: dict[str, Any] | None = None,
         keywords: Iterable[str] | None = None,
+        *,
+        actor: str = "system",
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         """Encrypt, index, and persist a document for a tenant.
+
+        The ``document.encrypt`` audit row is written in the same transaction as the document,
+        so the document is stored only if its audit row is.
 
         Raises:
             DocumentAlreadyExistsError: If the tenant already has a document with this ID,
@@ -242,8 +244,8 @@ class DocumentService:
             **context,
         )
 
-        try:
-            with self._engine.begin() as conn:
+        with self._engine.begin() as conn:
+            try:
                 conn.execute(
                     insert(documents_table).values(
                         tenant_id=tenant_id,
@@ -257,17 +259,30 @@ class DocumentService:
                         token_count=len(tokens),
                     )
                 )
-                if tokens:
-                    conn.execute(
-                        insert(document_tokens_table),
-                        [
-                            {"tenant_id": tenant_id, "token": token, "doc_id": doc_id}
-                            for token in sorted(tokens)
-                        ],
-                    )
-        except IntegrityError as exc:
-            # The primary key (tenant_id, doc_id) is the only constraint a new row can hit.
-            raise DocumentAlreadyExistsError(doc_id) from exc
+            except IntegrityError as exc:
+                # The primary key (tenant_id, doc_id) is the only constraint a new row can hit.
+                raise DocumentAlreadyExistsError(doc_id) from exc
+            if tokens:
+                conn.execute(
+                    insert(document_tokens_table),
+                    [
+                        {"tenant_id": tenant_id, "token": token, "doc_id": doc_id}
+                        for token in sorted(tokens)
+                    ],
+                )
+            audit.append(
+                conn,
+                tenant_id,
+                AuditEvent(
+                    AuditEventType.DOCUMENT_ENCRYPT,
+                    actor,
+                    True,
+                    doc_id,
+                    {"indexed_token_count": len(tokens)},
+                    request_id,
+                ),
+                self._audit_key(tenant_id),
+            )
 
         return {
             "doc_id": doc_id,
@@ -420,23 +435,42 @@ class DocumentService:
             retrieved.append(candidate)
         return retrieved
 
-    def delete_document(self, tenant_id: str, doc_id: str) -> bool:
-        """Delete a document and its tokens in one transaction.
+    def delete_document(
+        self,
+        tenant_id: str,
+        doc_id: str,
+        *,
+        actor: str = "system",
+        request_id: str | None = None,
+    ) -> bool:
+        """Delete a document, its tokens and write its audit row in one transaction.
+
+        The document row is deleted first: a concurrent writer of the same document holds its
+        row lock, so the token delete that follows sees that writer's tokens and none are left
+        behind.
 
         Returns:
-            True if the document existed.
+            True if the document existed (and was audited).
         """
         with self._engine.begin() as conn:
-            conn.execute(
-                delete(document_tokens_table).where(
-                    document_tokens_table.c.tenant_id == tenant_id,
-                    document_tokens_table.c.doc_id == doc_id,
-                )
-            )
             result = conn.execute(
                 delete(documents_table).where(
                     documents_table.c.tenant_id == tenant_id,
                     documents_table.c.doc_id == doc_id,
                 )
             )
-        return bool(result.rowcount > 0)
+            conn.execute(
+                delete(document_tokens_table).where(
+                    document_tokens_table.c.tenant_id == tenant_id,
+                    document_tokens_table.c.doc_id == doc_id,
+                )
+            )
+            deleted = bool(result.rowcount > 0)
+            if deleted:
+                audit.append(
+                    conn,
+                    tenant_id,
+                    AuditEvent(AuditEventType.DOCUMENT_DELETE, actor, True, doc_id, {}, request_id),
+                    self._audit_key(tenant_id),
+                )
+        return deleted

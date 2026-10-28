@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import re
-import threading
 import time
 import uuid
-from collections import deque
 from collections.abc import Callable
 
 from fastapi import HTTPException, status
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from .dependencies.rate_limiter import RateLimitConfig, RateLimiter
 
 REQUEST_ID_PATTERN = r"[A-Za-z0-9._-]{1,64}"
 
@@ -98,31 +98,32 @@ class BodySizeLimitMiddleware:
 
 
 class SecurityAuditLimiter:
-    """Allow at most ``max_events`` security audit rows per ``window_seconds``, process-wide.
+    """Bound the audit rows written for rejected requests, per source and in total.
 
-    Rejected requests (401, 403, 429) are cheap for a client to generate, so their audit rows
-    are rate-bounded to keep a flood from filling the audit table. Requests over the bound are
-    still counted in ``/metrics``.
+    Rejected requests (401, 403, 429) are cheap to generate, so their audit rows are limited to
+    keep a flood from filling the audit table: at most ``per_source`` rows per window for each
+    source (the authenticated tenant, or the client address when unauthenticated) and at most
+    ``total`` rows per window for the process. Requests over either bound are still counted in
+    ``/metrics``.
     """
 
     def __init__(
         self,
-        max_events: int = 60,
-        window_seconds: float = 60.0,
+        per_source: tuple[int, float] = (20, 60.0),
+        total: tuple[int, float] = (120, 60.0),
+        max_sources: int = 10_000,
         clock: Callable[[], float] = time.monotonic,
     ):
-        self.max_events = max_events
-        self.window_seconds = window_seconds
-        self._clock = clock
-        self._times: deque[float] = deque()
-        self._lock = threading.Lock()
+        self._limiter = RateLimiter(
+            {"source": RateLimitConfig(*per_source), "total": RateLimitConfig(*total)},
+            max_keys=max_sources,
+            clock=clock,
+        )
 
-    def allow(self) -> bool:
-        now = self._clock()
-        with self._lock:
-            while self._times and self._times[0] <= now - self.window_seconds:
-                self._times.popleft()
-            if len(self._times) >= self.max_events:
-                return False
-            self._times.append(now)
-            return True
+    def allow(self, source: str) -> str | None:
+        """None if a row for ``source`` may be written, else the bound that dropped it."""
+        if self._limiter.try_acquire(source, "source") is not None:
+            return "per_source"
+        if self._limiter.try_acquire("*", "total") is not None:
+            return "total"
+        return None

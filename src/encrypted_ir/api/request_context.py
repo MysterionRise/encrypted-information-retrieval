@@ -181,10 +181,14 @@ class RequestContextMiddleware:
             metrics.record_rejection(status_code, reason)
 
         limiter = getattr(app.state, "security_audit_limiter", None)
-        if limiter is not None and not limiter.allow():
-            if metrics is not None:
-                metrics.record_security_audit_dropped()
-            return
+        if limiter is not None:
+            client = scope.get("client")
+            source = state.get("tenant_id") or f"client:{client[0] if client else 'unknown'}"
+            dropped_by = limiter.allow(source)
+            if dropped_by is not None:
+                if metrics is not None:
+                    metrics.record_security_audit_dropped(dropped_by)
+                return
 
         try:
             await run_in_threadpool(
