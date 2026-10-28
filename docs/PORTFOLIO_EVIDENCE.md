@@ -116,6 +116,7 @@ regenerates this whole document from one run on the release commit.
 | Run | Date (UTC) | Commit | CI run | Result |
 | --- | --- | --- | --- | --- |
 | KMS path against moto server (`scripts/kms_smoke.sh`, #49) | 2026-10-28 | `2f1c355` | [40749861222](https://github.com/MysterionRise/encrypted-information-retrieval/actions/runs/40749861222), job "End-to-end KMS" | Passed. The steps: wrap with `GenerateDataKey` through `generate_kms_master_key`; start with `ENCRYPTED_IR_KMS_PROVIDER=aws`; ingest; restart; retrieve. The `_system` chain verified with 2 `key.unwrap` rows, and the key failed to unwrap under `ENCRYPTED_IR_ENV=test` (`InvalidCiphertextException`). |
+| Production mode: Keycloak and moto server (`scripts/oidc_smoke.sh`, #48) | 2026-10-28 | `5a33f02` | [40751468657](https://github.com/MysterionRise/encrypted-information-retrieval/actions/runs/40751468657), job "End-to-end KMS and OIDC" | Passed. The API ran in `ENCRYPTED_IR_ENV=prod` with no raw master key and no dev auth, and `/ready` reported every check true. Keycloak issued RS256 tokens whose `iss`, `aud`, `tenant_id` and `roles` were checked. Tenant-a ingest and retrieval worked. Tenant-b got 404 on get and delete and an empty retrieval. A read-only ingest got 403. A broken signature and the dev API key got 401. After a restart the document was retrieved again and tenant-a's audit chain verified. |
 
 ## Status and Limitations
 
