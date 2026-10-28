@@ -180,7 +180,10 @@ jobs:
 
       - name: Audit dependencies for known vulnerabilities (pip-audit)
         run: |
-          pip-audit -r requirements-ci.txt -r requirements-api.txt -r requirements-research.txt
+          pip-audit -r requirements-ci.txt -r requirements-research.txt
+          # Separately: the Docker lock pins hashes (pip then requires them for every line)
+          # and its own versions.
+          pip-audit -r requirements-docker.txt
 
       - name: Upload security report
         uses: actions/upload-artifact@v7
@@ -229,8 +232,54 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
+      - name: Compose refuses to start without the .env values
+        run: |
+          if docker compose --env-file /dev/null config > /dev/null 2> missing.txt; then
+            echo "compose config succeeded without .env"; exit 1
+          fi
+          grep -q "POSTGRES" missing.txt
+
+      - name: Create .env from the committed demo values
+        run: cp .env.example .env
+
       - name: Build and start the stack
         run: docker compose up -d --build
+
+      - name: Migrations ran as a separate one-shot service
+        run: |
+          container="$(docker compose ps -a -q migrate)"
+          test "$(docker inspect --format '{{.State.ExitCode}}' "$container")" = "0"
+          docker compose logs migrate | grep -q "Running upgrade"
+
+      - name: The image runs as a non-root user
+        run: test "$(docker run --rm --entrypoint id encrypted-ir:local -u)" = "10001"
+
+      - name: The AWS KMS path starts from the image (boto3 is installed)
+        run: |
+          # A KMS endpoint nobody listens on: startup must get as far as calling KMS and fail
+          # there, not on a missing boto3.
+          set +e
+          output="$(timeout 120 docker run --rm \
+            -e ENCRYPTED_IR_ENV=dev \
+            -e ENCRYPTED_IR_KMS_PROVIDER=aws \
+            -e ENCRYPTED_IR_AWS_KMS_KEY_ID=alias/ci-placeholder \
+            -e ENCRYPTED_IR_ENCRYPTED_MASTER_KEY_B64=Y2ktcGxhY2Vob2xkZXI= \
+            -e DATABASE_URL=sqlite+pysqlite:///:memory: \
+            -e AWS_REGION=us-east-1 \
+            -e AWS_ACCESS_KEY_ID=ci-placeholder \
+            -e AWS_SECRET_ACCESS_KEY=placeholder-not-a-secret \
+            -e AWS_ENDPOINT_URL_KMS=http://127.0.0.1:9 \
+            -e AWS_MAX_ATTEMPTS=1 \
+            -e AWS_EC2_METADATA_DISABLED=true \
+            encrypted-ir:local 2>&1)"
+          status=$?
+          set -e
+          echo "$output" | tail -n 25
+          if [ "$status" -eq 0 ] || [ "$status" -eq 124 ]; then
+            echo "expected startup to fail fast at the KMS call, got exit $status"; exit 1
+          fi
+          echo "$output" | grep -q "EndpointConnectionError"
+          if echo "$output" | grep -q "boto3 is required"; then exit 1; fi
 
       - name: Ingest, restart, and retrieve
         run: ./scripts/compose_smoke.sh

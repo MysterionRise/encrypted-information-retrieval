@@ -13,6 +13,13 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Security
 
+- **The Docker image runs as a non-root user and can start the KMS path** (#45). It runs as
+  uid 10001 and installs the hash-pinned `requirements-docker.txt` into a digest-pinned base
+  image. It now includes boto3, so the AWS KMS production path starts from the shipped image; CI
+  runs it against a dead KMS endpoint to show it gets as far as calling KMS.
+- **Compose no longer hard-codes secrets** (#45). The database password, master key, dev API key
+  and JWT secret come from `.env` (copy `.env.example`, whose values are public demo values), and
+  Compose refuses to start if one is missing. PostgreSQL is no longer published on host port 5432.
 - **Key rotation re-encrypts documents** (#42, ADR-018). `python -m
   encrypted_ir.tools.rotate_tenant_keys --tenant T` rotates a tenant's document and search keys
   while the API serves:
@@ -104,6 +111,8 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Removed
 
+- `requirements-api.txt`, replaced by the generated, hash-pinned `requirements-docker.txt`
+  (#45).
 - `encrypted_ir.key_rotation` (`KeyRotationManager`, `RotationPolicy`, `RotationProgress`,
   `rotate_kek`) and `KeyManager.rotate_key` (#42). The rotation tool is now the only rotation
   path. `rotate_kek` never persisted the re-wrapped master key, and nothing called
@@ -154,6 +163,16 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Changed
 
+- **Breaking: migrations are a separate step** (#45). The image's command starts only uvicorn;
+  Compose runs `python -m encrypted_ir.migrations upgrade head` in a one-shot `migrate` service
+  and starts the API after it succeeds. Other deployments must run that command before starting
+  the API.
+- **Breaking: Compose needs a `.env`** (#45): `cp .env.example .env` before `docker compose up`.
+- **Breaking: `alembic.ini` names no database** (#45). The `alembic` CLI migrates the database in
+  `DATABASE_URL`, and a URL passed to `alembic_config(url)` now wins over `DATABASE_URL`. Before,
+  the environment won, so code that passed a URL could migrate a different database.
+- The `aws` extra requires `boto3>=1.28.57`, the first release that reads
+  `AWS_ENDPOINT_URL_KMS` (#45).
 - **Breaking: migration 0005** (#42). Run `alembic upgrade head`. It adds:
   - `encrypted_ir_documents.encrypted_keywords`;
   - indexes on `(tenant_id, encryption_key_id)` and `(tenant_id, search_key_id)`;
@@ -260,6 +279,8 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Added
 
+- `python -m encrypted_ir.migrations upgrade|downgrade|current`, for running migrations without
+  `alembic.ini` (#45). Dependabot also proposes Docker base-image updates.
 - `encrypted_ir.rotation.rotate_tenant_keys`, `RotationReport`,
   `KeyManager.begin_rotation`, `KeyManager.stored_key_ids` and
   `StorageBackend.save_keys` (#42).

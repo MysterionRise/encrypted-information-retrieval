@@ -46,11 +46,17 @@ The script prints deterministic JSON covering tenant-scoped blind indexes,
 encrypted document search, ORE range query, key/audit lifecycle, and the RAG
 retrieval privacy boundary.
 
-For the API and PostgreSQL workflow:
+For the API and PostgreSQL workflow, copy the demo settings and start the stack:
 
 ```bash
+cp .env.example .env    # public demo values; Compose refuses to start without them
 docker compose up --build
 ```
+
+A one-shot `migrate` service applies the Alembic migrations, then the API starts. PostgreSQL is
+reachable only from those two services. The image runs as a non-root user (uid 10001), installs
+its dependencies from the hash-pinned `requirements-docker.txt`, and includes boto3 for the AWS KMS
+path.
 
 Open the API docs at the URL below. Compose sets `ENCRYPTED_IR_ENABLE_DOCS=true`; without it,
 `/docs`, `/redoc` and `/openapi.json` return 404.
