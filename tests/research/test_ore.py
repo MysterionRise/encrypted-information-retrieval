@@ -2,9 +2,11 @@
 
 import functools
 import struct
-import time
+from decimal import Decimal
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from encrypted_ir.research.ore import ORE
 
@@ -144,6 +146,66 @@ class TestOREFloatEncryption:
         ore = ORE()
         with pytest.raises(ValueError):
             ore.encrypt_float(float(ORE.PLAINTEXT_MAX + 1), precision=0)
+
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            (0.29, 29),  # int(0.29 * 100) == 28
+            (1.15, 115),  # int(1.15 * 100) == 114
+            (4.35, 435),  # int(4.35 * 100) == 434
+            (1234.56, 123456),
+            (0.0, 0),
+            (-0.0, 0),
+            (7, 700),
+            (Decimal("19.99"), 1999),
+        ],
+    )
+    def test_fixed_point_is_exact(self, value, expected):
+        """Regression (#38): encrypt_float truncated, so 0.29 became 28 and 1.15 became 114."""
+        assert ORE.to_fixed_point(value, precision=2) == expected
+        ore = ORE()
+        assert ore.encrypt_float(value, precision=2) == ore.encrypt_int(expected)
+
+    @pytest.mark.parametrize(
+        "value,precision,expected",
+        [
+            (Decimal("1.005"), 2, 100),  # half-to-even: 100.5 -> 100
+            (Decimal("1.015"), 2, 102),  # half-to-even: 101.5 -> 102
+            (2.5, 0, 2),
+            (3.5, 0, 4),
+            (0.123456, 3, 123),
+        ],
+    )
+    def test_fixed_point_rounds_half_to_even(self, value, precision, expected):
+        """Digits beyond the precision are rounded half-to-even, not truncated."""
+        assert ORE.to_fixed_point(value, precision=precision) == expected
+
+    def test_amount_regression_values_order_correctly(self):
+        """0.29 must sort above 0.28 and equal a separately encoded 29 cents."""
+        ore = ORE()
+        assert ore.compare(ore.encrypt_amount(0.29), ore.encrypt_amount(0.28)) == 1
+        assert ore.compare(ore.encrypt_amount(0.29), ore.encrypt_amount(Decimal("0.29"))) == 0
+
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), Decimal("NaN")])
+    def test_non_finite_values_rejected(self, value):
+        """NaN and infinities are rejected instead of being cast to an integer."""
+        with pytest.raises(ValueError, match="finite"):
+            ORE().encrypt_float(value)
+
+    def test_negative_precision_rejected(self):
+        with pytest.raises(ValueError, match="precision"):
+            ORE().encrypt_float(1.0, precision=-1)
+
+    @pytest.mark.parametrize("value", ["1.00", True, None])
+    def test_non_numeric_values_rejected(self, value):
+        with pytest.raises(ValueError, match="int, float or Decimal"):
+            ORE.to_fixed_point(value)
+
+    def test_value_just_under_limit_accepted(self):
+        max_amount = Decimal(ORE.PLAINTEXT_MAX).scaleb(-2)
+        assert ORE.to_fixed_point(max_amount) == ORE.PLAINTEXT_MAX
+        with pytest.raises(ValueError, match="too large"):
+            ORE.to_fixed_point(max_amount + Decimal("0.01"))
 
 
 class TestOREComparison:
@@ -425,8 +487,66 @@ class TestORECache:
         ore = ORE()
         enc1 = ore.encrypt_int(1234)
         ore.clear_cache()
+        assert len(ore._cache) == 0
         enc2 = ore.encrypt_int(1234)  # recomputed from scratch
         assert enc1 == enc2
+
+    def test_cache_is_bounded(self):
+        """Regression (#38): the plaintext -> ciphertext cache grew without bound."""
+        ore = ORE(cache_size=16)
+        for value in range(1000):
+            ore.encrypt_int(value)
+        assert len(ore._cache) == 16
+        assert list(ore._cache) == list(range(984, 1000))
+
+    def test_default_cache_size(self):
+        ore = ORE()
+        assert ore.cache_size == ORE.DEFAULT_CACHE_SIZE == 1024
+        for value in range(ORE.DEFAULT_CACHE_SIZE + 10):
+            ore.encrypt_int(value)
+        assert len(ore._cache) == ORE.DEFAULT_CACHE_SIZE
+
+    def test_cache_evicts_least_recently_used(self):
+        ore = ORE(cache_size=2)
+        ore.encrypt_int(1)
+        ore.encrypt_int(2)
+        ore.encrypt_int(1)  # touch 1, so 2 is now least recently used
+        ore.encrypt_int(3)
+        assert set(ore._cache) == {1, 3}
+
+    def test_cache_disabled(self):
+        ore = ORE(cache_size=0)
+        enc1 = ore.encrypt_int(42)
+        assert len(ore._cache) == 0
+        assert ore.encrypt_int(42) == enc1
+
+    @pytest.mark.parametrize("cache_size", [-1, 1.5, True])
+    def test_invalid_cache_size(self, cache_size):
+        with pytest.raises(ValueError, match="cache_size"):
+            ORE(cache_size=cache_size)
+
+    def test_cached_value_is_not_recomputed(self, monkeypatch):
+        """A cache hit returns the stored ciphertext without calling the PRF again."""
+        ore = ORE()
+        calls = []
+        original_prf = ore._prf
+
+        def counting_prf(subkey, data):
+            calls.append(data)
+            return original_prf(subkey, data)
+
+        monkeypatch.setattr(ore, "_prf", counting_prf)
+        first = ore.encrypt_int(5000)
+        assert len(calls) == 2 * ORE.NUM_BLOCKS
+        assert ore.encrypt_int(5000) == first
+        assert len(calls) == 2 * ORE.NUM_BLOCKS
+
+    def test_evicted_value_is_recomputed_identically(self):
+        ore = ORE(cache_size=1)
+        first = ore.encrypt_int(7)
+        ore.encrypt_int(8)  # evicts 7
+        assert 7 not in ore._cache
+        assert ore.encrypt_int(7) == first
 
 
 class TestORETransactionScenario:
@@ -479,33 +599,43 @@ class TestOREAlgorithmIdentifier:
         assert ORE.PLAINTEXT_MAX == 2**32 - 1
 
 
-class TestOREPerformance:
-    """Basic performance sanity checks (not benchmarks, just bounds)."""
+class TestOREProperties:
+    """Property tests: ORE comparison agrees with plaintext ordering."""
 
-    def test_encryption_speed(self):
-        """Test that single encryption completes in reasonable time."""
-        ore = ORE()
-        ore.encrypt_int(0)  # warm up
-        ore.clear_cache()
+    ORE_INSTANCE = ORE(key=bytes(range(32)))
 
-        start = time.monotonic()
-        for v in range(100):
-            ore.encrypt_int(v * 1000)
-        elapsed = time.monotonic() - start
+    @settings(max_examples=50, deadline=None)
+    @given(
+        a=st.integers(min_value=0, max_value=ORE.PLAINTEXT_MAX),
+        b=st.integers(min_value=0, max_value=ORE.PLAINTEXT_MAX),
+    )
+    def test_compare_matches_integer_order(self, a, b):
+        ore = self.ORE_INSTANCE
+        expected = (a > b) - (a < b)
+        assert ore.compare(ore.encrypt_int(a), ore.encrypt_int(b)) == expected
+        assert ore.compare(ore.encrypt_int(b), ore.encrypt_int(a)) == -expected
 
-        # 100 encryptions should finish well under 1 second
-        assert elapsed < 1.0
+    @settings(max_examples=50, deadline=None)
+    @given(
+        a=st.integers(min_value=0, max_value=ORE.PLAINTEXT_MAX),
+        shared_prefix_blocks=st.integers(min_value=0, max_value=ORE.NUM_BLOCKS - 1),
+        low_bits=st.integers(min_value=0, max_value=ORE.PLAINTEXT_MAX),
+    )
+    def test_compare_matches_order_for_shared_prefixes(self, a, shared_prefix_blocks, low_bits):
+        """Values sharing leading blocks exercise the later-block comparison path."""
+        shift = ORE.PLAINTEXT_BITS - shared_prefix_blocks * ORE.BLOCK_BITS
+        mask = (1 << shift) - 1
+        b = (a & ~mask) | (low_bits & mask)
+        ore = self.ORE_INSTANCE
+        expected = (a > b) - (a < b)
+        assert ore.compare(ore.encrypt_int(a), ore.encrypt_int(b)) == expected
 
-    def test_comparison_speed(self):
-        """Test that comparisons are fast."""
-        ore = ORE()
-        enc_a = ore.encrypt_int(100)
-        enc_b = ore.encrypt_int(200)
-
-        start = time.monotonic()
-        for _ in range(1000):
-            ore.compare(enc_a, enc_b)
-        elapsed = time.monotonic() - start
-
-        # 1000 comparisons should complete well under 1 second
-        assert elapsed < 1.0
+    @settings(max_examples=50, deadline=None)
+    @given(
+        a=st.decimals(min_value=0, max_value=42_949_672, places=2),
+        b=st.decimals(min_value=0, max_value=42_949_672, places=2),
+    )
+    def test_amount_compare_matches_decimal_order(self, a, b):
+        ore = self.ORE_INSTANCE
+        expected = (a > b) - (a < b)
+        assert ore.compare(ore.encrypt_amount(a), ore.encrypt_amount(b)) == expected

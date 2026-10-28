@@ -1,23 +1,53 @@
 """Dynamic searchable-encryption prototypes: forward-private SSE and a deletable index.
 
 Research prototypes moved out of ``encrypted_ir.searchable``. They are not used by the
-durable document path, are not audited, and their known defects are tracked in issue #38.
-See docs/THREAT_MODEL.md for the leakage of each construction.
+durable document path and are not audited. See docs/THREAT_MODEL.md for the leakage of each
+construction.
+
+Known limitations:
+
+- ``ForwardPrivateSSE`` keeps the client state and the "server" index in one Python object,
+  so no token ever crosses a trust boundary. The leakage statements describe what a server
+  holding the index would observe.
+- Client state (the hash-chain positions) lives in memory. Persist it with
+  ``ForwardPrivateSSE.export_state()`` and restore it with ``import_state()``. A fresh
+  instance with the same keys restarts every chain at its first position; ``add_document``
+  then refuses to overwrite an existing index tag (``RuntimeError``) instead of silently
+  replacing an entry.
+- ``ForwardPrivateSSE`` has no deletion.
+- ``BackwardPrivateIndex`` provides no backward privacy (see its docstring).
 """
 
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import os
-from typing import cast
+from collections.abc import Mapping
+from typing import Any, cast
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from ..searchable import SearchableEncryption
 
 __all__ = ["ForwardPrivateSSE", "BackwardPrivateIndex"]
+
+_CHAIN_STATE_SIZE = 32
+
+
+def _b64encode(data: bytes) -> str:
+    return base64.b64encode(data).decode("ascii")
+
+
+def _b64decode(value: str, expected_length: int | None = None) -> bytes:
+    if not isinstance(value, str):
+        raise TypeError("expected a base64 string")
+    data = base64.b64decode(value.encode("ascii"), validate=True)
+    if expected_length is not None and len(data) != expected_length:
+        raise ValueError(f"expected {expected_length} bytes, got {len(data)}")
+    return data
 
 
 class ForwardPrivateSSE:
@@ -38,48 +68,45 @@ class ForwardPrivateSSE:
     The forward-privacy argument rests on re-keying each keyword's chain to a
     fresh random state after every search.
 
-    Leakage profile:
-      - Update leakage: Document count only. The server cannot determine which
-        keywords are associated with new documents.
-      - Search leakage: Matching document IDs and search pattern (whether the
-        same keyword was searched before). After search, the keyword's state
-        chain is re-keyed to restore forward privacy for future updates.
-      - No query-document linkage: Updates added after the last search or
-        re-encryption cannot be correlated with past search queries, until
-        re_encrypt() runs (see below).
+    Leakage profile (forward-private modes):
+      - Update leakage: the number of keywords per added document. Update tags
+        come from per-keyword chains, so the server cannot tell which keyword a
+        new entry belongs to, or link it to earlier searches.
+      - Search leakage: matching document IDs, result size and the search
+        pattern (whether the same keyword was searched before).
 
-    Dual-state index:
-      - Secure index: Contains entries whose keyword mapping the server already
-        knows (from previous searches or re-encryption). Uses deterministic
-        HMAC tokens for O(1) lookup.
-      - Auxiliary index: Contains forward-private entries. Uses chain-derived
-        tags that are unlinkable without the state key. Entries are moved to
-        the secure index during search or periodic re-encryption.
+    Index structures:
+      - Auxiliary index: forward-private entries under chain-derived tags that
+        are unlinkable without the client's chain state.
+      - Secure index: entries under deterministic HMAC(search_key, keyword)
+        tokens. Only 'balanced' and 'off' modes write to it.
 
     Modes:
-      - 'strong': Per-update random salts, plus automatic re_encrypt() after
-        re_encrypt_threshold updates. re_encrypt() moves every auxiliary entry
-        into the deterministic secure index, keyed by HMAC(search_key, keyword).
-        That reveals which documents share each keyword, including keywords
-        that were never searched. Despite its name, strong mode therefore
-        leaks more than balanced mode (issue #38).
-      - 'balanced': Per-update random salts; re_encrypt() runs only when called,
-        with the same effect as above. This is the default mode.
-      - 'off': Backward compatibility. Deterministic HMAC tokens with no
-        forward privacy guarantee. Equivalent to standard SSE. Suitable for
-        static datasets where forward privacy is not required.
+      - 'strong': entries never leave the auxiliary index. A search drains the
+        keyword's chain and re-inserts the matches under a fresh random chain.
+        re_encrypt() re-randomises every chain in place, and runs automatically
+        after ``re_encrypt_threshold`` updates. Nothing is ever written to the
+        deterministic secure index, so strong mode leaks no keyword
+        co-occurrence for keywords that were never searched.
+      - 'balanced' (default): a search moves the keyword's matches into the
+        secure index under the deterministic token. re_encrypt() runs only when
+        called and moves every auxiliary entry into the secure index; after it,
+        the server can see which documents share each keyword, including
+        keywords that were never searched.
+      - 'off': deterministic HMAC tokens with no forward privacy. Equivalent to
+        standard SSE; suitable for static datasets.
 
     Assumptions and limitations:
-      - The client is trusted and maintains state (keyword counters).
-      - The server is honest-but-curious (follows protocol but tries to
-        learn information from observed access patterns).
-      - Forward privacy is broken for a keyword after search until re-keying
-        completes. The implementation re-keys automatically after each search.
-      - State is maintained in-memory; persistence is the caller's
-        responsibility.
+      - The client is trusted and maintains state (keyword chain positions).
+      - The server is honest-but-curious.
+      - State is in memory. Use export_state() and import_state() to persist
+        it; the exported state contains chain secrets and must be protected
+        like the keys.
+      - Documents cannot be deleted.
     """
 
     MODES = ("strong", "balanced", "off")
+    STATE_VERSION = 1
 
     def __init__(
         self,
@@ -97,8 +124,8 @@ class ForwardPrivateSSE:
             search_key: 256-bit key for deterministic search token generation.
             state_key: 256-bit key for state chain derivation (forward privacy).
             forward_privacy_mode: Privacy mode - 'strong', 'balanced', or 'off'.
-            re_encrypt_threshold: Number of updates before automatic
-                re-encryption (only applies in 'strong' mode).
+            re_encrypt_threshold: Number of keyword updates after which strong
+                mode re-randomises its chains (ignored in the other modes).
         """
         if forward_privacy_mode not in self.MODES:
             raise ValueError(
@@ -145,11 +172,15 @@ class ForwardPrivateSSE:
         """
         return os.urandom(32), os.urandom(32), os.urandom(32)
 
+    def _initial_state(self, kw: str) -> bytes:
+        """First chain state of a keyword that has never been searched."""
+        return hmac.new(self.state_key, kw.encode("utf-8"), hashlib.sha256).digest()
+
     def _init_keyword_state(self, keyword: str) -> dict:
         """Initialize or retrieve state for a keyword."""
         kw = keyword.lower()
         if kw not in self._keyword_state:
-            initial = hmac.new(self.state_key, kw.encode("utf-8"), hashlib.sha256).digest()
+            initial = self._initial_state(kw)
             self._keyword_state[kw] = {
                 "initial": initial,
                 "current": initial,
@@ -166,6 +197,10 @@ class ForwardPrivateSSE:
     def _compute_tag(state: bytes) -> bytes:
         """Compute index lookup tag from chain state."""
         return hmac.new(state, b"fp-index-tag", hashlib.sha256).digest()
+
+    @classmethod
+    def _tag_b64(cls, state: bytes) -> str:
+        return _b64encode(cls._compute_tag(state))
 
     @staticmethod
     def _derive_entry_key(state: bytes, salt: bytes) -> bytes:
@@ -198,6 +233,26 @@ class ForwardPrivateSSE:
         decryptor = cipher.decryptor()
         return cast(str, (decryptor.update(ct) + decryptor.finalize()).decode("utf-8"))
 
+    def _drain_chain(self, kw_state: dict) -> list[str]:
+        """Walk a keyword's chain, removing and decrypting every entry it reaches."""
+        found = []
+        state = kw_state["initial"]
+        for _ in range(kw_state["counter"]):
+            entry = self._auxiliary_index.pop(self._tag_b64(state), None)
+            if entry is not None:
+                found.append(self._decrypt_entry(state, entry))
+            state = self._advance_state(state)
+        return found
+
+    def _start_fresh_chain(self, kw: str, doc_ids: list[str]) -> None:
+        """Re-key ``kw`` to a random chain and insert ``doc_ids`` at its first positions."""
+        initial = os.urandom(_CHAIN_STATE_SIZE)
+        state = initial
+        for doc_id in doc_ids:
+            self._auxiliary_index[self._tag_b64(state)] = self._encrypt_entry(state, doc_id)
+            state = self._advance_state(state)
+        self._keyword_state[kw] = {"initial": initial, "current": state, "counter": len(doc_ids)}
+
     def add_document(
         self,
         doc_id: str,
@@ -217,11 +272,16 @@ class ForwardPrivateSSE:
             document: Document content to encrypt and index.
             keywords: Manual keywords (used when auto_extract_keywords=False).
             auto_extract_keywords: Whether to extract keywords automatically.
+
+        Raises:
+            ValueError: If ``doc_id`` is already stored.
+            RuntimeError: If a chain position is already occupied in the index, which
+                means the client state is out of sync with the index (for example, a
+                restarted instance whose state was not restored with import_state()).
+                Nothing is changed.
         """
-        encrypted_doc, _ = self._sse.encrypt_document(
-            document, auto_extract_keywords=False, keywords=set()
-        )
-        self._documents[doc_id] = encrypted_doc
+        if doc_id in self._documents:
+            raise ValueError(f"Document '{doc_id}' already exists")
 
         if auto_extract_keywords:
             text = (
@@ -230,36 +290,56 @@ class ForwardPrivateSSE:
             doc_keywords = self._sse._extract_keywords(text)
         else:
             doc_keywords = keywords or set()
+        normalized = sorted({kw.lower() for kw in doc_keywords})
+
+        # Plan every chain update before changing anything, so a collision leaves no trace.
+        planned: list[tuple[str, bytes, str]] = []
+        if self.forward_privacy_mode != "off":
+            for kw in normalized:
+                kw_state = self._keyword_state.get(kw)
+                current = kw_state["current"] if kw_state else self._initial_state(kw)
+                tag_b64 = self._tag_b64(current)
+                if tag_b64 in self._auxiliary_index:
+                    raise RuntimeError(
+                        "Index tag already in use: the client chain state is out of sync with "
+                        "the index. Restore the saved state with import_state() before adding."
+                    )
+                planned.append((kw, current, tag_b64))
+
+        encrypted_doc, _ = self._sse.encrypt_document(
+            document, auto_extract_keywords=False, keywords=set()
+        )
+        self._documents[doc_id] = encrypted_doc
 
         if self.forward_privacy_mode == "off":
-            for kw in doc_keywords:
+            for kw in normalized:
                 token = self._sse._generate_search_token(kw)
                 self._secure_index.setdefault(token, set()).add(doc_id)
-        else:
-            for kw in doc_keywords:
-                kw_state = self._init_keyword_state(kw.lower())
-                tag = self._compute_tag(kw_state["current"])
-                tag_b64 = base64.b64encode(tag).decode("ascii")
-                encrypted_entry = self._encrypt_entry(kw_state["current"], doc_id)
-                self._auxiliary_index[tag_b64] = encrypted_entry
-                kw_state["current"] = self._advance_state(kw_state["current"])
-                kw_state["counter"] += 1
+            return
 
-            self._update_count += len(doc_keywords)
+        for kw, current, tag_b64 in planned:
+            kw_state = self._init_keyword_state(kw)
+            self._auxiliary_index[tag_b64] = self._encrypt_entry(current, doc_id)
+            kw_state["current"] = self._advance_state(current)
+            kw_state["counter"] += 1
 
-            if (
-                self.forward_privacy_mode == "strong"
-                and self._update_count >= self._re_encrypt_threshold
-            ):
-                self.re_encrypt()
+        self._update_count += len(planned)
+
+        if (
+            self.forward_privacy_mode == "strong"
+            and self._update_count >= self._re_encrypt_threshold
+        ):
+            self.re_encrypt()
 
     def search(self, keyword: str) -> set[str]:
         """
         Search for documents containing keyword.
 
-        In forward-private mode, traverses the state chain to find all matching
-        entries in the auxiliary index, moves them to the secure index, and
-        re-keys the keyword state to restore forward privacy for future updates.
+        In the forward-private modes, walks the keyword's state chain to find
+        all its entries in the auxiliary index, then re-keys the keyword to a
+        fresh random chain so that later updates cannot be linked to this
+        search. Balanced mode moves the matches into the secure index; strong
+        mode re-inserts them under the fresh chain.
 
         Args:
             keyword: Keyword to search for.
@@ -273,50 +353,38 @@ class ForwardPrivateSSE:
             token = self._sse._generate_search_token(kw)
             return set(self._secure_index.get(token, set()))
 
-        results = set()
-
-        search_token = self._sse._generate_search_token(kw)
-        results.update(self._secure_index.get(search_token, set()))
+        results: set[str] = set()
+        search_token = None
+        if self.forward_privacy_mode == "balanced":
+            search_token = self._sse._generate_search_token(kw)
+            results.update(self._secure_index.get(search_token, set()))
 
         kw_state = self._keyword_state.get(kw)
         if kw_state is not None:
-            state = kw_state["initial"]
-            for _ in range(kw_state["counter"]):
-                tag = self._compute_tag(state)
-                tag_b64 = base64.b64encode(tag).decode("ascii")
-
-                if tag_b64 in self._auxiliary_index:
-                    entry = self._auxiliary_index.pop(tag_b64)
-                    doc_id = self._decrypt_entry(state, entry)
-                    results.add(doc_id)
-                    self._secure_index.setdefault(search_token, set()).add(doc_id)
-
-                state = self._advance_state(state)
-
-            # Re-key to restore forward privacy for future updates
-            new_initial = os.urandom(32)
-            self._keyword_state[kw] = {
-                "initial": new_initial,
-                "current": new_initial,
-                "counter": 0,
-            }
+            found = self._drain_chain(kw_state)
+            results.update(found)
+            if self.forward_privacy_mode == "strong":
+                self._start_fresh_chain(kw, found)
+            else:
+                if found:
+                    self._secure_index.setdefault(cast(str, search_token), set()).update(found)
+                self._start_fresh_chain(kw, [])
 
         return results
 
     def re_encrypt(self) -> int:
         """
-        Re-encrypt the auxiliary index into the secure index.
+        Re-key every keyword chain.
 
-        Moves all forward-private entries to the secure index and re-keys
-        all keyword states, so future update tokens come from fresh chains.
+        Strong mode: every auxiliary entry is decrypted and re-inserted under a
+        fresh random chain, so the auxiliary index is re-randomised in place and
+        nothing moves to the deterministic secure index. Called automatically
+        after ``re_encrypt_threshold`` updates.
 
-        Leakage: the secure index stores entries under deterministic
-        HMAC(search_key, keyword) tokens. After this call the server can see
-        which documents share each keyword, including keywords that were
-        never searched (issue #38).
-
-        In 'strong' mode, this is called automatically after a configurable
-        number of updates. In 'balanced' mode, call this manually.
+        Balanced mode: every auxiliary entry moves to the secure index, under
+        the deterministic HMAC(search_key, keyword) token. After this call the
+        server can see which documents share each keyword, including keywords
+        that were never searched. Never called automatically.
 
         Returns:
             Number of entries re-encrypted.
@@ -324,27 +392,15 @@ class ForwardPrivateSSE:
         count = 0
 
         for kw, kw_state in list(self._keyword_state.items()):
-            search_token = self._sse._generate_search_token(kw)
-            state = kw_state["initial"]
-
-            for _ in range(kw_state["counter"]):
-                tag = self._compute_tag(state)
-                tag_b64 = base64.b64encode(tag).decode("ascii")
-
-                if tag_b64 in self._auxiliary_index:
-                    entry = self._auxiliary_index.pop(tag_b64)
-                    doc_id = self._decrypt_entry(state, entry)
-                    self._secure_index.setdefault(search_token, set()).add(doc_id)
-                    count += 1
-
-                state = self._advance_state(state)
-
-            new_initial = os.urandom(32)
-            self._keyword_state[kw] = {
-                "initial": new_initial,
-                "current": new_initial,
-                "counter": 0,
-            }
+            found = self._drain_chain(kw_state)
+            count += len(found)
+            if self.forward_privacy_mode == "strong":
+                self._start_fresh_chain(kw, found)
+            else:
+                if found:
+                    search_token = self._sse._generate_search_token(kw)
+                    self._secure_index.setdefault(search_token, set()).update(found)
+                self._start_fresh_chain(kw, [])
 
         self._update_count = 0
         return count
@@ -386,6 +442,105 @@ class ForwardPrivateSSE:
             "update_count": self._update_count,
         }
 
+    def _key_check(self) -> str:
+        """Short PRF value of the three keys, so state is not imported under other keys."""
+        digest = hmac.new(
+            self.state_key,
+            b"fp-export-key-check" + self.encryption_key + self.search_key,
+            hashlib.sha256,
+        ).digest()
+        return _b64encode(digest[:16])
+
+    def export_state(self) -> dict[str, Any]:
+        """
+        Export the client state and the index as a JSON-serialisable dict.
+
+        The result holds the keyword chain positions, both index structures and
+        the encrypted documents; bytes are base64 strings. It does not hold the
+        keys, but it is client state: the keywords themselves appear in plaintext
+        (as the keys of ``keyword_state``), and the chain states derive index tags
+        and decrypt entries. Protect the export like key material.
+
+        Returns:
+            State dict for :meth:`import_state`.
+        """
+        return {
+            "version": self.STATE_VERSION,
+            "forward_privacy_mode": self.forward_privacy_mode,
+            "key_check": self._key_check(),
+            "update_count": self._update_count,
+            "keyword_state": {
+                kw: {
+                    "initial": _b64encode(st["initial"]),
+                    "current": _b64encode(st["current"]),
+                    "counter": st["counter"],
+                }
+                for kw, st in self._keyword_state.items()
+            },
+            "secure_index": {token: sorted(ids) for token, ids in self._secure_index.items()},
+            "auxiliary_index": {tag: _b64encode(e) for tag, e in self._auxiliary_index.items()},
+            "documents": {doc_id: _b64encode(doc) for doc_id, doc in self._documents.items()},
+        }
+
+    def import_state(self, state: Mapping[str, Any]) -> None:
+        """
+        Restore state produced by :meth:`export_state` into this empty instance.
+
+        The instance must have been created with the same three keys and the
+        same mode. After the import, new updates continue each keyword's chain
+        where the exporting instance stopped, so tags never collide.
+
+        Args:
+            state: Dict returned by export_state(), for example after a JSON round trip.
+
+        Raises:
+            ValueError: If the state is malformed, has another version or mode, was
+                exported under different keys, or this instance already holds data.
+        """
+        if self._documents or self._keyword_state or self._secure_index or self._auxiliary_index:
+            raise ValueError("import_state() needs an empty instance")
+        try:
+            if state["version"] != self.STATE_VERSION:
+                raise ValueError(f"Unsupported state version: {state['version']!r}")
+            if state["forward_privacy_mode"] != self.forward_privacy_mode:
+                raise ValueError(
+                    f"State was exported in mode {state['forward_privacy_mode']!r}, "
+                    f"this instance uses {self.forward_privacy_mode!r}"
+                )
+            if not hmac.compare_digest(str(state["key_check"]), self._key_check()):
+                raise ValueError("State was exported under different keys")
+
+            update_count = state["update_count"]
+            if isinstance(update_count, bool) or not isinstance(update_count, int):
+                raise TypeError("update_count must be an integer")
+
+            keyword_state: dict[str, dict] = {}
+            for kw, entry in state["keyword_state"].items():
+                counter = entry["counter"]
+                if isinstance(counter, bool) or not isinstance(counter, int) or counter < 0:
+                    raise TypeError("counter must be a non-negative integer")
+                keyword_state[str(kw)] = {
+                    "initial": _b64decode(entry["initial"], _CHAIN_STATE_SIZE),
+                    "current": _b64decode(entry["current"], _CHAIN_STATE_SIZE),
+                    "counter": counter,
+                }
+            secure_index = {
+                str(token): {str(doc_id) for doc_id in ids}
+                for token, ids in state["secure_index"].items()
+            }
+            auxiliary_index = {
+                str(tag): _b64decode(entry) for tag, entry in state["auxiliary_index"].items()
+            }
+            documents = {str(doc_id): _b64decode(doc) for doc_id, doc in state["documents"].items()}
+        except (KeyError, TypeError, AttributeError, binascii.Error, UnicodeEncodeError) as exc:
+            raise ValueError(f"Malformed forward-private SSE state: {exc}") from exc
+
+        self._update_count = update_count
+        self._keyword_state = keyword_state
+        self._secure_index = secure_index
+        self._auxiliary_index = auxiliary_index
+        self._documents = documents
+
 
 class BackwardPrivateIndex:
     """
@@ -399,16 +554,20 @@ class BackwardPrivateIndex:
       anything.
     - Plaintext keywords are kept in the same object as the server-side
       index.
-    - re_encrypt() replaces both the encryption and search keys of the
-      wrapped SearchableEncryption. Documents encrypted earlier with self.sse
-      can then only be decrypted by a caller who kept the old keys.
-    - garbage_collect() cannot find anything, because the index and the
-      keyword map are always changed together.
+
+    re_encrypt() rotates the search key and the delete key and rebuilds every
+    token. It keeps the document encryption key of the wrapped
+    SearchableEncryption, so documents encrypted earlier with ``self.sse``
+    stay decryptable. Rotating the encryption key would mean re-encrypting
+    those documents, which this class does not store.
+
+    There is no garbage_collect(): the index and the keyword map are always
+    changed together, so an orphaned index entry cannot occur and the earlier
+    method could never find anything.
 
     Backward privacy as a security notion: Bost, Minaud and Ohrimenko,
     "Forward and Backward Private Searchable Encryption from Constrained
     Cryptographic Primitives", CCS 2017 (https://eprint.iacr.org/2017/805).
-    Fix or removal is tracked in issue #38.
     """
 
     def __init__(
@@ -562,17 +721,14 @@ class BackwardPrivateIndex:
 
     def re_encrypt(self) -> None:
         """
-        Re-encrypt the entire index with fresh keys and randomness.
+        Rebuild every token under a fresh search key and delete key.
 
-        Generates new encryption and search keys and rebuilds all tokens
-        from the plaintext keywords held in this object. Previous search
-        tokens and delete tokens stop matching.
-
-        This replaces self.sse, so documents encrypted earlier with the old
-        self.sse can only be decrypted with the old keys.
+        The tokens are recomputed from the plaintext keywords held in this
+        object, so previous search tokens and delete tokens stop matching.
+        The document encryption key is kept: documents encrypted earlier with
+        ``self.sse`` still decrypt with the new ``self.sse``.
         """
-        new_enc_key, new_search_key = SearchableEncryption.generate_keys()
-        new_sse = SearchableEncryption(new_enc_key, new_search_key)
+        new_sse = SearchableEncryption(self.sse.encryption_key, os.urandom(32))
 
         # Generate fresh delete key
         self._delete_key = os.urandom(32)
@@ -586,22 +742,6 @@ class BackwardPrivateIndex:
         self._index = new_index
         self._deletion_count = 0
         self._epoch += 1
-
-    def garbage_collect(self) -> int:
-        """
-        Remove stale entries from the index.
-
-        Scans for any index entries whose corresponding keyword
-        metadata is missing (orphaned by incomplete deletion) and
-        removes them.
-
-        Returns:
-            Number of stale entries removed
-        """
-        stale_ids = [doc_id for doc_id in self._index if doc_id not in self._doc_keywords]
-        for doc_id in stale_ids:
-            del self._index[doc_id]
-        return len(stale_ids)
 
     def get_server_view(self) -> dict[str, set[str]]:
         """

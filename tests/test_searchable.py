@@ -1,8 +1,53 @@
 """Tests for searchable encryption module."""
 
+import base64
+import hashlib
+import hmac
+
 import pytest
 
-from encrypted_ir.searchable import BooleanQuery, SearchableEncryption
+from encrypted_ir.searchable import BooleanQuery, SearchableEncryption, search_token
+
+
+class TestSearchTokenGoldenVectors:
+    """Pin the stored keyword-token format so a KDF or encoding change cannot silently
+    orphan existing token rows."""
+
+    SEARCH_KEY = bytes(range(32))
+    GOLDEN = {
+        "fraud": "LH6YzpLFLe/FH7hwT8YrBG2nNT7S6b2Wx0xfAbqyuEM=",
+        "Quarterly": "B0Hgz7BCkbWKPtwiJy7bVshejWfXvn5vp3St4CrBLSg=",
+        "caf\u00e9": "COn2oWCwOAM8PAEMN0/mwi3kWbvb9jSfc19dsHWSS5k=",
+    }
+    GOLDEN_HEX = {
+        "fraud": "2c7e98ce92c52defc51fb8704fc62b046da7353ed2e9bd96c74c5f01bab2b843",
+        "Quarterly": "0741e0cfb04291b58a3edc22272edb56c85e8d67d7be7e6fa774ade02ac12d28",
+    }
+
+    @pytest.mark.parametrize("keyword", sorted(GOLDEN))
+    def test_search_token_golden_value(self, keyword):
+        assert search_token(self.SEARCH_KEY, keyword) == self.GOLDEN[keyword]
+
+    @pytest.mark.parametrize("keyword", sorted(GOLDEN_HEX))
+    def test_search_token_golden_hex(self, keyword):
+        raw = base64.b64decode(search_token(self.SEARCH_KEY, keyword))
+        assert raw.hex() == self.GOLDEN_HEX[keyword]
+
+    @pytest.mark.parametrize("keyword", sorted(GOLDEN))
+    def test_search_token_is_hmac_sha256_of_lowercased_utf8(self, keyword):
+        """Re-derive each golden value independently with the standard library."""
+        digest = hmac.new(self.SEARCH_KEY, keyword.lower().encode("utf-8"), hashlib.sha256)
+        expected = base64.b64encode(digest.digest()).decode("ascii")
+        assert expected == self.GOLDEN[keyword]
+        assert search_token(self.SEARCH_KEY, keyword) == expected
+
+    def test_case_variants_share_a_token(self):
+        assert search_token(self.SEARCH_KEY, "FRAUD") == self.GOLDEN["fraud"]
+        assert search_token(self.SEARCH_KEY, "quarterly") == self.GOLDEN["Quarterly"]
+
+    def test_searchable_encryption_uses_the_same_tokens(self):
+        encryptor = SearchableEncryption(encryption_key=bytes(32), search_key=self.SEARCH_KEY)
+        assert encryptor.generate_search_query("fraud") == self.GOLDEN["fraud"]
 
 
 class TestSearchableEncryption:

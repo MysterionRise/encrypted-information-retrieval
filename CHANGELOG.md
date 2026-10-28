@@ -67,6 +67,9 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
   Library-level blind-index and ORE demos remain in `examples/portfolio_demo.py`.
 - The in-memory API-key registry (`register_api_key`, `clear_api_keys`), which only tests used,
   and the request and response models of the removed routes.
+- `BackwardPrivateIndex.garbage_collect()` in `encrypted_ir.research.forward_private_sse` (#38).
+  The index and the keyword map are always changed together, so it could never find anything.
+- `PrivacyBudgetTracker.reset()` (#38); the explicit `reset_tenant_budget()` replaces it.
 
 ### Fixed
 
@@ -91,6 +94,47 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
   queries (`AI,` matches `ai`).
 - `/v1/rag/retrieve` with `include_plaintext` failed with 404 when a candidate was deleted
   between search and decrypt (#39). The candidate is now skipped.
+- Research module defects (#38):
+  - ORE: `encrypt_float` and `encrypt_amount` truncated binary floats, so `0.29` encrypted as 28
+    and `1.15` as 114. Values are now scaled exactly through their decimal form and rounded
+    half-to-even, and NaN and infinities are rejected. The plaintext cache, which grew without
+    bound, is an LRU of at most `cache_size` entries (default 1024; 0 disables it).
+  - Forward-private SSE: strong mode's automatic `re_encrypt()` moved every entry into the
+    deterministic `HMAC(search_key, keyword)` index, so "strong" leaked more than "balanced".
+    Strong mode now never writes that index: search re-inserts matches under a fresh chain and
+    `re_encrypt()` re-randomises chains in place. `add_document` raised nothing for an existing
+    `doc_id` and overwrote it; it now raises `ValueError`, and it raises `RuntimeError` instead of
+    silently overwriting an index tag when the client chain state is out of sync (for example
+    after a restart without `import_state()`).
+  - `BackwardPrivateIndex.re_encrypt()` replaced the document encryption key, so documents
+    encrypted earlier with `index.sse` could no longer be decrypted. It now rotates only the
+    search and delete keys.
+  - CKKS: `sum_vector`, `mean_vector`, `dot_product` and `weighted_sum` decrypted every element
+    and finished in plaintext. They now use TenSEAL's ciphertext `sum()` and `dot()` and return
+    a ciphertext; the Galois keys they need are documented as such. `weighted_sum` and
+    `dot_product` reject length mismatches, and `import_context` rejects anything that is not a
+    serialized CKKS context.
+  - Post-quantum: `PostQuantumEncryption.decrypt` skipped verification when the signature was
+    stripped; a signature is now required whenever `sender_dsa_public_key` is passed (see
+    `require_signature`). An invalid `security_level` raised `KeyError` in the static
+    `MLKEM.encapsulate`, `MLDSA.verify` and `HybridKEM.encapsulate`; it is now `ValueError`
+    everywhere. Docstrings no longer present the `SHA256(kem_ss || x25519_ss)` combiner as a
+    standard hybrid combiner or as following NIST SP 800-227.
+  - Differential privacy: `ExponentialMechanism` accepted `sensitivity=0` and divided by zero;
+    the classical Gaussian calibration was applied for ε >= 1, where it does not hold, and was
+    called "analytic"; re-registering a tenant reset its consumption to 0; unknown tenants were
+    auto-registered with a fresh budget of 10; δ was never tracked. All are fixed (see Changed).
+    The floating-point noise issue (Mironov 2012) is documented in the module docstring.
+  - FPE: an alphabet with a repeated character broke the character-to-numeral bijection and is
+    now rejected; tweaks must be bytes no longer than `FF1.MAX_TWEAK_LEN` (2^32 - 1). The
+    `encrypt_credit_card` docstring no longer implies a drop-in PAN: the BIN, the last four
+    digits and the Luhn check digit are not preserved.
+  - `tests/research/test_differential_privacy.py::test_thread_safety` could not fail. It now
+    oversubscribes the budget and asserts the exact consumed amount and number of rejections.
+- Blind index normalisation stripped whitespace before Unicode normalisation, so a value such
+  as `´` (U+00B4, which NFKC maps to a space plus U+0301) got a different index from its own NFKC
+  form. Whitespace is now stripped after normalisation. Only values that start or end with such
+  characters get a different index.
 
 ### Changed
 
@@ -155,6 +199,33 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
   `actions/upload-artifact` v7, `codecov/codecov-action` v6.
 - Development dependency floors bumped by Dependabot: ipython, isort, myst-parser,
   pytest-timeout, sphinx, types-setuptools.
+- **Breaking: research API changes** (#38):
+  - `BasicHomomorphicEncryption.sum_vector`, `mean_vector`, `dot_product` and `weighted_sum`
+    return an encrypted `CKKSVector` instead of a float; decrypt it with `decrypt_value()`.
+    `export_context()` and `export_context_to_base64()` leave the secret key out unless called
+    with `save_secret_key=True`. `import_context` and the constructor raise `ValueError` for
+    input that is not a CKKS context.
+  - `FormatPreservingEncryption.encrypt()` and `decrypt()` require a `tweak`. The field helpers
+    default to per-field tweaks (`TWEAK_CREDIT_CARD`, `TWEAK_SSN`, `TWEAK_ACCOUNT_NUMBER`)
+    instead of `b""`, so their ciphertexts change; pass `tweak=b""` to read data written with
+    the old default.
+  - `PrivacyBudgetTracker` raises `KeyError` for unregistered tenants (register them first);
+    `register_tenant` on an existing tenant raises `ValueError` unless `replace=True`, which
+    changes the budget and keeps the consumption; `reset()` is now `reset_tenant_budget()`.
+    `GaussianMechanism`, `dp_sum` and `dp_average` require 0 < ε < 1, and Gaussian queries
+    consume δ (default δ budget 1e-4 per tenant). `ExponentialMechanism` requires
+    `sensitivity > 0`.
+  - `PostQuantumEncryption.decrypt` raises `ValueError` when `sender_dsa_public_key` is passed
+    without a signature, unless `require_signature=False`.
+  - `ForwardPrivateSSE`: strong mode keeps entries in the forward-private index (see Fixed), and
+    a duplicate `doc_id` raises `ValueError`.
+  - `ORE.encrypt_float` and `encrypt_amount`: amounts that used to be truncated now round, so
+    their ciphertexts change (`0.29` now encrypts as 29).
+- **Breaking:** `DeterministicEncryption.derive_key` uses 600,000 PBKDF2-HMAC-SHA256 iterations,
+  the OWASP Password Storage Cheat Sheet figure, instead of 480,000. Keys derived earlier
+  differ; re-derive them and re-encrypt. `KeyManager.derive_master_key` is unchanged here.
+- `hypothesis` is part of the locked CI environment (`requirements-ci.in`/`.txt`) and the `dev`
+  extra.
 
 ### Added
 
@@ -182,6 +253,24 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
   matches the package version, builds the sdist and wheel, runs `twine check`, generates a
   CycloneDX SBOM, and publishes a GitHub Release whose notes are this file's section for that
   version.
+- Official test vectors (#38): the nine NIST SP 800-38G FF1 samples (AES-128/192/256, radix 10
+  and 36) in `tests/research/test_fpe.py`, RFC 5297 Appendix A.1 and A.2 AES-SIV vectors in
+  `tests/test_deterministic.py`, and golden vectors for `encrypted_ir.searchable.search_token`
+  re-derived with `hmac`, so a KDF or encoding change cannot silently orphan stored tokens.
+- Hypothesis property tests (#38): AES-SIV round trip and determinism, FF1 round trip preserving
+  length and alphabet, ORE comparison matching plaintext order, and blind-index Unicode
+  normalisation.
+- Research APIs for persistence (#38): `ForwardPrivateSSE.export_state()` and
+  `import_state()` (JSON-serialisable, keys excluded, checked against the instance's keys);
+  `HybridKEM.from_secret_keys()`, `load_x25519_private_key()`, `get_x25519_public_key()`,
+  `get_kem_public_key()`, `export_kem_public_key()`, `load_kem_secret_key()` and
+  `load_kem_public_key()`; `PostQuantumEncryption.export_keys()`, `from_keys()` and
+  `get_public_keys()`.
+- Other research additions (#38): `ORE(cache_size=...)` and `ORE.to_fixed_point()`;
+  `BasicHomomorphicEncryption.has_secret_key`; δ budgets in `PrivacyBudgetTracker`
+  (`total_delta`, `register_tenant(delta_budget=...)`, `consume(..., delta=...)`,
+  `remaining_delta()`, `consumed_delta()`, `is_registered()`); `FF1.MAX_TWEAK_LEN`; and
+  `PostQuantumEncryption.decrypt(require_signature=...)`.
 
 ## History before 0.9.0
 
