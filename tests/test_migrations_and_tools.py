@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import os
+import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -72,6 +73,17 @@ def test_no_database_url_is_an_error(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     with pytest.raises(RuntimeError, match="No database URL"):
         command.upgrade(alembic_config(), "head")
+
+
+def test_url_with_percent_encoding(tmp_path):
+    """URL-encoded characters (a password like p@ss, a query option) survive Alembic's config."""
+    url = f"sqlite+pysqlite:///{tmp_path / 'p%40ss.db'}"
+    config = alembic_config(url)
+    assert config.get_main_option("sqlalchemy.url") == url
+
+    command.upgrade(config, "head")
+
+    assert (tmp_path / "p@ss.db").exists()  # SQLAlchemy decoded the URL Alembic passed on
 
 
 def test_alembic_ini_names_no_database():
@@ -161,12 +173,10 @@ def test_migration_0005_round_trip(tmp_path):
 
 
 @pytest.mark.parametrize("database_kind", ["sqlite", "postgres"])
-def test_migrated_schema_matches_models(tmp_path, database_kind):
+def test_migrated_schema_matches_models(request, tmp_path, database_kind):
     """The Alembic head must produce exactly the tables the application code declares."""
     if database_kind == "postgres":
-        database_url = os.environ.get("POSTGRES_TEST_DATABASE_URL")
-        if not database_url:
-            pytest.skip("POSTGRES_TEST_DATABASE_URL is not set")
+        database_url = request.getfixturevalue("require_postgres")
     else:
         database_url = f"sqlite+pysqlite:///{tmp_path / 'drift.db'}"
 
@@ -204,7 +214,7 @@ def test_retrieval_benchmark_writes_report(tmp_path, monkeypatch):
 
 
 def test_makefile_uses_configured_python_variable():
-    makefile = Path("Makefile").read_text()
+    makefile = (Path(__file__).resolve().parents[1] / "Makefile").read_text()
 
     assert "PYTHON ?= python3.11" in makefile
     assert "PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest" in makefile
@@ -212,3 +222,34 @@ def test_makefile_uses_configured_python_variable():
     assert "$(PYTHON) -m ruff" in makefile
     assert "$(PYTHON) -m bandit" in makefile
     assert "PYTHONPATH=src:$$PYTHONPATH python -m pytest" not in makefile
+
+
+def _load_script(name: str):
+    path = Path(__file__).resolve().parents[1] / "scripts" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _bench_report(path, medians: dict[str, float]) -> Path:
+    report = {"benchmarks": [{"fullname": n, "stats": {"median": m}} for n, m in medians.items()]}
+    path.write_text(json.dumps(report))
+    return path
+
+
+def test_compare_benchmarks(tmp_path, capsys):
+    compare = _load_script("compare_benchmarks")
+    baseline = tmp_path / "baseline.json"
+    before = _bench_report(tmp_path / "before.json", {"a": 1.0, "b": 2.0, "gone": 1.0})
+    assert compare.main([str(before), "--baseline", str(baseline), "--update"]) == 0
+
+    within = _bench_report(tmp_path / "within.json", {"a": 2.9, "b": 1.0, "new": 5.0})
+    assert compare.main([str(within), "--baseline", str(baseline)]) == 0
+    out = capsys.readouterr().out
+    assert "new" in out and "missing" in out
+
+    slower = _bench_report(tmp_path / "slower.json", {"a": 3.5, "b": 2.0})
+    assert compare.main([str(slower), "--baseline", str(baseline)]) == 1
+    assert "REGRESSION" in capsys.readouterr().out
+    assert compare.main([str(slower), "--baseline", str(baseline), "--threshold", "4"]) == 0

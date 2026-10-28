@@ -130,3 +130,58 @@ class TestDeterministicEncryption:
         # Wrong associated data should fail
         with pytest.raises(ValueError):
             encryptor.decrypt(ciphertext, [b"wrong"])
+
+
+class TestTampering:
+    """AES-SIV is authenticated: any change to a ciphertext or its context fails to decrypt."""
+
+    KEY = bytes(range(64))
+    CONTEXT = [b"tenant-a", b"accounts.account_number", b"row-17"]
+
+    @pytest.fixture()
+    def cipher(self):
+        return DeterministicEncryption(self.KEY)
+
+    def test_every_bit_flip_is_rejected(self, cipher):
+        ciphertext = cipher.encrypt(b"ACC-1001", self.CONTEXT)
+        for position in range(len(ciphertext) * 8):
+            tampered = bytearray(ciphertext)
+            tampered[position // 8] ^= 1 << (position % 8)
+            with pytest.raises(ValueError, match="Decryption failed"):
+                cipher.decrypt(bytes(tampered), self.CONTEXT)
+
+    def test_truncation_and_extension_are_rejected(self, cipher):
+        ciphertext = cipher.encrypt(b"ACC-1001", self.CONTEXT)
+        for tampered in (ciphertext[:-1], ciphertext[1:], ciphertext + b"\x00"):
+            with pytest.raises(ValueError, match="Decryption failed"):
+                cipher.decrypt(tampered, self.CONTEXT)
+
+    @pytest.mark.parametrize(
+        "context",
+        [
+            [b"tenant-b", b"accounts.account_number", b"row-17"],  # another tenant
+            [b"tenant-a", b"accounts.routing_number", b"row-17"],  # another column
+            [b"tenant-a", b"accounts.account_number", b"row-18"],  # another row
+            [b"accounts.account_number", b"tenant-a", b"row-17"],  # reordered
+            [b"tenant-a", b"accounts.account_number"],  # a component dropped
+            [],  # no context at all
+        ],
+    )
+    def test_ciphertext_does_not_open_in_another_context(self, cipher, context):
+        ciphertext = cipher.encrypt(b"ACC-1001", self.CONTEXT)
+        with pytest.raises(ValueError, match="Decryption failed"):
+            cipher.decrypt(ciphertext, context)
+
+    def test_rows_cannot_be_swapped(self, cipher):
+        row_17 = [b"tenant-a", b"accounts.account_number", b"row-17"]
+        row_18 = [b"tenant-a", b"accounts.account_number", b"row-18"]
+        stored = {
+            "row-17": cipher.encrypt(b"ACC-1001", row_17),
+            "row-18": cipher.encrypt(b"ACC-2002", row_18),
+        }
+        # Someone with database access swaps the two ciphertexts.
+        stored["row-17"], stored["row-18"] = stored["row-18"], stored["row-17"]
+
+        for row, context in (("row-17", row_17), ("row-18", row_18)):
+            with pytest.raises(ValueError, match="Decryption failed"):
+                cipher.decrypt(stored[row], context)

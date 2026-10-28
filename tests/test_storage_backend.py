@@ -1,8 +1,6 @@
 """Tests for storage backend module."""
 
 import os
-import shutil
-import tempfile
 from datetime import datetime
 
 import pytest
@@ -38,11 +36,9 @@ class TestFileStorageBackend:
     """Test file-based storage backend."""
 
     @pytest.fixture
-    def storage_dir(self):
-        """Create a temporary directory for storage tests."""
-        d = tempfile.mkdtemp()
-        yield d
-        shutil.rmtree(d)
+    def storage_dir(self, tmp_path):
+        """A temporary directory for storage tests."""
+        return str(tmp_path / "keys")
 
     @pytest.fixture
     def encryption_key(self):
@@ -59,16 +55,11 @@ class TestFileStorageBackend:
         with pytest.raises(ValueError):
             FileStorageBackend(storage_dir, b"too_short")
 
-    def test_creates_storage_directory(self):
+    def test_creates_storage_directory(self, tmp_path):
         """Storage directory is created if it doesn't exist."""
-        d = tempfile.mkdtemp()
-        shutil.rmtree(d)
-        subdir = os.path.join(d, "nested", "path")
-        try:
-            FileStorageBackend(subdir, os.urandom(32))
-            assert os.path.isdir(subdir)
-        finally:
-            shutil.rmtree(d)
+        subdir = os.path.join(tmp_path, "nested", "path")
+        FileStorageBackend(subdir, os.urandom(32))
+        assert os.path.isdir(subdir)
 
     def test_save_and_load_key(self, backend):
         """Keys can be saved and loaded back."""
@@ -174,10 +165,8 @@ class TestKeyManagerWithFileBackend:
     """Test KeyManager integration with FileStorageBackend."""
 
     @pytest.fixture
-    def storage_dir(self):
-        d = tempfile.mkdtemp()
-        yield d
-        shutil.rmtree(d)
+    def storage_dir(self, tmp_path):
+        return str(tmp_path / "keys")
 
     @pytest.fixture
     def master_key(self):
