@@ -1,65 +1,54 @@
 # Portfolio Evidence
 
-**Run date:** July 7 and 8, 2026, at commit `d52d63d`  
-**Target:** CTO review of a portfolio-grade regulated AI/RAG retrieval prototype
+**Target:** a reviewer checking, in about thirty minutes, what this regulated AI/RAG retrieval
+prototype actually does. Start with [REVIEW_GUIDE.md](REVIEW_GUIDE.md), which maps every README
+claim to the test, CI job or run below that proves it.
 
-> This is the only dated evidence run so far. It predates the Phase 0 work in
-> [ROADMAP.md](ROADMAP.md). A fresh run on the release commit is part of [#51](https://github.com/MysterionRise/encrypted-information-retrieval/issues/51). Since this
-> run, CI also runs the research-module tests and a Docker Compose smoke test.
+This repository demonstrates a real local workflow for encrypted retrieval: FastAPI, PostgreSQL,
+Alembic migrations, tenant-scoped keys, encrypted document storage, keyword-token retrieval,
+readiness checks and a tamper-evident audit chain, with the production key and auth paths run
+against a KMS emulator and a local identity provider. It is not externally audited and is not
+production-certified cryptography.
 
-This repository demonstrates a real local workflow for encrypted retrieval:
-FastAPI, PostgreSQL, Alembic migrations, tenant-scoped keys, encrypted document
-storage, keyword-token retrieval, readiness checks, and sanitized audit rows.
-It is not externally audited and is not production-certified cryptography.
+## How this document is produced
 
-## Verification Summary
+The sections marked "generated" come from `scripts/render_evidence.py`. The CI `evidence` job
+renders the whole file from one run of every gating job on one commit, and uploads it as the
+`portfolio-evidence` artifact. The release commit carries that file unchanged, and the release
+workflow refuses a tag whose code differs from the evidence commit. The benchmark section comes
+from the committed reports in `benchmarks/reports/`. Everything else is written by hand.
 
-| Check | Result |
-| --- | --- |
-| Full pytest suite, Python 3.11 | `774 passed, 1 skipped, 11 warnings in 69.89s` |
-| Full pytest suite, Python 3.12 | `774 passed, 1 skipped, 17 warnings in 73.58s` |
-| Focused API/security/storage suite | `104 passed in 2.19s` |
-| Alembic migration smoke | `upgrade -> 20260706_0001` succeeded |
-| Docker Compose build/start | Passed |
-| `/ready` in Compose | `200 OK`, migration `20260706_0001` at head |
-| Document ingest in Compose | Passed with AES-GCM and persisted tenant key ID |
-| RAG retrieval in Compose | Passed with plaintext candidate for authorized caller |
-| API restart persistence | Passed; same document returned after `docker compose restart api` |
-| Audit rows | `document.encrypt`, `document.search`, `document.decrypt`, and `rag.retrieve` present |
+## Evidence run
 
-## Commands Used
+<!-- generated:run:begin -->
+Filled in by the CI `evidence` job on the release commit (`scripts/render_evidence.py`).
+<!-- generated:run:end -->
 
-```bash
-PYTHONPATH=src python3.11 -m pytest -q \
-  -W ignore::DeprecationWarning \
-  -W ignore::RuntimeWarning
+### CI jobs
 
-env DATABASE_URL=sqlite+pysqlite:////private/tmp/encrypted_ir_portfolio_alembic_2.db \
-  alembic upgrade head
+<!-- generated:jobs:begin -->
+Filled in by the CI `evidence` job on the release commit (`scripts/render_evidence.py`).
+<!-- generated:jobs:end -->
 
-docker compose up --build -d
-curl -s -i http://localhost:8000/ready
-curl -s -X POST http://localhost:8000/v1/documents \
-  -H 'Content-Type: application/json' \
-  -H 'X-API-Key: local-demo-key' \
-  -d '{"doc_id":"portfolio-evidence-doc-20260707","content":"Portfolio evidence document covering fraud risk controls and regulated RAG retrieval persistence.","metadata":{"source":"portfolio-evidence","date":"2026-07-07"}}'
-curl -s -X POST http://localhost:8000/v1/rag/retrieve \
-  -H 'Content-Type: application/json' \
-  -H 'X-API-Key: local-demo-key' \
-  -d '{"query":"fraud risk controls","top_k":5,"include_plaintext":true}'
-docker compose restart api
-curl -s -X POST http://localhost:8000/v1/rag/retrieve \
-  -H 'Content-Type: application/json' \
-  -H 'X-API-Key: local-demo-key' \
-  -d '{"query":"fraud risk controls","top_k":5,"include_plaintext":true}'
-docker compose down
-```
+### Tests
+
+<!-- generated:tests:begin -->
+Filled in by the CI `evidence` job on the release commit (`scripts/render_evidence.py`).
+<!-- generated:tests:end -->
+
+### End-to-end runs
+
+The Compose, KMS and production-mode OIDC flows, each run by its script against real containers
+(PostgreSQL 16, moto server for AWS KMS, Keycloak 26 as the identity provider):
+
+<!-- generated:e2e:begin -->
+Filled in by the CI `evidence` job on the release commit (`scripts/render_evidence.py`).
+<!-- generated:e2e:end -->
 
 ## Benchmark Results
 
 Retrieval benchmarks with provenance (issue #50), from `make bench-retrieval` (in-memory SQLite)
-and `make bench-retrieval-postgres` (the Compose PostgreSQL). They are newer than the July run
-above and replace its mean-only table.
+and `make bench-retrieval-postgres` (the Compose PostgreSQL).
 
 <!-- generated:benchmarks:begin -->
 Generated by `scripts/render_evidence.py` from the JSON reports. Times are milliseconds,
@@ -81,52 +70,34 @@ p50 / p95, measured in one process with the database on the same machine; see
 
 ## What Is Real
 
-- Durable encrypted-document workflow backed by PostgreSQL in Docker Compose.
-- Alembic-managed schema for tenant keys, encrypted documents, search tokens,
-  and audit rows.
-- Tenant-scoped document encryption keys and search-token keys persisted through
-  the database storage backend.
-- OIDC/JWKS verification path and strict production settings validation, run end to end
-  against Keycloak with the API in production mode in CI (`scripts/oidc_smoke.sh`,
-  [OIDC_DEPLOYMENT.md](OIDC_DEPLOYMENT.md)).
-- AWS KMS wrapped-master-key path, run end to end against the moto KMS emulator in CI
-  (`scripts/kms_smoke.sh`, [KMS_DEPLOYMENT.md](KMS_DEPLOYMENT.md)); not run against AWS.
-- `/ready` gates database, migration, auth, and key-provider posture.
-- Endpoint audit records are sanitized and avoid plaintext, raw queries, tokens,
-  and key material.
+- Durable encrypted-document workflow backed by PostgreSQL in Docker Compose, with a one-shot
+  migration service and an API that keeps its data across restarts.
+- Alembic-managed schema for tenant keys, encrypted documents, search tokens, key rotations and
+  the audit chain.
+- Tenant-scoped document encryption keys and search-token keys persisted through the database
+  storage backend, and a rotation tool that re-encrypts documents under new keys.
+- OIDC/JWKS verification and strict production settings validation, run end to end against
+  Keycloak with the API in production mode ([OIDC_DEPLOYMENT.md](OIDC_DEPLOYMENT.md)).
+- The AWS KMS wrapped-master-key path, run end to end against the moto KMS emulator, not against
+  AWS ([KMS_DEPLOYMENT.md](KMS_DEPLOYMENT.md)).
+- `/ready` gates database, migration, auth and key-provider posture.
+- A per-tenant HMAC audit chain with an export tool that verifies it. Audit rows avoid
+  plaintext, raw queries, tokens and key material.
 
 ## Known Production Gaps
 
 - No live AWS KMS or commercial identity provider was used: the production path runs against
-  moto server and Keycloak (see the KMS and OIDC runs).
+  moto server and Keycloak. moto does not enforce IAM.
 - Audit rows are database records, not immutable external logs or SIEM events.
-- Retrieval is deterministic keyword-token search, not vector search, PIR, ORAM,
-  or zero-leakage retrieval.
+- Retrieval is deterministic keyword-token search, not vector search, PIR, ORAM or zero-leakage
+  retrieval.
 - Custom ORE/SSE code remains prototype/research-oriented and unaudited. The ORE prototype's
   comparison needs no key, so ciphertext holders learn total order; see
   [THREAT_MODEL.md](THREAT_MODEL.md).
-- No Terraform/CDK, IAM policy review, TLS termination, WAF, SLOs, log retention,
-  backup/restore drill, or external penetration test is included.
-
-## End-to-end runs (Phase 2)
-
-These runs are newer than the evidence run above. Each comes from CI on the named commit. Issue #51
-regenerates this whole document from one run on the release commit.
-
-| Run | Date (UTC) | Commit | CI run | Result |
-| --- | --- | --- | --- | --- |
-| KMS path against moto server (`scripts/kms_smoke.sh`, #49) | 2026-10-28 | `2f1c355` | [40749861222](https://github.com/MysterionRise/encrypted-information-retrieval/actions/runs/40749861222), job "End-to-end KMS" | Passed. The steps: wrap with `GenerateDataKey` through `generate_kms_master_key`; start with `ENCRYPTED_IR_KMS_PROVIDER=aws`; ingest; restart; retrieve. The `_system` chain verified with 2 `key.unwrap` rows, and the key failed to unwrap under `ENCRYPTED_IR_ENV=test` (`InvalidCiphertextException`). |
-| Production mode: Keycloak and moto server (`scripts/oidc_smoke.sh`, #48) | 2026-10-28 | `5a33f02` | [40751468657](https://github.com/MysterionRise/encrypted-information-retrieval/actions/runs/40751468657), job "End-to-end KMS and OIDC" | Passed. The API ran in `ENCRYPTED_IR_ENV=prod` with no raw master key and no dev auth, and `/ready` reported every check true. Keycloak issued RS256 tokens whose `iss`, `aud`, `tenant_id` and `roles` were checked. Tenant-a ingest and retrieval worked. Tenant-b got 404 on get and delete and an empty retrieval. A read-only ingest got 403. A broken signature and the dev API key got 401. After a restart the document was retrieved again and tenant-a's audit chain verified. |
+- No Terraform/CDK, TLS termination, WAF, SLOs, log retention, backup/restore drill or external
+  penetration test is included. Rate limits and metrics are per process.
 
 ## Status and Limitations
-
-This section absorbs the former `CURRENT_STATUS.md`.
-
-**What is verified**
-- The FastAPI app, database migrations, encrypted document storage, tenant-scoped retrieval, key
-  metadata and audit tables are implemented and tested.
-- Dev auth rejects unsigned `alg:none` JWTs and requires signed HS256 tokens.
-- `pyproject.toml` is the packaging source of truth; `setup.py` is a compatibility shim.
 
 **Known limitations**
 - No external cryptographic or application-security audit has been performed.
@@ -144,17 +115,37 @@ This section absorbs the former `CURRENT_STATUS.md`.
 ### Reproduce locally
 
 ```bash
-make test                 # full pytest suite (set POSTGRES_TEST_DATABASE_URL to include the Postgres test)
-make lint                 # ruff, bandit, mypy
-make security             # bandit and dependency audit
+make test                       # full pytest suite; set POSTGRES_TEST_DATABASE_URL to run it on PostgreSQL
+make lint                       # ruff, bandit, mypy
+make security                   # bandit and dependency audit
+make docs-check                 # relative links in the Markdown
+cp .env.example .env
+./scripts/compose_smoke.sh      # after `docker compose up -d --build`
+./scripts/kms_smoke.sh          # AWS KMS path against moto server
+./scripts/oidc_smoke.sh         # production mode with Keycloak and moto
+make bench-retrieval            # benchmarks with provenance (in-memory SQLite)
 python -m build && twine check dist/*
-PYTHONPATH=src python examples/portfolio_demo.py   # dependency-light library demo
 ```
 
-The Docker Compose flow is in [CTO_DEMO_SCRIPT.md](CTO_DEMO_SCRIPT.md).
+The Docker Compose walkthrough is in [CTO_DEMO_SCRIPT.md](CTO_DEMO_SCRIPT.md).
+
+## Earlier runs
+
+**Phase 2 pull requests.** Each end-to-end flow was first recorded from the CI run of its pull
+request:
+
+| Run | Date (UTC) | Commit | CI run | Result |
+| --- | --- | --- | --- | --- |
+| KMS path against moto server (`scripts/kms_smoke.sh`, #49) | 2026-10-28 | `2f1c355` | [40749861222](https://github.com/MysterionRise/encrypted-information-retrieval/actions/runs/40749861222), job "End-to-end KMS" | Passed. The steps: wrap with `GenerateDataKey` through `generate_kms_master_key`; start with `ENCRYPTED_IR_KMS_PROVIDER=aws`; ingest; restart; retrieve. The `_system` chain verified with 2 `key.unwrap` rows, and the key failed to unwrap under `ENCRYPTED_IR_ENV=test` (`InvalidCiphertextException`). |
+| Production mode: Keycloak and moto server (`scripts/oidc_smoke.sh`, #48) | 2026-10-28 | `5a33f02` | [40751468657](https://github.com/MysterionRise/encrypted-information-retrieval/actions/runs/40751468657), job "End-to-end KMS and OIDC" | Passed. The API ran in `ENCRYPTED_IR_ENV=prod` with no raw master key and no dev auth, and `/ready` reported every check true. Keycloak issued RS256 tokens whose `iss`, `aud`, `tenant_id` and `roles` were checked. Tenant-a ingest and retrieval worked. Tenant-b got 404 on get and delete and an empty retrieval. A read-only ingest got 403. A broken signature and the dev API key got 401. After a restart the document was retrieved again and tenant-a's audit chain verified. |
+
+**July 2026.** A manual run at commit `d52d63d` (July 7 and 8, 2026), before the Phase 0 and
+Phase 1 work, covered the full pytest suite on Python 3.11 and 3.12 (774 passed, 1 skipped), an
+Alembic upgrade, the Compose flow (ingest, retrieve, `docker compose restart api`, retrieve) and
+the audit rows of that time. Its mean-only benchmark table was replaced by the reports above.
 
 ## CTO Review Framing
 
-Use this as a portfolio-grade prototype showing how privacy-preserving retrieval
-infrastructure for regulated RAG can be designed and verified locally. Do not
-present it as production-certified cryptography or a completed compliance system.
+Use this as a portfolio-grade prototype showing how privacy-preserving retrieval infrastructure
+for regulated RAG can be designed and verified locally. Do not present it as production-certified
+cryptography or a completed compliance system.

@@ -106,6 +106,24 @@ class TestKeywordExtraction:
         assert result["indexed_token_count"] == 0
 
 
+class TestTenantScopedTokens:
+    def test_same_keyword_is_stored_as_different_tokens_per_tenant(self, engine, service):
+        service.ingest_document("tenant-a", "doc", "Quarterly fraud review")
+        service.ingest_document("tenant-b", "doc", "Quarterly fraud review")
+
+        with engine.connect() as conn:
+            rows = conn.execute(
+                select(document_tokens_table.c.tenant_id, document_tokens_table.c.token)
+            ).all()
+        tokens = {
+            tenant: {row.token for row in rows if row.tenant_id == tenant}
+            for tenant in ("tenant-a", "tenant-b")
+        }
+        assert tokens["tenant-a"] and tokens["tenant-b"]
+        assert tokens["tenant-a"].isdisjoint(tokens["tenant-b"])
+        assert [c.doc_id for c in service.search_documents("tenant-b", "fraud")] == ["doc"]
+
+
 class TestSearchAcrossKeys:
     def test_and_search_matches_documents_under_two_search_keys(self, service):
         service.ingest_document(TENANT, "doc-old-key", "fraud risk report for quarter one")

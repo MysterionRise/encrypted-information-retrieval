@@ -106,8 +106,18 @@ jobs:
         # The whole suite, API tests included, runs on PostgreSQL: each xdist worker gets its own
         # migrated schema (tests/conftest.py). Benchmarks live in benchmarks/, outside testpaths.
         run: |
-          PYTHONPATH=src:$PYTHONPATH python -m pytest -v -rs --timeout=60 -n auto
+          PYTHONPATH=src:$PYTHONPATH python -m pytest -v -rs --timeout=60 -n auto \
+            --junitxml=evidence/junit-test-py${{ matrix.python-version }}.xml
         timeout-minutes: 10
+
+      - name: Keep the test counts for the evidence job
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evidence-test-py${{ matrix.python-version }}
+          path: evidence/
+          if-no-files-found: ignore
+          retention-days: 90
 
   # Coverage with an enforced floor. Measured 87.13% on 2026-10-20; the floor ratchets up, never down.
   coverage:
@@ -154,7 +164,21 @@ jobs:
             --cov-report=term-missing \
             --cov-report=xml \
             --cov-report=html \
-            --cov-fail-under=86
+            --cov-fail-under=86 \
+            --junitxml=evidence/junit-coverage.xml
+
+      - name: Keep the test counts and coverage for the evidence job
+        if: always()
+        run: cp coverage.xml evidence/ || true
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evidence-coverage
+          path: evidence/
+          if-no-files-found: ignore
+          retention-days: 90
 
       - name: Upload coverage to Codecov
         if: always()
@@ -240,8 +264,18 @@ jobs:
 
       - name: Run full suite with research extras
         run: |
-          PYTHONPATH=src:$PYTHONPATH python -m pytest -rs --timeout=120 -n auto
+          PYTHONPATH=src:$PYTHONPATH python -m pytest -rs --timeout=120 -n auto \
+            --junitxml=evidence/junit-research.xml
         timeout-minutes: 15
+
+      - name: Keep the test counts for the evidence job
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evidence-research
+          path: evidence/
+          if-no-files-found: ignore
+          retention-days: 90
 
   # Build the API image and run the Compose persistence smoke test from docs/CTO_DEMO_SCRIPT.md.
   docker:
@@ -269,6 +303,17 @@ jobs:
           container="$(docker compose ps -a -q migrate)"
           test "$(docker inspect --format '{{.State.ExitCode}}' "$container")" = "0"
           docker compose logs migrate | grep -q "Running upgrade"
+
+      - name: PostgreSQL is not published to the host
+        run: |
+          if docker compose port postgres 5432 > /dev/null 2>&1; then
+            echo "postgres:5432 is published on the host"; exit 1
+          fi
+          for files in docker-compose.yml docker-compose.yml:docker-compose.kms.yml \
+              docker-compose.yml:docker-compose.kms.yml:docker-compose.oidc.yml; do
+            COMPOSE_FILE="$files" docker compose config --format json \
+              | jq -e '.services.postgres.ports == null' > /dev/null
+          done
 
       - name: The image runs as a non-root user
         run: test "$(docker run --rm --entrypoint id encrypted-ir:local -u)" = "10001"
@@ -301,7 +346,11 @@ jobs:
           if echo "$output" | grep -q "boto3 is required"; then exit 1; fi
 
       - name: Ingest, restart, and retrieve
-        run: ./scripts/compose_smoke.sh
+        env:
+          COMPOSE_RESULT_JSON: evidence/compose.json
+        run: |
+          mkdir -p evidence
+          ./scripts/compose_smoke.sh
 
       - name: Image HEALTHCHECK reports healthy
         run: |
@@ -327,6 +376,15 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose down -v
+
+      - name: Keep the smoke result for the evidence job
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evidence-docker
+          path: evidence/
+          if-no-files-found: ignore
+          retention-days: 90
 
   # The production key and auth paths without a cloud account: moto server stands in for AWS KMS
   # and Keycloak is the identity provider, with the API in ENCRYPTED_IR_ENV=prod. Each script runs
@@ -362,7 +420,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-results
+          name: evidence-e2e
           path: e2e-results/
           if-no-files-found: ignore
           retention-days: 90
@@ -486,6 +544,49 @@ jobs:
           name: dist-package
           path: dist/
           retention-days: 30
+
+  # docs/PORTFOLIO_EVIDENCE.md as this run would render it: the commit, each gating job's result,
+  # pytest counts per job, coverage, and the Compose, KMS and OIDC end-to-end results. Runs only
+  # when every gating job passed. The release commit's evidence comes from this job on master:
+  # copy the `portfolio-evidence` artifact into docs/ in a docs-only commit, then tag that commit
+  # (release.yml checks that nothing else changed since the evidence commit).
+  evidence:
+    name: Evidence (rendered PORTFOLIO_EVIDENCE)
+    runs-on: ubuntu-latest
+    needs: [lint, test, coverage, security, research, docker, e2e, build]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Download the evidence of the gating jobs
+        uses: actions/download-artifact@v7
+        with:
+          pattern: evidence-*
+          path: evidence/
+
+      - name: Render docs/PORTFOLIO_EVIDENCE.md
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" > needs.json
+          python scripts/render_evidence.py --ci-evidence evidence/ --needs-json needs.json \
+            --commit "$GITHUB_SHA" --ref "$GITHUB_REF_NAME" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          cat docs/PORTFOLIO_EVIDENCE.md
+          # One line that reproduces the file exactly: base64 of the gzipped Markdown.
+          echo "PORTFOLIO_EVIDENCE_GZ_B64=$(gzip -9n < docs/PORTFOLIO_EVIDENCE.md | base64 -w0)"
+
+      - name: Upload the rendered document
+        uses: actions/upload-artifact@v7
+        with:
+          name: portfolio-evidence
+          path: docs/PORTFOLIO_EVIDENCE.md
+          retention-days: 90
 
   # Single required status: every gating job must succeed.
   ci-success:
