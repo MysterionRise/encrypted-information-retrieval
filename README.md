@@ -245,7 +245,8 @@ make bench-retrieval-postgres   # benchmarks/reports/postgresql/
 
 Read these first:
 
-- [docs/PORTFOLIO_EVIDENCE.md](docs/PORTFOLIO_EVIDENCE.md): dated evidence run, current status, limitations, and how to reproduce.
+- [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md): every claim in this README next to the test, CI step or run that proves it, the leakage you are asked to accept, and what is not claimed.
+- [docs/PORTFOLIO_EVIDENCE.md](docs/PORTFOLIO_EVIDENCE.md): the CI evidence run of the release commit, benchmarks, current status, limitations, and how to reproduce.
 - [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md): what the code protects and leaks, with each known gap and its tracking issue.
 - [docs/PORTFOLIO_CASE_STUDY.md](docs/PORTFOLIO_CASE_STUDY.md): CTO-facing case study.
 - [docs/CTO_DEMO_SCRIPT.md](docs/CTO_DEMO_SCRIPT.md): five-minute review script.

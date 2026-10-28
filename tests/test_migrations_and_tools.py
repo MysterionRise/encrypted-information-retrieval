@@ -356,3 +356,138 @@ def test_render_evidence_needs_the_markers():
         )
         == "<!-- generated:benchmarks:begin -->\nnew\n<!-- generated:benchmarks:end -->"
     )
+
+
+def _write_ci_evidence(root: Path) -> Path:
+    evidence = root / "evidence"
+    (evidence / "evidence-test-py3.11").mkdir(parents=True)
+    (evidence / "evidence-test-py3.11" / "junit-test-py3.11.xml").write_text(
+        '<testsuites><testsuite name="pytest" tests="10" failures="0" errors="0" '
+        'skipped="2" time="12.5"/></testsuites>'
+    )
+    (evidence / "evidence-coverage").mkdir()
+    (evidence / "evidence-coverage" / "coverage.xml").write_text(
+        '<coverage lines-valid="90" lines-covered="81" branches-valid="10" '
+        'branches-covered="9"/>'
+    )
+    (evidence / "evidence-e2e").mkdir()
+    (evidence / "evidence-e2e" / "kms.json").write_text(
+        json.dumps({"passed": True, "date": "2026-10-28T19:00:00+00:00", "steps": ["a", "b"]})
+    )
+    needs = root / "needs.json"
+    needs.write_text(json.dumps({"lint": {"result": "success"}, "e2e": {"result": "success"}}))
+    return evidence
+
+
+def test_render_evidence_ci_sections(tmp_path, monkeypatch):
+    render = _load_script("render_evidence")
+    evidence = _write_ci_evidence(tmp_path)
+    document = tmp_path / "PORTFOLIO_EVIDENCE.md"
+    document.write_text(
+        "".join(
+            f"<!-- generated:{name}:begin -->\nold\n<!-- generated:{name}:end -->\n"
+            for name in ("run", "jobs", "tests", "e2e", "benchmarks")
+        )
+    )
+    monkeypatch.setattr(render, "EVIDENCE", document)
+    sha = "a" * 40
+
+    assert (
+        render.main(
+            [
+                "--ci-evidence",
+                str(evidence),
+                "--needs-json",
+                str(tmp_path / "needs.json"),
+                "--commit",
+                sha,
+                "--ref",
+                "master",
+                "--run-url",
+                "https://github.com/o/r/actions/runs/42",
+            ]
+        )
+        == 0
+    )
+
+    text = document.read_text()
+    assert f"<!-- evidence-commit: {sha} -->" in text
+    assert "| CI run | [42](https://github.com/o/r/actions/runs/42) |" in text
+    assert "| `e2e` | success |" in text and "| `lint` | success |" in text
+    assert "| Test Suite, Python 3.11, on PostgreSQL 16 | 10 | 8 | 0 | 0 | 2 | 12 |" in text
+    assert "Total coverage (lines and branches, `src/encrypted_ir`): 90.00%" in text
+    assert "| passed | 2026-10-28T19:00:00+00:00 | a; b |" in text
+    assert "| Production mode with Keycloak and moto (`scripts/oidc_smoke.sh`) | not run |" in text
+    assert "old" not in text
+
+
+def test_render_evidence_ci_mode_needs_the_run_details(tmp_path):
+    render = _load_script("render_evidence")
+    with pytest.raises(SystemExit):
+        render.main(["--ci-evidence", str(tmp_path)])
+
+
+def _release_guard_script() -> str:
+    """The `run: |` block of the evidence step in release.yml (read as text: no YAML parser in CI)."""
+    lines = (
+        (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "release.yml")
+        .read_text()
+        .splitlines()
+    )
+    start = lines.index("      - name: The evidence run tested this release's code")
+    assert lines[start + 1].strip() == "run: |"
+    body = []
+    for line in lines[start + 2 :]:
+        if line.strip() and not line.startswith(" " * 10):
+            break
+        body.append(line[10:])
+    return "\n".join(body)
+
+
+def test_release_guard_accepts_only_an_evidence_only_change(tmp_path):
+    import os
+    import shutil
+    import subprocess
+
+    git_exe, bash_exe = shutil.which("git"), shutil.which("bash")
+    if not (git_exe and bash_exe):
+        pytest.skip("git and bash are needed to run the release guard")
+
+    def git(*args: str) -> str:
+        return subprocess.run(  # noqa: S603 - fixed arguments in a temporary repository
+            [git_exe, "-c", "user.name=t", "-c", "user.email=t@example", *args],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    def guard(sha: str) -> subprocess.CompletedProcess:
+        return subprocess.run(  # noqa: S603 - the guard step from our own release.yml
+            [bash_exe, "-c", "set -e\n" + _release_guard_script()],
+            cwd=tmp_path,
+            env={**os.environ, "GITHUB_SHA": sha},
+            capture_output=True,
+            text=True,
+        )
+
+    git("init", "-q")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "code.py").write_text("x = 1\n")
+    (tmp_path / "docs" / "PORTFOLIO_EVIDENCE.md").write_text("pending\n")
+    git("add", ".")
+    git("commit", "-qm", "code")
+    evidence_commit = git("rev-parse", "HEAD")
+    assert guard(evidence_commit).returncode != 0  # no evidence-commit marker yet
+
+    (tmp_path / "docs" / "PORTFOLIO_EVIDENCE.md").write_text(
+        f"<!-- evidence-commit: {evidence_commit} -->\nrendered\n"
+    )
+    git("commit", "-qam", "evidence")
+    assert guard(git("rev-parse", "HEAD")).returncode == 0
+
+    (tmp_path / "code.py").write_text("x = 2\n")
+    git("commit", "-qam", "untested change")
+    rejected = guard(git("rev-parse", "HEAD"))
+    assert rejected.returncode != 0
+    assert "changed since the evidence run" in rejected.stderr

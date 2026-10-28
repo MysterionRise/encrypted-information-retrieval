@@ -98,14 +98,16 @@ These stay out of scope so that no document implies they exist. Each would be a 
 | IaC, TLS termination, WAF, SLO dashboards, runbooks | Deployment concerns for a pilot, not for a reviewable prototype. |
 | Real Lewi-Wu ORE, client/server forward-private DSSE, true encrypted aggregates | Multi-week cryptography work that would still be unaudited; #34 and #38 make the current code honest instead. |
 | PIR, ORAM, TEE/Nitro, vector retrieval, MPC | Listed in older docs as mitigations; they are research directions, not roadmap items. |
-| External cryptographic or application-security audit | Only meaningful after Phase 2; a request-for-review template is part of #51. |
+| External cryptographic or application-security audit | Only meaningful after Phase 2. The request for one is ready in [REVIEW_REQUEST_TEMPLATE.md](REVIEW_REQUEST_TEMPLATE.md). |
 
 ## How to verify progress
 
 - Each issue has acceptance checkboxes; an issue is closed only when every box is ticked by a merged change.
 - Each phase ends with a tag cut by the release workflow (#31) and a CHANGELOG entry.
-- `docs/PORTFOLIO_EVIDENCE.md` is regenerated from a fresh run at the end of Phase 2; until then its date tells a
-  reader how old the evidence is.
+- `docs/PORTFOLIO_EVIDENCE.md` is rendered by the CI `evidence` job from one run on the release commit, and the
+  release workflow refuses a tag whose code changed after that run.
+- [REVIEW_GUIDE.md](REVIEW_GUIDE.md) maps every README claim to its proof, and a test fails when a proof it cites
+  stops existing.
 
 ## Appendix: findings behind this roadmap
 

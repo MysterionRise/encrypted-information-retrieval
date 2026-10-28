@@ -534,6 +534,12 @@ class TestOIDCTokens:
         assert harness.search(harness.token(alg="ES256", kid="ec")).status_code == 200
         assert harness.search(harness.token(alg="RS256", kid="rsa")).status_code == 401
 
+    def test_ps256_tokens_verify_when_configured(self, oidc_factory):
+        harness = oidc_factory(oidc_algorithms=("PS256",))
+
+        assert harness.search(harness.token(alg="PS256", kid="rsa")).status_code == 200
+        assert harness.search(harness.token(alg="RS256", kid="rsa")).status_code == 401
+
     def test_dev_api_key_is_ignored_without_dev_auth(self, oidc):
         resp = oidc.client.post(
             SEARCH, json=SEARCH_BODY, headers={"X-API-Key": "test-only-dev-api-key"}

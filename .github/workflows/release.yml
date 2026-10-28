@@ -4,6 +4,8 @@ name: Release
 #   git tag -a v0.9.0 -m "v0.9.0" && git push origin v0.9.0
 # The tag must match encrypted_ir.__version__, and CHANGELOG.md must have a
 # "## [X.Y.Z]" section for that version; its text becomes the release notes.
+# docs/PORTFOLIO_EVIDENCE.md must come from the CI `evidence` job of a commit whose tree equals
+# the tagged one except for that file: render it on master, commit it alone, tag that commit.
 on:
   push:
     tags: ['v*']
@@ -18,6 +20,23 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: The evidence run tested this release's code
+        run: |
+          evidence="$(sed -n 's/^<!-- evidence-commit: \([0-9a-f]\{40\}\) -->$/\1/p' docs/PORTFOLIO_EVIDENCE.md)"
+          if [ -z "$evidence" ]; then
+            echo "docs/PORTFOLIO_EVIDENCE.md names no evidence commit: render it with the CI evidence job" >&2
+            exit 1
+          fi
+          git cat-file -e "${evidence}^{commit}"
+          changed="$(git diff --name-only "$evidence" "$GITHUB_SHA")"
+          echo "evidence commit ${evidence}; changed since: ${changed:-nothing}"
+          if [ -n "$changed" ] && [ "$changed" != "docs/PORTFOLIO_EVIDENCE.md" ]; then
+            echo "files other than docs/PORTFOLIO_EVIDENCE.md changed since the evidence run" >&2
+            exit 1
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v6
