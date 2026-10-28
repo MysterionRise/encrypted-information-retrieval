@@ -78,7 +78,9 @@ Reports:
   and audit rows.
 - Tenant-scoped document encryption keys and search-token keys persisted through
   the database storage backend.
-- OIDC/JWKS verification path and strict production settings validation.
+- OIDC/JWKS verification path and strict production settings validation, run end to end
+  against Keycloak with the API in production mode in CI (`scripts/oidc_smoke.sh`,
+  [OIDC_DEPLOYMENT.md](OIDC_DEPLOYMENT.md)).
 - AWS KMS wrapped-master-key path, run end to end against the moto KMS emulator in CI
   (`scripts/kms_smoke.sh`, [KMS_DEPLOYMENT.md](KMS_DEPLOYMENT.md)); not run against AWS.
 - `/ready` gates database, migration, auth, and key-provider posture.
@@ -87,7 +89,8 @@ Reports:
 
 ## Known Production Gaps
 
-- No live AWS KMS or real IdP credentials were used in this evidence run.
+- No live AWS KMS or commercial identity provider was used: the production path runs against
+  moto server and Keycloak (see the KMS and OIDC runs).
 - Audit rows are database records, not immutable external logs or SIEM events.
 - Retrieval is deterministic keyword-token search, not vector search, PIR, ORAM,
   or zero-leakage retrieval.

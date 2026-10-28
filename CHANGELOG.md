@@ -290,6 +290,27 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Added
 
+- The production auth path, end to end, without a cloud account (#48):
+  - `docker-compose.oidc.yml` adds Keycloak 26, with a hand-written realm in
+    `deploy/keycloak/`:
+    - two tenants, a `tenant_id` attribute that only an administrator can edit;
+    - client roles emitted as a top-level `roles` claim;
+    - an audience mapper;
+    - a confidential demo client (password grant, demo only).
+  - The same file runs the API in `ENCRYPTED_IR_ENV=prod` on top of the KMS emulator, with no raw
+    master key and no dev auth in its environment.
+  - `scripts/oidc_smoke.sh` gets RS256 tokens for three users and checks their claims, then
+    checks:
+    - ingest and retrieval within a tenant;
+    - 404 and empty results across tenants;
+    - 403 for a read-only ingest;
+    - 401 for a broken signature and for the dev API key;
+    - the data and audit chain after a restart.
+  - The CI `e2e` job runs it.
+  - `docs/OIDC_DEPLOYMENT.md` covers the token rules, the local run, and claim mappings for
+    Cognito, Auth0, Okta and Entra ID, taken from vendor documentation.
+  - `ENCRYPTED_IR_TENANT_CLAIM` and `ENCRYPTED_IR_ROLES_CLAIM` are now in the README settings
+    table.
 - The AWS KMS path, end to end, without an AWS account (#49):
   - `docker-compose.kms.yml` adds moto server as a KMS emulator. LocalStack, which the roadmap
     named, needs an account auth token since its 2026.03.0 release.
