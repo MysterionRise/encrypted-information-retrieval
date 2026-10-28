@@ -191,26 +191,91 @@ def test_migrated_schema_matches_models(request, tmp_path, database_kind):
     assert diff == []
 
 
-def test_retrieval_benchmark_writes_report(tmp_path, monkeypatch):
-    report_path = tmp_path / "report.md"
-    monkeypatch.setattr(
-        "sys.argv",
+def test_retrieval_benchmark_writes_json_and_markdown_with_provenance(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_SHA", raising=False)
+    status = benchmark_retrieval.main(
         [
-            "benchmark_retrieval",
-            "--database-url",
-            "sqlite+pysqlite:///:memory:",
             "--documents",
             "5",
-            "--report",
-            str(report_path),
-        ],
+            "8",
+            "--rounds",
+            "3",
+            "--warmup",
+            "1",
+            "--output-dir",
+            str(tmp_path),
+            "--commit",
+            "abc1234",
+            "--dirty",
+        ]
     )
 
-    benchmark_retrieval.main()
+    assert status == 0
+    result = json.loads((tmp_path / "retrieval_8.json").read_text())
+    assert (tmp_path / "retrieval_5.json").exists()
+    prov = result["provenance"]
+    assert (prov["commit"], prov["dirty_tree"]) == ("abc1234", True)
+    assert set(prov) >= {"generated_at", "cpu_model", "cpu_count", "os", "python", "sqlalchemy"}
+    assert prov["database"]["dialect"] == "sqlite"
+    assert prov["database"]["driver"] == "pysqlite"
+    assert result["parameters"]["documents"] == 8
+    assert result["corpus"]["rows_in_database_before"] == 0  # a fresh in-memory database
+    ops = result["operations"]
+    assert set(ops) == {"ingest", "search_or", "search_and", "get_document", "rag_retrieve"}
+    assert ops["ingest"]["n"] == 8
+    assert ops["rag_retrieve"]["n"] == 3
+    # Three samples are too few for p95 and p99.
+    assert ops["search_or"]["p95_ms"] is None and ops["search_or"]["p99_ms"] is None
+    # Two of the eight documents are about fraud; all mention controls.
+    assert result["corpus"]["documents_matching_and"] == 2
+    assert ops["search_and"]["results"] == 2
 
-    text = Path(report_path).read_text()
-    assert "Retrieval Benchmark Report" in text
-    assert "Documents: 5" in text
+    markdown = (tmp_path / "retrieval_8.md").read_text()
+    assert markdown == benchmark_retrieval.render_markdown(result)
+    assert "`abc1234` (uncommitted changes)" in markdown
+    assert "| n/a |" in markdown
+
+
+def test_retrieval_benchmark_takes_the_commit_from_github_sha(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_SHA", "f" * 40)
+    benchmark_retrieval.main(
+        ["--documents", "2", "--rounds", "1", "--warmup", "0", "--output-dir", str(tmp_path)]
+    )
+
+    result = json.loads((tmp_path / "retrieval_2.json").read_text())
+    assert result["provenance"]["commit"] == "f" * 40
+
+
+def test_benchmark_percentiles_need_enough_samples():
+    twenty = benchmark_retrieval.summarize([float(i) for i in range(1, 21)])
+    hundred = benchmark_retrieval.summarize([float(i) for i in range(1, 101)])
+
+    assert twenty["n"] == 20 and twenty["p95_ms"] is not None and twenty["p99_ms"] is None
+    assert hundred["p50_ms"] == 50.5
+    assert hundred["p99_ms"] is not None and hundred["p95_ms"] <= hundred["p99_ms"] <= 100
+    assert benchmark_retrieval.summarize([4.0])["p50_ms"] == 4.0
+
+
+def test_benchmark_refuses_an_unmigrated_database(monkeypatch):
+    class Dialect:
+        name = "postgresql"
+
+    class Engine:
+        dialect = Dialect()
+
+    monkeypatch.setattr(
+        benchmark_retrieval,
+        "migration_status",
+        lambda engine, url: {"current": None, "head": "20261028_0005", "at_head": False},
+    )
+    with pytest.raises(SystemExit, match="upgrade head"):
+        benchmark_retrieval._prepare(Engine(), "postgresql+psycopg://example/db")
+
+
+@pytest.mark.parametrize("argv", [["--documents", "0"], ["--rounds", "0"], ["--search-limit", "0"]])
+def test_benchmark_rejects_bad_arguments(tmp_path, argv):
+    with pytest.raises(SystemExit):
+        benchmark_retrieval.main([*argv, "--output-dir", str(tmp_path)])
 
 
 def test_makefile_uses_configured_python_variable():
