@@ -80,11 +80,11 @@ tool is proven by a Postgres-backed test; `v0.10.0` tagged.
 | Issue | Title | Area |
 | --- | --- | --- |
 | [#48](https://github.com/MysterionRise/encrypted-information-retrieval/issues/48) | End-to-end OIDC evidence without a cloud account (Keycloak or dex in Compose, CI job in prod mode) | api, ops |
-| [#49](https://github.com/MysterionRise/encrypted-information-retrieval/issues/49) | End-to-end KMS evidence without a cloud account (LocalStack KMS profile, prod-mode startup in CI, documented IAM policy) | kms, ops |
+| [#49](https://github.com/MysterionRise/encrypted-information-retrieval/issues/49) | End-to-end KMS evidence without a cloud account (KMS emulator profile, prod-mode startup in CI, documented IAM policy). The emulator is moto server: LocalStack now needs an account auth token | kms, ops |
 | [#50](https://github.com/MysterionRise/encrypted-information-retrieval/issues/50) | Benchmarks with provenance: percentiles, commit/date/hardware metadata, SQLite and Postgres, regenerate reports | tests |
 | [#51](https://github.com/MysterionRise/encrypted-information-retrieval/issues/51) | Reviewer guide (claim to proof), refreshed evidence and demo script, cut `v1.0.0` | docs |
 
-Exit: CI runs the API in `ENCRYPTED_IR_ENV=prod` against a local IdP and LocalStack KMS and the run is recorded in
+Exit: CI runs the API in `ENCRYPTED_IR_ENV=prod` against a local IdP and a local KMS emulator (moto) and the run is recorded in
 `PORTFOLIO_EVIDENCE.md`; `REVIEW_GUIDE.md` maps every README claim to its proof; `v1.0.0` tagged.
 
 ## Not planned

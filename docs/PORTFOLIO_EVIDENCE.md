@@ -79,7 +79,8 @@ Reports:
 - Tenant-scoped document encryption keys and search-token keys persisted through
   the database storage backend.
 - OIDC/JWKS verification path and strict production settings validation.
-- AWS KMS wrapped-master-key path implemented and unit-tested with fakes/mocks.
+- AWS KMS wrapped-master-key path, run end to end against the moto KMS emulator in CI
+  (`scripts/kms_smoke.sh`, [KMS_DEPLOYMENT.md](KMS_DEPLOYMENT.md)); not run against AWS.
 - `/ready` gates database, migration, auth, and key-provider posture.
 - Endpoint audit records are sanitized and avoid plaintext, raw queries, tokens,
   and key material.
@@ -95,6 +96,15 @@ Reports:
   [THREAT_MODEL.md](THREAT_MODEL.md).
 - No Terraform/CDK, IAM policy review, TLS termination, WAF, SLOs, log retention,
   backup/restore drill, or external penetration test is included.
+
+## End-to-end runs (Phase 2)
+
+These runs are newer than the evidence run above. Each comes from CI on the named commit. Issue #51
+regenerates this whole document from one run on the release commit.
+
+| Run | Date (UTC) | Commit | CI run | Result |
+| --- | --- | --- | --- | --- |
+| KMS path against moto server (`scripts/kms_smoke.sh`, #49) | 2026-10-28 | `2f1c355` | [40749861222](https://github.com/MysterionRise/encrypted-information-retrieval/actions/runs/40749861222), job "End-to-end KMS" | Passed. The steps: wrap with `GenerateDataKey` through `generate_kms_master_key`; start with `ENCRYPTED_IR_KMS_PROVIDER=aws`; ingest; restart; retrieve. The `_system` chain verified with 2 `key.unwrap` rows, and the key failed to unwrap under `ENCRYPTED_IR_ENV=test` (`InvalidCiphertextException`). |
 
 ## Status and Limitations
 
