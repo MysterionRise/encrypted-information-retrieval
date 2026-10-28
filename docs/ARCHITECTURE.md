@@ -20,7 +20,7 @@ the current code.
 graph LR
     CLIENT["Client"] -->|"X-API-Key or bearer token"| API["FastAPI app (single process)"]
     API --> AUTH["Auth: OIDC via JWKS (RS256, PS256 or ES256); dev API key and HS256 dev JWT (dev only)"]
-    API --> RL["In-memory rate limiter (per process)"]
+    API --> RL["In-memory rate limiter (per process, per tenant and per client address)"]
     API --> DS["DocumentService"]
     DS --> KM["KeyManager per tenant (AES-GCM-wrapped keys)"]
     KM --> MK["App master key: env var, or AWS KMS Decrypt at startup"]
@@ -31,8 +31,9 @@ graph LR
 There is no Redis, HSM, blob storage, TEE, SIEM or TLS termination in this repository. The
 application runs as one process. The per-tenant key cache is safe across processes: it reloads keys
 from the database before every ingest and search and loads unknown key IDs on demand ([#39]). Rate
-limiting is in memory and per process, so a multi-replica deployment still needs an external
-limiter ([#47]).
+limiting is in memory and per process (bounded GCRA buckets per tenant and operation, plus a
+per-client-address limit), so a multi-replica deployment still needs an external limiter
+([#47]).
 
 ### Durable document and RAG workflow
 
@@ -769,54 +770,16 @@ mindmap
 
 ### Scaling Considerations
 
-#### Horizontal Scaling
+The API holds two kinds of per-process state: the rate-limit buckets and the Prometheus
+registry. The key cache is safe across processes ([#39]). Running more than one process (uvicorn
+workers or replicas) therefore needs:
 
-```mermaid
-graph TB
-    LB[Load Balancer]
+- an external rate limiter in front of the API, because each process enforces the configured
+  limits on its own, so N processes allow N times the limit ([#47]);
+- a Prometheus scrape per process (or one worker per container, as the Docker image runs).
 
-    subgraph "API Tier (Stateless)"
-        API1[API Server 1]
-        API2[API Server 2]
-        API3[API Server N]
-    end
-
-    subgraph "Cache Layer"
-        REDIS[Redis Cluster<br/>DEK Cache]
-    end
-
-    subgraph "Data Layer (Sharded)"
-        DB1[(Shard 1<br/>Tenants A-F)]
-        DB2[(Shard 2<br/>Tenants G-M)]
-        DB3[(Shard 3<br/>Tenants N-Z)]
-    end
-
-    subgraph "KMS (Highly Available)"
-        KMS_PRIMARY[KMS Primary Region]
-        KMS_REPLICA[KMS Replica Region]
-    end
-
-    LB --> API1
-    LB --> API2
-    LB --> API3
-
-    API1 --> REDIS
-    API2 --> REDIS
-    API3 --> REDIS
-
-    API1 --> DB1
-    API2 --> DB2
-    API3 --> DB3
-
-    API1 --> KMS_PRIMARY
-    API2 --> KMS_PRIMARY
-    KMS_PRIMARY -.->|Replication| KMS_REPLICA
-
-    style REDIS fill:#fff3e0
-    style KMS_PRIMARY fill:#fce4ec
-```
-
----
+The database is a single PostgreSQL instance. Sharding, a shared cache and multi-region KMS are
+not designed here.
 
 ---
 

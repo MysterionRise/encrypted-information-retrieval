@@ -27,7 +27,6 @@ from encrypted_ir import __version__
 from encrypted_ir.api.dependencies.rate_limiter import (
     RateLimitConfig,
     RateLimiter,
-    set_rate_limiter,
 )
 from encrypted_ir.api.main import create_app
 from encrypted_ir.database import audit_log_table, documents_table
@@ -468,11 +467,9 @@ class TestTenantIsolation:
 
 
 class TestRateLimiting:
-    def test_rate_limit_exceeded(self, client, auth_headers):
-        set_rate_limiter(
-            RateLimiter(
-                limits={"document_search": RateLimitConfig(max_requests=2, window_seconds=60)}
-            )
+    def test_rate_limit_exceeded(self, app, client, auth_headers):
+        app.state.rate_limiter = RateLimiter(
+            limits={"document_search": RateLimitConfig(max_requests=2, window_seconds=60)}
         )
 
         for _ in range(2):
@@ -483,11 +480,9 @@ class TestRateLimiting:
         assert resp.status_code == 429
         assert "Retry-After" in resp.headers
 
-    def test_rate_limit_different_tenants_independent(self, client, make_token):
-        set_rate_limiter(
-            RateLimiter(
-                limits={"document_search": RateLimitConfig(max_requests=1, window_seconds=60)}
-            )
+    def test_rate_limit_different_tenants_independent(self, app, client, make_token):
+        app.state.rate_limiter = RateLimiter(
+            limits={"document_search": RateLimitConfig(max_requests=1, window_seconds=60)}
         )
         tenant_1 = _bearer(make_token("tenant-1", ["read"]))
         tenant_2 = _bearer(make_token("tenant-2", ["read"]))
