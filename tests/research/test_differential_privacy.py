@@ -718,16 +718,21 @@ class TestPrivacyGuarantees:
             b = round(r / bin_width)
             bins_xp[b] = bins_xp.get(b, 0) + 1
 
-        # Check ratio for bins with enough samples
+        # Compare only well-populated bins (the central ~7). A shift of 1 changes the Laplace
+        # density by at most exp(ε) anywhere, so a correct mechanism's bin ratios stay at or below
+        # exp(ε) up to sampling noise. With at least 1,000 samples per bin the ratio's relative
+        # error is about 4%, so 25% slack is never reached by chance. Sparse tail bins (50
+        # samples) used to cross a looser bound now and then.
         max_ratio = 0.0
+        compared = 0
         for b in bins_x:
-            if b in bins_xp and bins_x[b] > 50 and bins_xp[b] > 50:
+            if b in bins_xp and bins_x[b] >= 1000 and bins_xp[b] >= 1000:
                 ratio = bins_x[b] / bins_xp[b]
                 max_ratio = max(max_ratio, ratio, 1 / ratio)
+                compared += 1
 
-        # The ratio should not exceed exp(ε * sensitivity) by much
-        # Allow some slack for finite sampling
-        assert max_ratio < math.exp(epsilon) * 1.5
+        assert compared >= 4
+        assert max_ratio < math.exp(epsilon) * 1.25
 
     def test_gaussian_approximate_dp(self):
         """Verify the Gaussian mechanism output distributions overlap correctly."""
