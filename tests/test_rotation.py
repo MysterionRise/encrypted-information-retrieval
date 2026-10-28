@@ -11,7 +11,6 @@ from base64 import b64encode
 from datetime import datetime
 
 import pytest
-from alembic import command
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from sqlalchemy import insert, select, text, update
 
@@ -30,7 +29,6 @@ from encrypted_ir.document_service import (
     seal_document,
 )
 from encrypted_ir.key_manager import KeyLifecycleState, KeyManager, KeyMetadata
-from encrypted_ir.migrations import alembic_config
 from encrypted_ir.rotation import (
     NoRotationInProgressError,
     RotationInProgressError,
@@ -693,12 +691,8 @@ class TestCli:
 @pytest.mark.integration
 class TestPostgres:
     @pytest.fixture()
-    def pg_engine(self):
-        database_url = os.environ.get("POSTGRES_TEST_DATABASE_URL")
-        if not database_url:
-            pytest.skip("POSTGRES_TEST_DATABASE_URL is not configured")
-        command.upgrade(alembic_config(database_url), "head")
-        engine = create_database_engine(database_url)
+    def pg_engine(self, require_postgres):
+        engine = create_database_engine(require_postgres)
         yield engine
         engine.dispose()
 

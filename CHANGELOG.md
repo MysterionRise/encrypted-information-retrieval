@@ -139,6 +139,8 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Fixed
 
+- `alembic_config(url)` failed on any URL containing `%`, such as a URL-encoded password or a
+  query option, because Alembic's config treats `%` as interpolation (#46). It is escaped now.
 - AND search returned nothing once a tenant had more than one search key, for example after a
   search-key rotation (#39). The score is now the number of distinct query keywords matched, and
   AND requires all of them, whichever key produced each token. Destroyed search keys are skipped.
@@ -163,6 +165,15 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Changed
 
+- **The whole test suite runs on PostgreSQL in CI, in parallel** (#46). Each pytest-xdist worker
+  gets its own migrated schema, truncated after every test; API tests use the `app_factory` and
+  `db_url` fixtures, which dispose engines. Any 500 response fails a test unless it is marked
+  `allow_500`. Logging configuration and the correlation ID are restored after every test. The
+  coverage job has a PostgreSQL service too. `pytest-xdist` is added to `requirements-ci.in`.
+- Benchmarks moved to `benchmarks/` (outside `testpaths`), so the unit suite no longer runs or
+  calibrates them (#46). The master-only benchmarks job compares medians with
+  `benchmarks/baseline.json` through `scripts/compare_benchmarks.py` (3x slowdown fails; the job
+  is informational).
 - **Breaking: migrations are a separate step** (#45). The image's command starts only uvicorn;
   Compose runs `python -m encrypted_ir.migrations upgrade head` in a one-shot `migrate` service
   and starts the API after it succeeds. Other deployments must run that command before starting
@@ -279,6 +290,10 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Added
 
+- Tests (#46): a route matrix that fails when a `/v1` route lacks a 401, 403 or cross-tenant case;
+  AES-SIV bit-flip, truncation and row-swap tamper tests; a test that pins token replay within its
+  lifetime (documented in THREAT_MODEL as by design); the slow-JWKS test synchronizes with events
+  instead of asserting wall-clock time.
 - `python -m encrypted_ir.migrations upgrade|downgrade|current`, for running migrations without
   `alembic.ini` (#45). Dependabot also proposes Docker base-image updates.
 - `encrypted_ir.rotation.rotate_tenant_keys`, `RotationReport`,

@@ -46,12 +46,12 @@ setup: ## Install dependencies and set up development environment
 
 install-dev: ## Install development dependencies only
 	@echo "$(BLUE)Installing development dependencies...$(NC)"
-	$(PIP) install pytest pytest-cov pytest-benchmark black ruff mypy bandit pip-audit pre-commit
+	$(PIP) install pytest pytest-cov pytest-benchmark pytest-xdist black ruff mypy bandit pip-audit pre-commit
 	@echo "$(GREEN)✓ Dev dependencies installed$(NC)"
 
 test: ## Run all tests
 	@echo "$(BLUE)Running tests...$(NC)"
-	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest -v
+	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest -v -n auto
 	@echo "$(GREEN)✓ All tests passed$(NC)"
 
 test-verbose: ## Run tests with verbose output
@@ -71,16 +71,15 @@ test-coverage: ## Run tests with coverage report
 bench: ## Run performance benchmarks
 	@echo "$(BLUE)Running benchmarks...$(NC)"
 	@mkdir -p benchmarks/results
-	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest \
-		tests/test_benchmarks.py \
-		tests/research/test_benchmarks_research.py \
+	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest benchmarks/ \
 		--benchmark-only \
 		--benchmark-json=benchmarks/results/latest.json
+	$(PYTHON) scripts/compare_benchmarks.py benchmarks/results/latest.json
 
 lint: ## Run all code quality checks (ruff, bandit, mypy)
 	@echo "$(BLUE)Running code quality checks...$(NC)"
 	@echo "$(BLUE)1. Checking code style with ruff...$(NC)"
-	$(PYTHON) -m ruff check src tests examples
+	$(PYTHON) -m ruff check src tests examples benchmarks scripts
 	@echo "$(BLUE)2. Checking security with bandit...$(NC)"
 	$(PYTHON) -m bandit -r src -ll -f screen
 	@echo "$(BLUE)3. Checking types with mypy...$(NC)"
@@ -90,9 +89,9 @@ lint: ## Run all code quality checks (ruff, bandit, mypy)
 format: ## Auto-format code with black and ruff
 	@echo "$(BLUE)Formatting code...$(NC)"
 	@echo "$(BLUE)1. Running black...$(NC)"
-	$(PYTHON) -m black src tests examples
+	$(PYTHON) -m black src tests examples benchmarks scripts
 	@echo "$(BLUE)2. Running ruff auto-fix...$(NC)"
-	$(PYTHON) -m ruff check --fix src tests examples
+	$(PYTHON) -m ruff check --fix src tests examples benchmarks scripts
 	@echo "$(GREEN)✓ Code formatted$(NC)"
 
 type-check: ## Run type checking with mypy
@@ -146,9 +145,9 @@ ci: lint test-coverage security ## Run CI checks (lint, test with coverage, secu
 pre-commit-check: ## Quick checks before committing
 	@echo "$(BLUE)Running pre-commit checks...$(NC)"
 	@echo "$(BLUE)1. Formatting check...$(NC)"
-	$(PYTHON) -m black --check src tests examples
+	$(PYTHON) -m black --check src tests examples benchmarks scripts
 	@echo "$(BLUE)2. Linting...$(NC)"
-	$(PYTHON) -m ruff check src tests examples
+	$(PYTHON) -m ruff check src tests examples benchmarks scripts
 	@echo "$(BLUE)3. Quick tests...$(NC)"
 	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m pytest -q
 	@echo "$(GREEN)✓ Pre-commit checks passed$(NC)"

@@ -15,7 +15,9 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 import time
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 
@@ -25,6 +27,7 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from starlette.responses import JSONResponse
@@ -50,6 +53,8 @@ from encrypted_ir.database import audit_log_table
 from encrypted_ir.settings import EncryptedIRSettings
 from tests.conftest import TEST_JWT_SECRET, bearer, metric
 
+# For tests that need a database with no tables, so the migration check fails.
+UNMIGRATED_DB = "sqlite+pysqlite:///:memory:"
 ISSUER = "https://issuer.example"
 AUDIENCE = "encrypted-ir"
 SEARCH = "/v1/documents/search"
@@ -319,12 +324,22 @@ class TestDevTokens:
         token = _dev_token(_claims(tenant_id="a" * 128, roles="read write"))
         assert self._search(client, token).status_code == 200
 
+    def test_replay_of_a_valid_token_is_accepted_until_it_expires(self, client):
+        """Bearer tokens are stateless: the API keeps no record of used tokens (no jti store),
+        so a captured token works until ``exp``. THREAT_MODEL.md documents this; keep token
+        lifetimes short."""
+        token = _dev_token(_claims(exp=int(time.time()) + 300))
+        assert [self._search(client, token).status_code for _ in range(3)] == [200, 200, 200]
+
+        expired = _dev_token(_claims(exp=int(time.time()) - 120))
+        assert self._search(client, expired).status_code == 401
+
     def test_expiry_within_leeway_is_accepted(self, client):
         token = _dev_token(_claims(exp=int(time.time()) - 10))
         assert self._search(client, token).status_code == 200
 
-    def test_expiry_outside_zero_leeway_is_rejected(self, settings_factory):
-        client = TestClient(create_app(settings_factory(jwt_leeway_seconds=0)))
+    def test_expiry_outside_zero_leeway_is_rejected(self, app_factory):
+        client = TestClient(app_factory(jwt_leeway_seconds=0))
         token = _dev_token(_claims(exp=int(time.time()) - 10))
         assert self._search(client, token).status_code == 401
 
@@ -337,15 +352,14 @@ class TestDevTokens:
         token = _dev_token(_claims(), secret="another-secret-that-is-32-bytes-long")
         assert self._search(client, token).status_code == 401
 
-    def test_dev_api_key_is_off_unless_configured(self, settings_factory):
-        client = TestClient(create_app(settings_factory(dev_api_key=None)))
+    def test_dev_api_key_is_off_unless_configured(self, app_factory):
+        client = TestClient(app_factory(dev_api_key=None))
         for key in ["", "local-demo-key", "None"]:
             resp = client.post(SEARCH, json=SEARCH_BODY, headers={"X-API-Key": key})
             assert resp.status_code == 401
 
-    def test_bearer_without_any_bearer_auth_configured(self, settings_factory):
-        settings = settings_factory(environment="test", dev_auth_enabled=False)
-        client = TestClient(create_app(settings))
+    def test_bearer_without_any_bearer_auth_configured(self, app_factory):
+        client = TestClient(app_factory(environment="test", dev_auth_enabled=False))
 
         assert self._search(client, _dev_token(_claims())).status_code == 401
 
@@ -402,10 +416,10 @@ class _UnreachableJWKS:
 
 
 class _OIDCHarness:
-    def __init__(self, settings: EncryptedIRSettings):
+    def __init__(self, app: FastAPI):
         self.rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         self.ec_key = ec.generate_private_key(ec.SECP256R1())
-        self.app = create_app(settings)
+        self.app = app
         self.app.state.oidc_verifier = OIDCVerifier(
             self.app.state.auth_config,
             jwks_client=_FakeJWKS(
@@ -440,8 +454,18 @@ def _oidc_settings(**overrides: Any) -> EncryptedIRSettings:
 
 
 @pytest.fixture()
-def oidc() -> _OIDCHarness:
-    return _OIDCHarness(_oidc_settings())
+def oidc_factory(app_factory, db_url) -> Callable[..., _OIDCHarness]:
+    """Build an OIDC-mode app on the test database, with a fake JWKS."""
+
+    def _build(**overrides: Any) -> _OIDCHarness:
+        return _OIDCHarness(app_factory(_oidc_settings(database_url=db_url, **overrides)))
+
+    return _build
+
+
+@pytest.fixture()
+def oidc(oidc_factory) -> _OIDCHarness:
+    return oidc_factory()
 
 
 class TestOIDCTokens:
@@ -504,8 +528,8 @@ class TestOIDCTokens:
         unsigned = jwt.encode(oidc.claims(), None, algorithm="none", headers={"kid": "rsa"})
         assert oidc.search(unsigned).status_code == 401
 
-    def test_only_configured_algorithms_are_accepted(self):
-        harness = _OIDCHarness(_oidc_settings(oidc_algorithms=("ES256",)))
+    def test_only_configured_algorithms_are_accepted(self, oidc_factory):
+        harness = oidc_factory(oidc_algorithms=("ES256",))
 
         assert harness.search(harness.token(alg="ES256", kid="ec")).status_code == 200
         assert harness.search(harness.token(alg="RS256", kid="rsa")).status_code == 401
@@ -530,7 +554,7 @@ class TestGenericErrors:
         [
             (ValueError, 400, "bad_request"),
             (KeyError, 404, "not_found"),
-            (RuntimeError, 500, "internal_error"),
+            pytest.param(RuntimeError, 500, "internal_error", marks=pytest.mark.allow_500),
         ],
     )
     def test_exception_text_is_not_returned(
@@ -578,10 +602,8 @@ class TestRequestId:
 
 class TestBodyLimit:
     @pytest.fixture()
-    def small_client(self, settings_factory):
-        return TestClient(
-            create_app(settings_factory(max_body_bytes=1024)), raise_server_exceptions=False
-        )
+    def small_client(self, app_factory):
+        return TestClient(app_factory(max_body_bytes=1024), raise_server_exceptions=False)
 
     def _doc(self, size: int) -> dict[str, str]:
         return {"doc_id": "big", "content": "x" * size}
@@ -732,8 +754,8 @@ class TestCORS:
     def test_disallowed_preflights(self, client, kwargs):
         assert self._preflight(client, **kwargs).status_code == 400
 
-    def test_wildcard_origin_never_allows_credentials(self, settings_factory):
-        client = TestClient(create_app(settings_factory(cors_origins=["*"])))
+    def test_wildcard_origin_never_allows_credentials(self, app_factory):
+        client = TestClient(app_factory(cors_origins=["*"]))
         resp = self._preflight(client, origin="https://anywhere.example")
 
         assert resp.headers["access-control-allow-origin"] == "*"
@@ -768,8 +790,8 @@ class TestReadiness:
         assert "hunter2" not in resp.text
         assert self.SECRET_TEXT in caplog.text
 
-    def test_migration_failure_is_logged_not_returned(self, settings_factory, monkeypatch, caplog):
-        client = TestClient(create_app(settings_factory(auto_create_tables=False)))
+    def test_migration_failure_is_logged_not_returned(self, app_factory, monkeypatch, caplog):
+        client = TestClient(app_factory(auto_create_tables=False, database_url=UNMIGRATED_DB))
 
         def _fail(engine, url):
             raise RuntimeError(self.SECRET_TEXT)
@@ -781,8 +803,8 @@ class TestReadiness:
         assert "hunter2" not in resp.text
         assert self.SECRET_TEXT in caplog.text
 
-    def test_revisions_are_not_returned(self, settings_factory, caplog):
-        client = TestClient(create_app(settings_factory(auto_create_tables=False)))
+    def test_revisions_are_not_returned(self, app_factory, caplog):
+        client = TestClient(app_factory(auto_create_tables=False, database_url=UNMIGRATED_DB))
         resp = client.get("/ready")
 
         assert resp.json()["checks"]["migrations"] is False
@@ -918,9 +940,16 @@ class TestSecurityEvents:
 # =============================================================================
 
 
-class _SlowJWKS:
+class _BlockedJWKS:
+    """A JWKS fetch that blocks until the test releases it."""
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
     def get_signing_key_from_jwt(self, token: str) -> Any:
-        time.sleep(1.5)
+        self.entered.set()
+        self.release.wait(timeout=30)  # a safety net only; the test always releases it
         raise jwt.PyJWKClientConnectionError("timed out")
 
 
@@ -928,10 +957,12 @@ class _SlowJWKS:
 async def test_slow_jwks_does_not_block_health(oidc):
     """/health answers while a token verification is stuck on the JWKS endpoint.
 
-    If token verification ran on the event loop, the loop would be blocked for the whole
-    1.5 s fetch and /health could not complete until it ended.
+    The JWKS fetch blocks until /health has answered. If verification ran on the event loop,
+    /health could never be served and the deadlock guard below would fail the test; no
+    wall-clock threshold is involved.
     """
-    oidc.app.state.oidc_verifier = OIDCVerifier(oidc.app.state.auth_config, jwks_client=_SlowJWKS())
+    jwks = _BlockedJWKS()
+    oidc.app.state.oidc_verifier = OIDCVerifier(oidc.app.state.auth_config, jwks_client=jwks)
     transport = httpx.ASGITransport(app=oidc.app)
     statuses: dict[str, int] = {}
 
@@ -941,13 +972,13 @@ async def test_slow_jwks_does_not_block_health(oidc):
             resp = await client.post(SEARCH, json=SEARCH_BODY, headers=bearer(oidc.token()))
             statuses["search"] = resp.status_code
 
-        start = time.monotonic()
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(slow_request)
-            await anyio.sleep(0.2)
-            health = await client.get("/health")
-            health_done = time.monotonic() - start
+        with anyio.fail_after(20):  # deadlock guard, not a performance assertion
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(slow_request)
+                await anyio.to_thread.run_sync(jwks.entered.wait)
+                health = await client.get("/health")
+                statuses["health_while_blocked"] = health.status_code
+                assert "search" not in statuses  # the JWKS fetch is still blocked
+                jwks.release.set()
 
-    assert health.status_code == 200
-    assert health_done < 0.8
-    assert statuses["search"] == 401
+    assert statuses == {"health_while_blocked": 200, "search": 401}

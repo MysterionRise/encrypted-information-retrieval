@@ -41,10 +41,10 @@ jobs:
           pip install "black==${BLACK_VERSION}" "ruff==${RUFF_VERSION}" "mypy==${MYPY_VERSION}" "bandit==${BANDIT_VERSION}"
 
       - name: Check code formatting (black)
-        run: black --check src tests examples
+        run: black --check src tests examples benchmarks scripts
 
       - name: Lint with ruff
-        run: ruff check src tests examples
+        run: ruff check src tests examples benchmarks scripts
 
       - name: Security check with bandit
         run: bandit -r src -ll -f screen
@@ -100,16 +100,30 @@ jobs:
       - name: Run tests
         env:
           POSTGRES_TEST_DATABASE_URL: postgresql+psycopg://encrypted_ir:encrypted_ir_test_password@localhost:5432/encrypted_ir_test
-        # --benchmark-disable runs each benchmarked function once without calibration;
-        # timings are measured only by the benchmarks job.
+        # The whole suite, API tests included, runs on PostgreSQL: each xdist worker gets its own
+        # migrated schema (tests/conftest.py). Benchmarks live in benchmarks/, outside testpaths.
         run: |
-          PYTHONPATH=src:$PYTHONPATH python -m pytest -v -rs --timeout=60 --benchmark-disable
+          PYTHONPATH=src:$PYTHONPATH python -m pytest -v -rs --timeout=60 -n auto
         timeout-minutes: 10
 
   # Coverage with an enforced floor. Measured 87.13% on 2026-10-20; the floor ratchets up, never down.
   coverage:
     name: Test Coverage
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: encrypted_ir_test
+          POSTGRES_USER: encrypted_ir
+          POSTGRES_PASSWORD: encrypted_ir_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U encrypted_ir -d encrypted_ir_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -128,9 +142,11 @@ jobs:
           pip install -r requirements-research.txt
 
       - name: Run tests with coverage (fails under the floor)
+        env:
+          POSTGRES_TEST_DATABASE_URL: postgresql+psycopg://encrypted_ir:encrypted_ir_test_password@localhost:5432/encrypted_ir_test
         run: |
           PYTHONPATH=src:$PYTHONPATH python -m pytest \
-            --benchmark-disable \
+            -n auto \
             --cov=src/encrypted_ir \
             --cov-report=term-missing \
             --cov-report=xml \
@@ -221,7 +237,7 @@ jobs:
 
       - name: Run full suite with research extras
         run: |
-          PYTHONPATH=src:$PYTHONPATH python -m pytest -rs --timeout=120 --benchmark-disable
+          PYTHONPATH=src:$PYTHONPATH python -m pytest -rs --timeout=120 -n auto
         timeout-minutes: 15
 
   # Build the API image and run the Compose persistence smoke test from docs/CTO_DEMO_SCRIPT.md.
@@ -324,17 +340,16 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install dependencies
+      - name: Install dependencies with research extras
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-ci.txt
+          pip install -r requirements-research.txt
 
       - name: Run benchmarks
         run: |
           mkdir -p benchmarks/results
-          PYTHONPATH=src:$PYTHONPATH python -m pytest \
-            tests/test_benchmarks.py \
-            tests/research/test_benchmarks_research.py \
+          PYTHONPATH=src:$PYTHONPATH python -m pytest benchmarks/ \
             --benchmark-only \
             --benchmark-json=benchmarks/results/latest.json
 
@@ -351,6 +366,12 @@ jobs:
               bench["stats"].pop("data", None)
           path.write_text(json.dumps(report, indent=2))
           PY
+
+      - name: Compare with the committed baseline (3x median slowdown fails this job)
+        # Informational: this job is not part of CI Success. Shared runners vary by 20-30%,
+        # so only a large slowdown is a signal. Refresh the baseline with
+        # scripts/compare_benchmarks.py --update when a change is expected.
+        run: python scripts/compare_benchmarks.py benchmarks/results/latest.json
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v7

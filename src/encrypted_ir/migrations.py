@@ -33,7 +33,8 @@ def alembic_config(database_url: str | None = None) -> Config:
     config = Config(stdout=sys.stdout)  # the current stdout, not the one at import time
     config.set_main_option("script_location", SCRIPT_LOCATION)
     if database_url:
-        config.set_main_option("sqlalchemy.url", database_url)
+        # ConfigParser interpolation: a URL-encoded password or query ("%40", "%3D") needs %%.
+        config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
     return config
 
 
