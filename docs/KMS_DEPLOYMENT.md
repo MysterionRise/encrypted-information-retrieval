@@ -52,7 +52,8 @@ and removes it on exit (`KEEP_STACK=1` keeps it running). It:
    with `InvalidCiphertextException`: the encryption context binds the key to its environment.
 
 CI runs the same script in the `e2e` job. The production-mode run (`ENCRYPTED_IR_ENV=prod`, which
-also needs an OIDC identity provider) is the subject of issue #48.
+also needs an OIDC identity provider) is [`scripts/oidc_smoke.sh`](../scripts/oidc_smoke.sh), with
+Keycloak ([OIDC_DEPLOYMENT.md](OIDC_DEPLOYMENT.md)).
 
 What this run does **not** show:
 

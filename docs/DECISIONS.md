@@ -705,7 +705,7 @@ keyword)` tokens stored one row per keyword per document.
 ## ADR-013: OIDC/JWKS in Production, Explicit Dev Auth Otherwise
 
 **Date**: 2026-07-06 (recorded 2026-10-20)
-**Status**: Accepted. Implemented, and hardened in [#41]. Live IdP evidence is [#48].
+**Status**: Accepted. Implemented, and hardened in [#41]. Runs end to end in CI against Keycloak with the API in `prod` (`scripts/oidc_smoke.sh`, [#48]).
 
 ### Decision
 

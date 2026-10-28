@@ -1,0 +1,193 @@
+{
+  "realm": "encrypted-ir",
+  "displayName": "Encrypted IR local demo (public demo values; never use for real users)",
+  "enabled": true,
+  "sslRequired": "external",
+  "accessTokenLifespan": 900,
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "loginWithEmailAllowed": false,
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "providerId": "declarative-user-profile",
+        "subComponents": {},
+        "config": {
+          "kc.user.profile.config": [
+            "{\"attributes\": [{\"name\": \"username\", \"displayName\": \"${username}\", \"validations\": {\"length\": {\"min\": 3, \"max\": 255}, \"username-prohibited-characters\": {}, \"up-username-not-idn-homograph\": {}}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}, {\"name\": \"email\", \"displayName\": \"${email}\", \"validations\": {\"email\": {}, \"length\": {\"max\": 255}}, \"required\": {\"roles\": [\"user\"]}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}, {\"name\": \"firstName\", \"displayName\": \"${firstName}\", \"validations\": {\"length\": {\"max\": 255}, \"person-name-prohibited-characters\": {}}, \"required\": {\"roles\": [\"user\"]}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}, {\"name\": \"lastName\", \"displayName\": \"${lastName}\", \"validations\": {\"length\": {\"max\": 255}, \"person-name-prohibited-characters\": {}}, \"required\": {\"roles\": [\"user\"]}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}, {\"name\": \"tenant_id\", \"displayName\": \"Tenant ID\", \"validations\": {\"pattern\": {\"pattern\": \"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$\", \"error-message\": \"Tenant IDs match ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$\"}}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\"]}, \"multivalued\": false}], \"groups\": [{\"name\": \"user-metadata\", \"displayHeader\": \"User metadata\", \"displayDescription\": \"Attributes, which refer to user metadata\"}]}"
+          ]
+        }
+      }
+    ]
+  },
+  "roles": {
+    "client": {
+      "encrypted-ir": [
+        {
+          "name": "read",
+          "description": "Search, get and RAG retrieve"
+        },
+        {
+          "name": "write",
+          "description": "Ingest and delete documents (and read)"
+        },
+        {
+          "name": "admin",
+          "description": "Everything write can do"
+        }
+      ]
+    }
+  },
+  "clients": [
+    {
+      "clientId": "encrypted-ir",
+      "name": "Encrypted IR API (holds the API roles)",
+      "enabled": true,
+      "bearerOnly": true,
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false
+    },
+    {
+      "clientId": "encrypted-ir-demo",
+      "name": "Encrypted IR local demo client",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "encrypted-ir-demo-secret",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "multivalued": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "usermodel.clientRoleMapping.clientId": "encrypted-ir",
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "encrypted-ir",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@tenant-a.example",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Tenant A",
+      "attributes": {
+        "tenant_id": [
+          "tenant-a"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice-demo-password",
+          "temporary": false
+        }
+      ],
+      "clientRoles": {
+        "encrypted-ir": [
+          "read",
+          "write"
+        ]
+      }
+    },
+    {
+      "username": "carol",
+      "enabled": true,
+      "email": "carol@tenant-a.example",
+      "emailVerified": true,
+      "firstName": "Carol",
+      "lastName": "Tenant A",
+      "attributes": {
+        "tenant_id": [
+          "tenant-a"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "carol-demo-password",
+          "temporary": false
+        }
+      ],
+      "clientRoles": {
+        "encrypted-ir": [
+          "read"
+        ]
+      }
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "email": "bob@tenant-b.example",
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Tenant B",
+      "attributes": {
+        "tenant_id": [
+          "tenant-b"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "bob-demo-password",
+          "temporary": false
+        }
+      ],
+      "clientRoles": {
+        "encrypted-ir": [
+          "read",
+          "write"
+        ]
+      }
+    }
+  ]
+}
