@@ -352,7 +352,7 @@ We need encrypted computation for credit scoring and analytics. Options:
 
 **Date**: 2025-01-11
 **Status**: Partially implemented.
-- A single app master key can be unwrapped through AWS KMS at startup (`master_key.py`, tested with mocks only), and per-tenant keys are wrapped locally under it.
+- A single app master key is unwrapped through AWS KMS at startup (`master_key.py`; run end to end in CI against the moto KMS emulator, not against AWS), and per-tenant keys are wrapped locally under it.
 - The master key is created by KMS `GenerateDataKey` and rotated by KMS-side rotation of the customer master key.
 - Tenant keys are rotated by an operator tool, not on a schedule (ADR-018).
 - No HSM, CloudHSM or CloudTrail integration exists in this repository.
@@ -375,7 +375,7 @@ Key management complexity is a top operational challenge (59% of IT professional
 **Pros**:
 - ✅ **KEK never leaves HSM**: Keys protected by hardware
 - ✅ **FIPS 140-3 Level 3**: Compliance-ready
-- ✅ **Audit logging**: CloudTrail integration
+- ✅ **Audit logging**: CloudTrail records KMS calls, if the operator configures a trail; nothing in this repository does (see [KMS_DEPLOYMENT.md](KMS_DEPLOYMENT.md))
 - ✅ **Per-tenant isolation**: Separate DEKs per tenant
 - ✅ **Rotation**: Re-wrap DEKs without KEK change
 
@@ -737,7 +737,7 @@ keyword)` tokens stored one row per keyword per document.
 ## ADR-014: One KMS-Wrapped App Master Key, Locally Wrapped Tenant Keys
 
 **Date**: 2026-07-06 (recorded 2026-10-20)
-**Status**: Accepted. Implemented. KMS is tested with mocks only; live evidence is [#49].
+**Status**: Accepted. Implemented. The KMS path runs end to end in CI against the moto KMS emulator (`scripts/kms_smoke.sh`, [#49]); it has not run against AWS.
 
 ### Decision
 

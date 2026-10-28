@@ -99,11 +99,16 @@ Summarize the production path:
 - Tokens must carry `exp`, `iat`, `aud`, `iss`, a valid tenant claim and roles. Every 401 has
   the same body; the reason goes to a rate-bounded audit row.
 
+KMS path, locally, with no AWS account: `./scripts/kms_smoke.sh`. moto server stands in for AWS
+KMS. The script wraps a master key with `generate_kms_master_key`, starts the API with
+`ENCRYPTED_IR_KMS_PROVIDER=aws`, restarts it, and shows that a key wrapped for `dev` does not
+unwrap under `ENCRYPTED_IR_ENV=test`. [KMS_DEPLOYMENT.md](KMS_DEPLOYMENT.md) has the IAM
+policies and the CloudTrail setup for a real account.
+
 Optional live-validation path if cloud credentials are available:
 - Generate an AWS KMS-wrapped app master key with
-  `python -m encrypted_ir.tools.generate_kms_master_key --environment prod`. It is wrapped with
-  the encryption context `application`, `environment` and `purpose`; the README shows the IAM
-  condition that makes that context mandatory for `kms:Decrypt`.
+  `python -m encrypted_ir.tools.generate_kms_master_key --environment prod`, as the operator
+  role in `docs/iam/kms-operator-policy.json`.
 - Configure a real OIDC issuer, audience, JWKS URL, tenant claim, and roles
   claim.
 - Start the API with `ENCRYPTED_IR_ENV=prod` and verify `/ready` only reports

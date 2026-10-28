@@ -79,7 +79,8 @@ Reports:
 - Tenant-scoped document encryption keys and search-token keys persisted through
   the database storage backend.
 - OIDC/JWKS verification path and strict production settings validation.
-- AWS KMS wrapped-master-key path implemented and unit-tested with fakes/mocks.
+- AWS KMS wrapped-master-key path, run end to end against the moto KMS emulator in CI
+  (`scripts/kms_smoke.sh`, [KMS_DEPLOYMENT.md](KMS_DEPLOYMENT.md)); not run against AWS.
 - `/ready` gates database, migration, auth, and key-provider posture.
 - Endpoint audit records are sanitized and avoid plaintext, raw queries, tokens,
   and key material.
