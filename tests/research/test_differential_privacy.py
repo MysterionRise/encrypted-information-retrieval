@@ -88,6 +88,14 @@ class TestLaplaceMechanism:
         assert LaplaceMechanism.variance(1.0, 2.0) == 0.5
 
 
+def _tracker(total_epsilon=10.0, total_delta=None, tenants=("t1",)):
+    """A tracker with the given tenants registered (tenants are never auto-registered)."""
+    tracker = PrivacyBudgetTracker(total_epsilon=total_epsilon, total_delta=total_delta)
+    for tenant in tenants:
+        tracker.register_tenant(tenant)
+    return tracker
+
+
 # ---------------------------------------------------------------------------
 # Gaussian Mechanism
 # ---------------------------------------------------------------------------
@@ -98,20 +106,20 @@ class TestGaussianMechanism:
 
     def test_noise_is_added(self):
         """Noise should shift the value."""
-        results = [GaussianMechanism.add_noise(100.0, 1.0, 1.0) for _ in range(50)]
+        results = [GaussianMechanism.add_noise(100.0, 1.0, 0.5) for _ in range(50)]
         assert not all(r == 100.0 for r in results)
 
     def test_mean_converges(self):
         """Mean should converge to the true value."""
         true_val = 55.5
         n = 10_000
-        total = sum(GaussianMechanism.add_noise(true_val, 1.0, 1.0) for _ in range(n))
+        total = sum(GaussianMechanism.add_noise(true_val, 1.0, 0.5) for _ in range(n))
         mean = total / n
         assert abs(mean - true_val) < 1.0
 
     def test_variance_matches_theory(self):
         """Empirical variance should approximate σ²."""
-        sensitivity, epsilon, delta = 1.0, 1.0, 1e-5
+        sensitivity, epsilon, delta = 1.0, 0.5, 1e-5
         n = 10_000
         results = [GaussianMechanism.add_noise(0.0, sensitivity, epsilon, delta) for _ in range(n)]
         empirical_var = sum(r**2 for r in results) / n
@@ -122,7 +130,7 @@ class TestGaussianMechanism:
         """Higher epsilon → less noise."""
         n = 5_000
         low_eps = [GaussianMechanism.add_noise(0.0, 1.0, 0.1) for _ in range(n)]
-        high_eps = [GaussianMechanism.add_noise(0.0, 1.0, 10.0) for _ in range(n)]
+        high_eps = [GaussianMechanism.add_noise(0.0, 1.0, 0.9) for _ in range(n)]
         var_low = sum(x**2 for x in low_eps) / n
         var_high = sum(x**2 for x in high_eps) / n
         assert var_low > var_high
@@ -131,31 +139,45 @@ class TestGaussianMechanism:
         """Epsilon must be positive."""
         with pytest.raises(ValueError, match="positive"):
             GaussianMechanism.add_noise(1.0, 1.0, 0.0)
+        with pytest.raises(ValueError, match="positive"):
+            GaussianMechanism.add_noise(1.0, 1.0, -0.5)
+
+    @pytest.mark.parametrize("epsilon", [1.0, 1.5, 10.0])
+    def test_epsilon_of_one_or_more_rejected(self, epsilon):
+        """Regression (#38): the classical calibration holds only for ε < 1."""
+        with pytest.raises(ValueError, match="below 1"):
+            GaussianMechanism.compute_sigma(1.0, epsilon, 1e-5)
+        with pytest.raises(ValueError, match="below 1"):
+            GaussianMechanism.add_noise(1.0, 1.0, epsilon)
 
     def test_invalid_delta(self):
         """Delta must be in (0, 1)."""
         with pytest.raises(ValueError, match="Delta"):
-            GaussianMechanism.add_noise(1.0, 1.0, 1.0, delta=0.0)
+            GaussianMechanism.add_noise(1.0, 1.0, 0.5, delta=0.0)
         with pytest.raises(ValueError, match="Delta"):
-            GaussianMechanism.add_noise(1.0, 1.0, 1.0, delta=1.0)
+            GaussianMechanism.add_noise(1.0, 1.0, 0.5, delta=1.0)
         with pytest.raises(ValueError, match="Delta"):
-            GaussianMechanism.add_noise(1.0, 1.0, 1.0, delta=-0.1)
+            GaussianMechanism.add_noise(1.0, 1.0, 0.5, delta=-0.1)
 
     def test_invalid_sensitivity(self):
         """Sensitivity must be non-negative."""
         with pytest.raises(ValueError, match="non-negative"):
-            GaussianMechanism.add_noise(1.0, -1.0, 1.0)
+            GaussianMechanism.add_noise(1.0, -1.0, 0.5)
+
+    def test_zero_sensitivity(self):
+        """A constant query (sensitivity 0) needs no noise, as for Laplace."""
+        assert GaussianMechanism.add_noise(42.0, 0.0, 0.5) == 42.0
 
     def test_compute_sigma(self):
         """Verify σ computation."""
-        sigma = GaussianMechanism.compute_sigma(1.0, 1.0, 1e-5)
-        expected = math.sqrt(2 * math.log(1.25 / 1e-5))
+        sigma = GaussianMechanism.compute_sigma(1.0, 0.5, 1e-5)
+        expected = math.sqrt(2 * math.log(1.25 / 1e-5)) / 0.5
         assert abs(sigma - expected) < 1e-10
 
     def test_sigma_scales_with_sensitivity(self):
         """σ should scale linearly with sensitivity."""
-        s1 = GaussianMechanism.compute_sigma(1.0, 1.0, 1e-5)
-        s2 = GaussianMechanism.compute_sigma(2.0, 1.0, 1e-5)
+        s1 = GaussianMechanism.compute_sigma(1.0, 0.5, 1e-5)
+        s2 = GaussianMechanism.compute_sigma(2.0, 0.5, 1e-5)
         assert abs(s2 / s1 - 2.0) < 1e-10
 
 
@@ -236,10 +258,11 @@ class TestExponentialMechanism:
         with pytest.raises(ValueError, match="positive"):
             ExponentialMechanism.select(["a"], lambda x: 0, 1.0, 0.0)
 
-    def test_invalid_sensitivity(self):
-        """Sensitivity must be non-negative."""
-        with pytest.raises(ValueError, match="non-negative"):
-            ExponentialMechanism.select(["a"], lambda x: 0, -1.0, 1.0)
+    @pytest.mark.parametrize("sensitivity", [-1.0, 0.0])
+    def test_non_positive_sensitivity_rejected(self, sensitivity):
+        """Regression (#38): sensitivity 0 was accepted and then divided by zero."""
+        with pytest.raises(ValueError, match="Sensitivity must be positive"):
+            ExponentialMechanism.select(["a", "b"], lambda x: 1.0, sensitivity, 1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -251,32 +274,34 @@ class TestPrivacyBudgetTracker:
     """Tests for per-tenant epsilon budget tracking."""
 
     def test_default_budget(self):
-        """New tenants should get the default budget."""
+        """Registered tenants get the tracker's default budgets."""
         tracker = PrivacyBudgetTracker()
-        assert tracker.remaining("tenant_1") == tracker.total_epsilon
+        tracker.register_tenant("tenant_1")
+        assert tracker.remaining("tenant_1") == tracker.total_epsilon == 10.0
+        assert tracker.remaining_delta("tenant_1") == tracker.total_delta == 1e-4
 
     def test_custom_global_budget(self):
-        """Custom global budget should apply to auto-registered tenants."""
-        tracker = PrivacyBudgetTracker(total_epsilon=5.0)
+        """The tracker default applies to tenants registered without a budget."""
+        tracker = _tracker(total_epsilon=5.0)
         assert tracker.remaining("t1") == 5.0
 
     def test_custom_tenant_budget(self):
         """Custom per-tenant budget overrides global."""
         tracker = PrivacyBudgetTracker(total_epsilon=10.0)
-        tracker.register_tenant("t1", epsilon_budget=3.0)
+        tracker.register_tenant("t1", epsilon_budget=3.0, delta_budget=1e-6)
         assert tracker.remaining("t1") == 3.0
+        assert tracker.remaining_delta("t1") == 1e-6
 
     def test_consume_reduces_budget(self):
         """Consuming epsilon reduces remaining budget."""
-        tracker = PrivacyBudgetTracker(total_epsilon=10.0)
-        tracker.register_tenant("t1")
+        tracker = _tracker()
         remaining = tracker.consume("t1", 3.0)
         assert remaining == pytest.approx(7.0)
         assert tracker.consumed("t1") == pytest.approx(3.0)
 
     def test_multiple_consumptions(self):
         """Budget should track cumulative consumption."""
-        tracker = PrivacyBudgetTracker(total_epsilon=10.0)
+        tracker = _tracker()
         tracker.consume("t1", 2.0)
         tracker.consume("t1", 3.0)
         assert tracker.consumed("t1") == pytest.approx(5.0)
@@ -284,21 +309,22 @@ class TestPrivacyBudgetTracker:
 
     def test_budget_exhausted_error(self):
         """Should raise when budget is insufficient."""
-        tracker = PrivacyBudgetTracker(total_epsilon=5.0)
+        tracker = _tracker(total_epsilon=5.0)
         tracker.consume("t1", 4.0)
         with pytest.raises(PrivacyBudgetExhaustedError, match="insufficient"):
             tracker.consume("t1", 2.0)
+        assert tracker.consumed("t1") == pytest.approx(4.0)
 
     def test_exact_budget_consumption(self):
         """Should allow consuming exactly the remaining budget."""
-        tracker = PrivacyBudgetTracker(total_epsilon=5.0)
+        tracker = _tracker(total_epsilon=5.0)
         tracker.consume("t1", 5.0)
         assert tracker.remaining("t1") == pytest.approx(0.0)
         assert tracker.is_exhausted("t1")
 
     def test_budget_warning(self):
         """Should warn when budget drops below 20%."""
-        tracker = PrivacyBudgetTracker(total_epsilon=10.0)
+        tracker = _tracker()
         tracker.consume("t1", 5.0)  # 50% remaining, no warning
 
         with warnings.catch_warnings(record=True) as w:
@@ -310,22 +336,27 @@ class TestPrivacyBudgetTracker:
 
     def test_is_exhausted(self):
         """is_exhausted should reflect budget state."""
-        tracker = PrivacyBudgetTracker(total_epsilon=5.0)
+        tracker = _tracker(total_epsilon=5.0)
         assert not tracker.is_exhausted("t1")
         tracker.consume("t1", 5.0)
         assert tracker.is_exhausted("t1")
 
-    def test_reset(self):
-        """Reset should restore budget to full."""
-        tracker = PrivacyBudgetTracker(total_epsilon=10.0)
-        tracker.consume("t1", 8.0)
-        tracker.reset("t1")
+    def test_reset_tenant_budget(self):
+        """The explicit administrative reset forgets ε and δ consumption."""
+        tracker = _tracker()
+        tracker.consume("t1", 8.0, delta=5e-5)
+        tracker.reset_tenant_budget("t1")
         assert tracker.remaining("t1") == pytest.approx(10.0)
         assert tracker.consumed("t1") == pytest.approx(0.0)
+        assert tracker.consumed_delta("t1") == 0.0
+
+    def test_reset_is_not_a_public_shortcut(self):
+        """Regression (#38): reset() was a public one-call way to forget privacy loss."""
+        assert not hasattr(PrivacyBudgetTracker, "reset")
 
     def test_independent_tenants(self):
         """Each tenant has independent budget."""
-        tracker = PrivacyBudgetTracker(total_epsilon=10.0)
+        tracker = _tracker(tenants=("t1", "t2"))
         tracker.consume("t1", 5.0)
         tracker.consume("t2", 2.0)
         assert tracker.remaining("t1") == pytest.approx(5.0)
@@ -333,13 +364,16 @@ class TestPrivacyBudgetTracker:
 
     def test_get_all_tenants(self):
         """Should return status for all registered tenants."""
-        tracker = PrivacyBudgetTracker(total_epsilon=10.0)
+        tracker = _tracker(tenants=("t1", "t2"))
         tracker.consume("t1", 3.0)
-        tracker.consume("t2", 7.0)
+        tracker.consume("t2", 7.0, delta=2e-5)
         status = tracker.get_all_tenants()
         assert len(status) == 2
         assert status["t1"]["remaining"] == pytest.approx(7.0)
         assert status["t2"]["consumed"] == pytest.approx(7.0)
+        assert status["t2"]["consumed_delta"] == pytest.approx(2e-5)
+        assert status["t2"]["remaining_delta"] == pytest.approx(8e-5)
+        assert status["t1"]["total_delta"] == 1e-4
 
     def test_invalid_budget(self):
         """Negative or zero budgets should be rejected."""
@@ -347,37 +381,126 @@ class TestPrivacyBudgetTracker:
             PrivacyBudgetTracker(total_epsilon=-1.0)
         with pytest.raises(ValueError):
             PrivacyBudgetTracker(total_epsilon=0.0)
+        with pytest.raises(ValueError, match="delta"):
+            PrivacyBudgetTracker(total_delta=-1e-5)
+        with pytest.raises(ValueError, match="delta"):
+            PrivacyBudgetTracker(total_delta=1.0)
+        tracker = PrivacyBudgetTracker()
+        with pytest.raises(ValueError, match="Epsilon budget"):
+            tracker.register_tenant("t1", epsilon_budget=0.0)
+        with pytest.raises(ValueError, match="Delta budget"):
+            tracker.register_tenant("t1", delta_budget=1.5)
+        assert not tracker.is_registered("t1")
 
     def test_invalid_consume(self):
         """Consuming non-positive epsilon should raise."""
-        tracker = PrivacyBudgetTracker()
+        tracker = _tracker()
         with pytest.raises(ValueError, match="positive"):
             tracker.consume("t1", 0.0)
         with pytest.raises(ValueError, match="positive"):
             tracker.consume("t1", -1.0)
+        with pytest.raises(ValueError, match="Delta"):
+            tracker.consume("t1", 1.0, delta=-1e-5)
+
+    def test_unknown_tenant_rejected(self):
+        """Regression (#38): unknown tenants were auto-registered with a fresh budget."""
+        tracker = PrivacyBudgetTracker()
+        for call in (
+            lambda: tracker.consume("ghost", 1.0),
+            lambda: tracker.remaining("ghost"),
+            lambda: tracker.consumed("ghost"),
+            lambda: tracker.remaining_delta("ghost"),
+            lambda: tracker.consumed_delta("ghost"),
+            lambda: tracker.is_exhausted("ghost"),
+            lambda: tracker.reset_tenant_budget("ghost"),
+        ):
+            with pytest.raises(KeyError, match="not registered"):
+                call()
+        assert tracker.get_all_tenants() == {}
+        assert not tracker.is_registered("ghost")
+
+    def test_re_registering_does_not_reset_consumption(self):
+        """Regression (#38): register_tenant on an existing tenant reset consumption to 0."""
+        tracker = _tracker()
+        tracker.consume("t1", 9.0)
+
+        with pytest.raises(ValueError, match="already registered"):
+            tracker.register_tenant("t1")
+        assert tracker.consumed("t1") == pytest.approx(9.0)
+
+        tracker.register_tenant("t1", epsilon_budget=20.0, delta_budget=1e-3, replace=True)
+        assert tracker.consumed("t1") == pytest.approx(9.0)
+        assert tracker.remaining("t1") == pytest.approx(11.0)
+        assert tracker.remaining_delta("t1") == pytest.approx(1e-3)
+
+    def test_delta_is_tracked(self):
+        """Regression (#38): δ was never tracked."""
+        tracker = _tracker(total_delta=1e-4)
+        for _ in range(10):  # exactly the δ budget, despite float rounding
+            tracker.consume("t1", 0.1, delta=1e-5)
+        assert tracker.consumed_delta("t1") == pytest.approx(1e-4)
+        assert tracker.remaining_delta("t1") == pytest.approx(0.0, abs=1e-12)
+
+        with pytest.raises(PrivacyBudgetExhaustedError, match="δ budget"):
+            tracker.consume("t1", 0.1, delta=1e-5)
+        # A rejected query consumes nothing, and pure-ε queries still run.
+        assert tracker.consumed("t1") == pytest.approx(1.0)
+        tracker.consume("t1", 0.1)
+        assert tracker.consumed("t1") == pytest.approx(1.1)
+
+    def test_zero_delta_budget_allows_only_pure_dp(self):
+        tracker = PrivacyBudgetTracker()
+        tracker.register_tenant("pure", delta_budget=0.0)
+        tracker.consume("pure", 1.0)
+        with pytest.raises(PrivacyBudgetExhaustedError):
+            tracker.consume("pure", 0.5, delta=1e-9)
 
     def test_thread_safety(self):
-        """Budget tracking should be thread-safe."""
+        """Concurrent consumers never overspend, and every rejection is accounted for.
+
+        Demand (5 threads x 100 x 0.5 = 250) exceeds the budget (100), so exactly 200
+        consumptions succeed and exactly 300 are rejected. 0.5 is exact in binary, so the
+        consumed total is exactly 100.
+        """
         import threading
 
-        tracker = PrivacyBudgetTracker(total_epsilon=100.0)
-        errors = []
+        tracker = _tracker(total_epsilon=100.0, tenants=("shared",))
+        threads_count, attempts, step = 5, 100, 0.5
+        barrier = threading.Barrier(threads_count)
+        lock = threading.Lock()
+        successes = []
+        rejections = []
+        unexpected = []
 
         def consume_budget():
-            try:
-                for _ in range(100):
-                    tracker.consume("shared", 0.01)
-            except PrivacyBudgetExhaustedError:
-                errors.append("exhausted")
+            barrier.wait()
+            for _ in range(attempts):
+                try:
+                    tracker.consume("shared", step)
+                except PrivacyBudgetExhaustedError:
+                    with lock:
+                        rejections.append(1)
+                except Exception as exc:  # pragma: no cover - reported by the assert below
+                    with lock:
+                        unexpected.append(exc)
+                else:
+                    with lock:
+                        successes.append(1)
 
-        threads = [threading.Thread(target=consume_budget) for _ in range(5)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", PrivacyBudgetWarning)
+            threads = [threading.Thread(target=consume_budget) for _ in range(threads_count)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
 
-        # Total consumed should be <= 100 (some may have been rejected)
-        assert tracker.consumed("shared") <= 100.0
+        assert unexpected == []
+        assert len(successes) == 200
+        assert len(rejections) == threads_count * attempts - 200
+        assert tracker.consumed("shared") == 100.0
+        assert tracker.remaining("shared") == 0.0
+        assert tracker.is_exhausted("shared")
 
 
 # ---------------------------------------------------------------------------
@@ -390,14 +513,14 @@ class TestDPQueryInterface:
 
     def test_dp_count_returns_noised_value(self):
         """dp_count should return a value close to but not exactly the true count."""
-        dp = DPQueryInterface(budget_tracker=PrivacyBudgetTracker(total_epsilon=100.0))
+        dp = DPQueryInterface(budget_tracker=_tracker(total_epsilon=100.0))
         results = [dp.dp_count(100, epsilon=1.0, tenant_id="t1") for _ in range(20)]
         # Not all identical to 100
         assert not all(r == 100.0 for r in results)
 
     def test_dp_count_mean_converges(self):
         """Mean of dp_count should converge to true count."""
-        dp = DPQueryInterface(budget_tracker=PrivacyBudgetTracker(total_epsilon=50000.0))
+        dp = DPQueryInterface(budget_tracker=_tracker(total_epsilon=50000.0))
         n = 5000
         total = sum(dp.dp_count(200, epsilon=1.0, tenant_id="t1") for _ in range(n))
         mean = total / n
@@ -405,66 +528,99 @@ class TestDPQueryInterface:
 
     def test_dp_count_consumes_budget(self):
         """Each dp_count call should consume epsilon from the budget."""
-        tracker = PrivacyBudgetTracker(total_epsilon=10.0)
+        tracker = _tracker()
         dp = DPQueryInterface(budget_tracker=tracker)
         dp.dp_count(50, epsilon=2.0, tenant_id="t1")
         assert tracker.consumed("t1") == pytest.approx(2.0)
+        assert tracker.consumed_delta("t1") == 0.0  # Laplace is pure ε-DP
 
     def test_dp_count_budget_exhaustion(self):
         """dp_count should raise when budget is exhausted."""
-        tracker = PrivacyBudgetTracker(total_epsilon=3.0)
+        tracker = _tracker(total_epsilon=3.0)
         dp = DPQueryInterface(budget_tracker=tracker)
         dp.dp_count(50, epsilon=2.0, tenant_id="t1")
         with pytest.raises(PrivacyBudgetExhaustedError):
             dp.dp_count(50, epsilon=2.0, tenant_id="t1")
 
+    def test_queries_for_unknown_tenant_rejected(self):
+        dp = DPQueryInterface()
+        with pytest.raises(KeyError, match="not registered"):
+            dp.dp_count(50, epsilon=1.0, tenant_id="ghost")
+        with pytest.raises(KeyError, match="not registered"):
+            dp.dp_sum(50.0, epsilon=0.5, tenant_id="ghost")
+
     def test_dp_sum_returns_noised_value(self):
         """dp_sum should add Gaussian noise."""
-        dp = DPQueryInterface(budget_tracker=PrivacyBudgetTracker(total_epsilon=100.0))
-        results = [dp.dp_sum(1000.0, epsilon=1.0, tenant_id="t1") for _ in range(20)]
+        dp = DPQueryInterface(budget_tracker=_tracker(total_epsilon=100.0, total_delta=0.01))
+        results = [dp.dp_sum(1000.0, epsilon=0.5, tenant_id="t1") for _ in range(20)]
         assert not all(r == 1000.0 for r in results)
 
     def test_dp_sum_mean_converges(self):
         """Mean of dp_sum should converge to true sum."""
-        dp = DPQueryInterface(budget_tracker=PrivacyBudgetTracker(total_epsilon=50000.0))
+        dp = DPQueryInterface(budget_tracker=_tracker(total_epsilon=50000.0, total_delta=0.1))
         n = 5000
-        total = sum(dp.dp_sum(500.0, epsilon=1.0, tenant_id="t1") for _ in range(n))
+        total = sum(dp.dp_sum(500.0, epsilon=0.5, tenant_id="t1") for _ in range(n))
         mean = total / n
         assert abs(mean - 500.0) < 2.0
 
     def test_dp_sum_consumes_budget(self):
-        """dp_sum should consume epsilon."""
-        tracker = PrivacyBudgetTracker(total_epsilon=10.0)
+        """dp_sum should consume epsilon and delta."""
+        tracker = _tracker()
         dp = DPQueryInterface(budget_tracker=tracker)
-        dp.dp_sum(100.0, epsilon=3.0, tenant_id="t1")
-        assert tracker.consumed("t1") == pytest.approx(3.0)
+        dp.dp_sum(100.0, epsilon=0.5, tenant_id="t1", delta=2e-5)
+        assert tracker.consumed("t1") == pytest.approx(0.5)
+        assert tracker.consumed_delta("t1") == pytest.approx(2e-5)
+
+    def test_dp_sum_uses_default_delta(self):
+        tracker = _tracker()
+        dp = DPQueryInterface(budget_tracker=tracker, default_delta=3e-6)
+        dp.dp_sum(100.0, epsilon=0.5, tenant_id="t1")
+        assert tracker.consumed_delta("t1") == pytest.approx(3e-6)
+
+    def test_dp_sum_delta_budget_exhaustion(self):
+        tracker = _tracker(total_delta=1e-5)
+        dp = DPQueryInterface(budget_tracker=tracker)
+        dp.dp_sum(100.0, epsilon=0.5, tenant_id="t1")
+        with pytest.raises(PrivacyBudgetExhaustedError, match="δ budget"):
+            dp.dp_sum(100.0, epsilon=0.5, tenant_id="t1")
+
+    def test_invalid_gaussian_query_consumes_nothing(self):
+        """An ε >= 1 Gaussian query is rejected before any budget is spent."""
+        tracker = _tracker()
+        dp = DPQueryInterface(budget_tracker=tracker)
+        with pytest.raises(ValueError, match="below 1"):
+            dp.dp_sum(100.0, epsilon=3.0, tenant_id="t1")
+        with pytest.raises(ValueError, match="below 1"):
+            dp.dp_average(50.0, count=10, epsilon=1.0, tenant_id="t1")
+        assert tracker.consumed("t1") == 0.0
+        assert tracker.consumed_delta("t1") == 0.0
 
     def test_dp_average_returns_noised_value(self):
         """dp_average should add noise."""
-        dp = DPQueryInterface(budget_tracker=PrivacyBudgetTracker(total_epsilon=100.0))
-        results = [dp.dp_average(50.0, count=100, epsilon=1.0, tenant_id="t1") for _ in range(20)]
+        dp = DPQueryInterface(budget_tracker=_tracker(total_epsilon=100.0, total_delta=0.01))
+        results = [dp.dp_average(50.0, count=100, epsilon=0.5, tenant_id="t1") for _ in range(20)]
         assert not all(r == 50.0 for r in results)
 
     def test_dp_average_mean_converges(self):
         """Mean of dp_average should converge to true average."""
-        dp = DPQueryInterface(budget_tracker=PrivacyBudgetTracker(total_epsilon=50000.0))
+        dp = DPQueryInterface(budget_tracker=_tracker(total_epsilon=50000.0, total_delta=0.1))
         n = 5000
-        total = sum(dp.dp_average(75.0, count=1000, epsilon=1.0, tenant_id="t1") for _ in range(n))
+        total = sum(dp.dp_average(75.0, count=1000, epsilon=0.5, tenant_id="t1") for _ in range(n))
         mean = total / n
         assert abs(mean - 75.0) < 1.0
 
     def test_dp_average_sensitivity_scales_with_count(self):
         """Larger count should produce less noise in average queries."""
-        dp_low = DPQueryInterface(budget_tracker=PrivacyBudgetTracker(total_epsilon=50000.0))
-        dp_high = DPQueryInterface(budget_tracker=PrivacyBudgetTracker(total_epsilon=50000.0))
+        dp_low = DPQueryInterface(budget_tracker=_tracker(total_epsilon=50000.0, total_delta=0.1))
+        dp_high = DPQueryInterface(budget_tracker=_tracker(total_epsilon=50000.0, total_delta=0.1))
         n = 3000
 
         small_count_results = [
-            dp_low.dp_average(50.0, count=10, epsilon=1.0, tenant_id="t1", value_range=100.0)
+            dp_low.dp_average(50.0, count=10, epsilon=0.5, tenant_id="t1", value_range=100.0)
             for _ in range(n)
         ]
         large_count_results = [
-            dp_high.dp_average(50.0, count=10000, epsilon=1.0, tenant_id="t1", value_range=100.0)
+            dp_high.dp_average(50.0, count=10000, epsilon=0.5, tenant_id="t1", value_range=100.0)
             for _ in range(n)
         ]
 
@@ -476,11 +632,11 @@ class TestDPQueryInterface:
         """Count must be >= 1."""
         dp = DPQueryInterface()
         with pytest.raises(ValueError, match="Count"):
-            dp.dp_average(50.0, count=0, epsilon=1.0, tenant_id="t1")
+            dp.dp_average(50.0, count=0, epsilon=0.5, tenant_id="t1")
 
     def test_dp_select(self):
         """dp_select should use the exponential mechanism."""
-        dp = DPQueryInterface(budget_tracker=PrivacyBudgetTracker(total_epsilon=50000.0))
+        dp = DPQueryInterface(budget_tracker=_tracker(total_epsilon=50000.0))
         candidates = ["low", "medium", "high"]
         scores = {"low": 0, "medium": 5, "high": 10}
         counts = dict.fromkeys(candidates, 0)
@@ -499,26 +655,27 @@ class TestDPQueryInterface:
 
     def test_dp_select_consumes_budget(self):
         """dp_select should consume epsilon."""
-        tracker = PrivacyBudgetTracker(total_epsilon=10.0)
+        tracker = _tracker()
         dp = DPQueryInterface(budget_tracker=tracker)
         dp.dp_select(["a", "b"], lambda x: 1.0, epsilon=2.0, tenant_id="t1")
         assert tracker.consumed("t1") == pytest.approx(2.0)
 
     def test_multi_query_budget_tracking(self):
         """Multiple different query types should accumulate budget."""
-        tracker = PrivacyBudgetTracker(total_epsilon=10.0)
+        tracker = _tracker()
         dp = DPQueryInterface(budget_tracker=tracker)
 
         dp.dp_count(100, epsilon=2.0, tenant_id="t1")
-        dp.dp_sum(500.0, epsilon=3.0, tenant_id="t1")
-        dp.dp_average(50.0, count=100, epsilon=1.5, tenant_id="t1")
+        dp.dp_sum(500.0, epsilon=0.75, tenant_id="t1")
+        dp.dp_average(50.0, count=100, epsilon=0.5, tenant_id="t1")
 
-        assert tracker.consumed("t1") == pytest.approx(6.5)
-        assert tracker.remaining("t1") == pytest.approx(3.5)
+        assert tracker.consumed("t1") == pytest.approx(3.25)
+        assert tracker.remaining("t1") == pytest.approx(6.75)
+        assert tracker.consumed_delta("t1") == pytest.approx(2e-5)
 
     def test_separate_tenant_budgets(self):
         """Different tenants should have independent budgets."""
-        tracker = PrivacyBudgetTracker(total_epsilon=5.0)
+        tracker = _tracker(total_epsilon=5.0, tenants=("t1", "t2"))
         dp = DPQueryInterface(budget_tracker=tracker)
 
         dp.dp_count(100, epsilon=4.0, tenant_id="t1")
@@ -561,20 +718,25 @@ class TestPrivacyGuarantees:
             b = round(r / bin_width)
             bins_xp[b] = bins_xp.get(b, 0) + 1
 
-        # Check ratio for bins with enough samples
+        # Compare only well-populated bins (the central ~7). A shift of 1 changes the Laplace
+        # density by at most exp(ε) anywhere, so a correct mechanism's bin ratios stay at or below
+        # exp(ε) up to sampling noise. With at least 1,000 samples per bin the ratio's relative
+        # error is about 4%, so 25% slack is never reached by chance. Sparse tail bins (50
+        # samples) used to cross a looser bound now and then.
         max_ratio = 0.0
+        compared = 0
         for b in bins_x:
-            if b in bins_xp and bins_x[b] > 50 and bins_xp[b] > 50:
+            if b in bins_xp and bins_x[b] >= 1000 and bins_xp[b] >= 1000:
                 ratio = bins_x[b] / bins_xp[b]
                 max_ratio = max(max_ratio, ratio, 1 / ratio)
+                compared += 1
 
-        # The ratio should not exceed exp(ε * sensitivity) by much
-        # Allow some slack for finite sampling
-        assert max_ratio < math.exp(epsilon) * 1.5
+        assert compared >= 4
+        assert max_ratio < math.exp(epsilon) * 1.25
 
     def test_gaussian_approximate_dp(self):
         """Verify the Gaussian mechanism output distributions overlap correctly."""
-        epsilon, delta = 1.0, 1e-5
+        epsilon, delta = 0.9, 1e-5
         n = 20_000
 
         results_x = [GaussianMechanism.add_noise(100.0, 1.0, epsilon, delta) for _ in range(n)]
@@ -592,7 +754,7 @@ class TestPrivacyGuarantees:
         Under basic composition, k queries each with ε produce total privacy cost kε.
         Verify that budget tracker correctly implements this.
         """
-        tracker = PrivacyBudgetTracker(total_epsilon=10.0)
+        tracker = _tracker()
         per_query_eps = 0.5
         k = 20  # 20 queries × 0.5 = 10.0 total
 
@@ -625,13 +787,13 @@ class TestPrivacyGuarantees:
         """
         Verify utility for dp_average: with large count, noise should be small.
         """
-        dp = DPQueryInterface(budget_tracker=PrivacyBudgetTracker(total_epsilon=50000.0))
+        dp = DPQueryInterface(budget_tracker=_tracker(total_epsilon=50000.0, total_delta=0.1))
         true_avg = 50.0
         n = 1000
         results = [
-            dp.dp_average(true_avg, count=10000, epsilon=1.0, tenant_id="t1", value_range=100.0)
+            dp.dp_average(true_avg, count=10000, epsilon=0.5, tenant_id="t1", value_range=100.0)
             for _ in range(n)
         ]
-        # With count=10000, sensitivity=100/10000=0.01, noise should be tiny
+        # With count=10000, sensitivity=100/10000=0.01, σ ≈ 0.1; |noise| < 1 is a 10σ bound
         for r in results:
             assert abs(r - true_avg) < 1.0

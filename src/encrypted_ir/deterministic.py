@@ -2,7 +2,8 @@
 Deterministic Encryption Module
 
 Provides deterministic encryption for equality searches on encrypted data.
-Uses AES-SIV (Synthetic IV) for deterministic authenticated encryption.
+Uses AES-SIV (Synthetic IV, RFC 5297) for deterministic authenticated encryption.
+The RFC 5297 Appendix A vectors run through this class in tests/test_deterministic.py.
 
 Use Case: Account numbers, customer IDs, SSN/Tax IDs where equality
 searches are needed but pattern analysis risk is acceptable.
@@ -28,6 +29,10 @@ class DeterministicEncryption:
     Provides authenticity through built-in MAC.
     """
 
+    # PBKDF2-HMAC-SHA256 work factor for derive_key(): 600,000 iterations is the figure in
+    # the OWASP Password Storage Cheat Sheet for PBKDF2-HMAC-SHA256.
+    PBKDF2_ITERATIONS = 600_000
+
     def __init__(self, key: bytes = None):
         """
         Initialize deterministic encryption.
@@ -51,7 +56,10 @@ class DeterministicEncryption:
     @staticmethod
     def derive_key(password: str, salt: bytes = None) -> tuple[bytes, bytes]:
         """
-        Derive a key from a password using PBKDF2.
+        Derive a 64-byte AES-SIV key from a password with PBKDF2-HMAC-SHA256.
+
+        Uses PBKDF2_ITERATIONS (600,000) iterations. Keys derived before the
+        iteration count was raised from 480,000 differ; re-derive and re-encrypt.
 
         Args:
             password: Password string
@@ -67,7 +75,7 @@ class DeterministicEncryption:
             algorithm=hashes.SHA256(),
             length=64,
             salt=salt,
-            iterations=480000,  # OWASP recommendation for 2024
+            iterations=DeterministicEncryption.PBKDF2_ITERATIONS,
         )
         key = kdf.derive(password.encode())
         return key, salt

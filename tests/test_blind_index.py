@@ -2,8 +2,11 @@
 
 import hashlib
 import hmac
+import unicodedata
 
 import pytest
+from hypothesis import example, given, settings
+from hypothesis import strategies as st
 
 from encrypted_ir.blind_index import (
     BlindIndexConfig,
@@ -523,3 +526,50 @@ class TestKeyDerivationAndConfigValidation:
     def test_invalid_unicode_form_rejected(self, form):
         with pytest.raises(ValueError, match="unicode_normalize"):
             BlindIndexConfig(field_name="f", unicode_normalize=form)
+
+
+class TestBlindIndexNormalisationProperties:
+    """Property tests: equivalent Unicode spellings of a value share one index."""
+
+    GENERATOR = BlindIndexGenerator("tenant-1", bytes(range(32)))
+    NFKC = BlindIndexConfig(field_name="name", unicode_normalize="NFKC")
+    NFC = BlindIndexConfig(field_name="name", unicode_normalize="NFC")
+
+    @settings(max_examples=50, deadline=None)
+    @given(value=st.text(max_size=40))
+    @example(value="\u00b4")  # ACUTE ACCENT: NFKC gives a leading space
+    @example(value="\u00a8a")  # DIAERESIS
+    @example(value="\uff23\uff41\uff46\u00e9\u3000")  # fullwidth letters and ideographic space
+    def test_nfkc_config_unifies_all_four_forms(self, value):
+        expected = self.GENERATOR.create_index(value, self.NFKC)
+        for form in ("NFC", "NFD", "NFKC", "NFKD"):
+            variant = unicodedata.normalize(form, value)
+            assert self.GENERATOR.create_index(variant, self.NFKC) == expected, form
+
+    @settings(max_examples=50, deadline=None)
+    @given(value=st.text(max_size=40))
+    def test_nfc_config_unifies_canonical_forms(self, value):
+        expected = self.GENERATOR.create_index(value, self.NFC)
+        for form in ("NFC", "NFD"):
+            variant = unicodedata.normalize(form, value)
+            assert self.GENERATOR.create_index(variant, self.NFC) == expected, form
+
+    @settings(max_examples=50, deadline=None)
+    @given(value=st.text(max_size=40))
+    def test_case_and_surrounding_whitespace_ignored(self, value):
+        expected = self.GENERATOR.create_index(value, self.NFKC)
+        assert self.GENERATOR.create_index(f"  {value.upper()}\t", self.NFKC) == (
+            self.GENERATOR.create_index(f"{value.upper()}", self.NFKC)
+        )
+        assert self.GENERATOR.create_index(f" {value} ", self.NFKC) == expected
+
+    @pytest.mark.parametrize("value", ["\u00b4", "\u02dc", "\u00a8a", "\u00b8"])
+    def test_whitespace_produced_by_normalisation_is_stripped(self, value):
+        """Regression: values were stripped before NFKC normalisation. NFKC maps U+00B4
+        ACUTE ACCENT to U+0020 U+0301, so the new leading space was kept and the value's
+        index differed from the index of its own NFKC form."""
+        nfkc_form = unicodedata.normalize("NFKC", value)
+        assert nfkc_form != nfkc_form.strip()
+        assert self.GENERATOR.create_index(value, self.NFKC) == self.GENERATOR.create_index(
+            nfkc_form, self.NFKC
+        )

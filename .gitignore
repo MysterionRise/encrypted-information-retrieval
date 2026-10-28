@@ -21,6 +21,7 @@ venv/
 coverage.xml
 htmlcov/
 benchmarks/results/
+.hypothesis/
 
 # Local databases and logs
 *.db

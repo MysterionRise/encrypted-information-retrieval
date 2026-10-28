@@ -4,10 +4,30 @@ Basic Homomorphic Encryption Module
 Implements basic homomorphic encryption operations using TenSEAL (CKKS scheme).
 Research prototype, not audited.
 
-Addition, subtraction and multiplication run on ciphertexts. The aggregate
-helpers sum_vector, mean_vector, dot_product and weighted_sum are different:
-they decrypt the vector and finish in plaintext. They are not homomorphic
-aggregates, and the holder of the secret key sees every element (issue #38).
+Addition, subtraction, multiplication and the aggregates sum_vector,
+mean_vector, dot_product and weighted_sum all run on ciphertexts and return
+an encrypted result (a CKKSVector). Only the caller that holds the secret key
+can decrypt it, with decrypt_value() or decrypt_vector(). A party that holds
+only the public context (export_public_context()) can compute the aggregates
+but cannot decrypt anything.
+
+Keys: the default context generates relinearisation keys (for ciphertext x
+ciphertext multiplication) and Galois keys. TenSEAL's CKKSVector.sum() and
+dot() add the slots together with rotations, and rotations need the Galois
+keys, so they are required for every aggregate here.
+
+Context export: export_context() and export_context_to_base64() leave out the
+secret key unless called with ``save_secret_key=True``. A context exported
+with the secret key holds it unencrypted; protect it like any other key.
+
+Known limitations:
+- CKKS is approximate: results carry small errors (about 1e-6 relative at the
+  default scale 2^40).
+- The default coefficient modulus chain [60, 40, 40, 60] allows two rescaling
+  levels, so only shallow computations work (for example one ciphertext
+  multiplication followed by a plaintext-weighted aggregate).
+- No parameter choice here has been reviewed against the Homomorphic
+  Encryption Standard's security tables.
 
 Use Case: Privacy-preserving credit scoring, encrypted risk calculations,
 secure multi-party analytics, regulatory reporting on encrypted data.
@@ -16,6 +36,8 @@ secure multi-party analytics, regulatory reporting on encrypted data.
 from __future__ import annotations
 
 import base64
+import binascii
+from collections.abc import Sequence
 from typing import cast
 
 try:
@@ -28,12 +50,27 @@ except ImportError as exc:
     ) from exc
 
 
+def _require_ckks_context(context: object) -> ts.Context:
+    """Return ``context`` if it is a usable TenSEAL CKKS context, else raise ValueError."""
+    if not isinstance(context, ts.Context):
+        raise ValueError(f"Expected a TenSEAL context, got {type(context).__name__}")
+    try:
+        # BFV contexts, and CKKS contexts whose scale was never set, raise "no global scale".
+        scale = context.global_scale
+    except ValueError as exc:
+        raise ValueError("The TenSEAL context is not a CKKS context with a global scale") from exc
+    if scale <= 0:
+        raise ValueError("The CKKS context has no positive global scale")
+    return context
+
+
 class BasicHomomorphicEncryption:
     """
     Basic homomorphic encryption using CKKS scheme (approximate arithmetic).
 
-    Supports addition, subtraction, and multiplication on encrypted data.
-    Uses CKKS for floating-point arithmetic with controlled precision.
+    Supports addition, subtraction, multiplication and slot aggregates (sum,
+    mean, dot product, weighted sum) on encrypted data. Every operation returns
+    a ciphertext; decrypt with decrypt_value() or decrypt_vector().
     """
 
     def __init__(self, context: ts.Context = None):
@@ -41,22 +78,16 @@ class BasicHomomorphicEncryption:
         Initialize homomorphic encryption.
 
         Args:
-            context: TenSEAL context. If None, creates new context with default parameters.
+            context: TenSEAL CKKS context. If None, creates a new context with default
+                parameters (see create_context()).
+
+        Raises:
+            ValueError: If ``context`` is not a TenSEAL CKKS context.
         """
         if context is None:
-            # Create context with CKKS scheme
-            # poly_modulus_degree: security parameter (higher = more secure but slower)
-            # coeff_mod_bit_sizes: coefficient modulus chain
-            context = ts.context(
-                ts.SCHEME_TYPE.CKKS, poly_modulus_degree=8192, coeff_mod_bit_sizes=[60, 40, 40, 60]
-            )
-            # Set scale for encoding (precision)
-            context.global_scale = 2**40
-            # Generate Galois keys for rotations and relinearization
-            context.generate_galois_keys()
-            context.generate_relin_keys()
+            context = self.create_context()
 
-        self.context = context
+        self.context = _require_ckks_context(context)
 
     @staticmethod
     def create_context(
@@ -65,7 +96,11 @@ class BasicHomomorphicEncryption:
         global_scale: int = 2**40,
     ) -> ts.Context:
         """
-        Create a new TenSEAL context with custom parameters.
+        Create a new TenSEAL CKKS context with relinearisation and Galois keys.
+
+        Relinearisation keys are needed after ciphertext x ciphertext
+        multiplication. Galois keys are needed for the slot rotations that
+        CKKSVector.sum() and dot() use, so every aggregate method depends on them.
 
         Args:
             poly_modulus_degree: Polynomial modulus degree (higher = more secure)
@@ -88,6 +123,11 @@ class BasicHomomorphicEncryption:
         context.generate_relin_keys()
 
         return context
+
+    @property
+    def has_secret_key(self) -> bool:
+        """True if this instance can decrypt (its context holds the secret key)."""
+        return bool(self.context.is_private())
 
     def encrypt_value(self, value: float | int) -> ts.CKKSVector:
         """
@@ -217,70 +257,79 @@ class BasicHomomorphicEncryption:
         """
         return encrypted * float(plaintext)
 
-    def sum_vector(self, encrypted_vector: ts.CKKSVector) -> float:
+    def sum_vector(self, encrypted_vector: ts.CKKSVector) -> ts.CKKSVector:
         """
-        Decrypt the vector and sum it in plaintext.
+        Sum the slots of an encrypted vector, homomorphically.
 
-        Not a homomorphic operation: every element is decrypted (issue #38).
+        Uses TenSEAL's ciphertext ``sum()`` (slot rotations with the Galois
+        keys). Nothing is decrypted; the result is an encrypted scalar.
 
         Args:
             encrypted_vector: Encrypted vector
 
         Returns:
-            Sum of all elements
+            Encrypted sum (decrypt with decrypt_value())
         """
-        decrypted = self.decrypt_vector(encrypted_vector)
-        return sum(decrypted)
+        return encrypted_vector.sum()
 
-    def mean_vector(self, encrypted_vector: ts.CKKSVector) -> float:
+    def mean_vector(self, encrypted_vector: ts.CKKSVector) -> ts.CKKSVector:
         """
-        Decrypt the vector and average it in plaintext.
+        Average the slots of an encrypted vector, homomorphically.
 
-        Not a homomorphic operation: every element is decrypted (issue #38).
+        The encrypted sum is multiplied by the plaintext 1/n, where n is the
+        vector length (ciphertext metadata, not a secret).
 
         Args:
-            encrypted_vector: Encrypted vector
+            encrypted_vector: Encrypted vector (TenSEAL cannot encrypt an empty one)
 
         Returns:
-            Mean value
+            Encrypted mean (decrypt with decrypt_value())
         """
-        decrypted = self.decrypt_vector(encrypted_vector)
-        return sum(decrypted) / len(decrypted)
+        return encrypted_vector.sum() * (1.0 / encrypted_vector.size())
 
-    def dot_product(self, enc_vec1: ts.CKKSVector, enc_vec2: ts.CKKSVector) -> float:
+    def dot_product(self, enc_vec1: ts.CKKSVector, enc_vec2: ts.CKKSVector) -> ts.CKKSVector:
         """
-        Multiply two encrypted vectors element-wise, then decrypt and sum.
+        Dot product of two encrypted vectors, homomorphically.
 
-        The multiplication is homomorphic; the sum is not. Every element-wise
-        product is decrypted (issue #38).
+        Uses TenSEAL's ciphertext ``dot()``: element-wise multiplication,
+        relinearisation and a slot sum. Nothing is decrypted.
 
         Args:
             enc_vec1: First encrypted vector
-            enc_vec2: Second encrypted vector
+            enc_vec2: Second encrypted vector of the same length
 
         Returns:
-            Dot product result
-        """
-        product = enc_vec1 * enc_vec2
-        return self.sum_vector(product)
+            Encrypted dot product (decrypt with decrypt_value())
 
-    def weighted_sum(self, encrypted_vector: ts.CKKSVector, weights: list[float]) -> float:
+        Raises:
+            ValueError: If the vectors have different lengths.
         """
-        Multiply by plaintext weights, then decrypt and sum.
+        if enc_vec1.size() != enc_vec2.size():
+            raise ValueError(f"Vector lengths differ: {enc_vec1.size()} and {enc_vec2.size()}")
+        return enc_vec1.dot(enc_vec2)
 
-        The multiplication is homomorphic; the sum is not. Every weighted
-        element is decrypted (issue #38).
+    def weighted_sum(
+        self, encrypted_vector: ts.CKKSVector, weights: Sequence[float]
+    ) -> ts.CKKSVector:
+        """
+        Weighted sum of an encrypted vector with plaintext weights, homomorphically.
+
+        Uses TenSEAL's ``dot()`` with a plaintext vector. Nothing is decrypted.
 
         Args:
             encrypted_vector: Encrypted vector
-            weights: Plaintext weights
+            weights: Plaintext weights, one per element
 
         Returns:
-            Weighted sum
+            Encrypted weighted sum (decrypt with decrypt_value())
+
+        Raises:
+            ValueError: If the number of weights differs from the vector length.
         """
-        # Multiply encrypted vector by plaintext weights
-        weighted = encrypted_vector * weights
-        return self.sum_vector(weighted)
+        weight_list = [float(w) for w in weights]
+        if len(weight_list) != encrypted_vector.size():
+            raise ValueError(f"Expected {encrypted_vector.size()} weights, got {len(weight_list)}")
+        return encrypted_vector.dot(weight_list)
 
     def serialize_encrypted(self, encrypted: ts.CKKSVector) -> bytes:
         """
@@ -332,14 +381,22 @@ class BasicHomomorphicEncryption:
         data = base64.b64decode(data_b64)
         return self.deserialize_encrypted(data)
 
-    def export_context(self) -> bytes:
+    def export_context(self, save_secret_key: bool = False) -> bytes:
         """
-        Export the encryption context (includes keys).
+        Export the encryption context.
+
+        By default the secret key is left out, so the result can only encrypt
+        and compute. Pass ``save_secret_key=True`` to include the secret key;
+        it is serialised unencrypted, so the result must be protected like
+        the key itself.
+
+        Args:
+            save_secret_key: Include the secret key (default False).
 
         Returns:
             Serialized context
         """
-        return cast(bytes, self.context.serialize(save_secret_key=True))
+        return cast(bytes, self.context.serialize(save_secret_key=save_secret_key))
 
     def export_public_context(self) -> bytes:
         """
@@ -348,30 +405,44 @@ class BasicHomomorphicEncryption:
         Returns:
             Serialized public context
         """
-        return cast(bytes, self.context.serialize(save_secret_key=False))
+        return self.export_context(save_secret_key=False)
 
-    def export_context_to_base64(self) -> str:
+    def export_context_to_base64(self, save_secret_key: bool = False) -> str:
         """
         Export context to base64 string.
+
+        Args:
+            save_secret_key: Include the secret key (default False); see export_context().
 
         Returns:
             Base64-encoded context
         """
-        context_bytes = self.export_context()
+        context_bytes = self.export_context(save_secret_key=save_secret_key)
         return base64.b64encode(context_bytes).decode("ascii")
 
     @staticmethod
     def import_context(context_bytes: bytes) -> BasicHomomorphicEncryption:
         """
-        Import context from bytes.
+        Import a context from bytes.
+
+        A context exported without the secret key gives an instance that can
+        encrypt and compute but not decrypt (``has_secret_key`` is False).
 
         Args:
-            context_bytes: Serialized context
+            context_bytes: Serialized CKKS context
 
         Returns:
             BasicHomomorphicEncryption instance with imported context
+
+        Raises:
+            ValueError: If the bytes are not a serialized TenSEAL CKKS context.
         """
-        context = ts.context_from(context_bytes)
+        if not isinstance(context_bytes, (bytes, bytearray)):
+            raise ValueError("context_bytes must be bytes")
+        try:
+            context = ts.context_from(bytes(context_bytes))
+        except Exception as exc:  # TenSEAL raises ValueError or RuntimeError on bad input
+            raise ValueError("Not a serialized TenSEAL context") from exc
         return BasicHomomorphicEncryption(context)
 
     @staticmethod
@@ -384,6 +455,12 @@ class BasicHomomorphicEncryption:
 
         Returns:
             BasicHomomorphicEncryption instance with imported context
+
+        Raises:
+            ValueError: If the string is not base64 of a serialized CKKS context.
         """
-        context_bytes = base64.b64decode(context_b64)
+        try:
+            context_bytes = base64.b64decode(context_b64, validate=True)
+        except (binascii.Error, TypeError) as exc:
+            raise ValueError("context_b64 is not valid base64") from exc
         return BasicHomomorphicEncryption.import_context(context_bytes)

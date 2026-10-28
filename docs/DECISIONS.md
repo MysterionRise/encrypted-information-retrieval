@@ -165,7 +165,7 @@ def create_blind_index(value: str, tenant_id: str, field_type: str) -> str:
 ## ADR-003: Adopt DSSE with Forward Privacy
 
 **Date**: 2025-01-11
-**Status**: Partially implemented. `ForwardPrivateSSE` is a custom hash-chain prototype, not Sophos. Its "strong" mode leaks more than "balanced". It is not used by the durable path, which uses deterministic HMAC tokens (ADR-012). See [#38].
+**Status**: Partially implemented. `ForwardPrivateSSE` is a custom hash-chain prototype, not Sophos. Since [#38] its "strong" mode never writes to the deterministic index, and its client state can be exported and restored. It is not used by the durable path, which uses deterministic HMAC tokens (ADR-012).
 **Decision Makers**: Security Architecture Team
 
 ### Context
@@ -292,7 +292,7 @@ Searchable Symmetric Encryption (SSE) enables keyword search on encrypted docume
 ## ADR-005: Use CKKS/BFV Homomorphic Encryption
 
 **Date**: 2025-01-11
-**Status**: Accepted, CKKS only. BFV is not implemented. The research module's aggregate helpers decrypt before summing ([#38]).
+**Status**: Accepted, CKKS only. BFV is not implemented. The research module computes its aggregates (sum, mean, dot product, weighted sum) on ciphertexts and decrypts only the result ([#38]).
 **Decision Makers**: Security Architecture Team
 
 ### Context
@@ -596,7 +596,7 @@ Some operations require plaintext processing (e.g., complex predicates, ML infer
 ## ADR-010: Post-Quantum Cryptography Roadmap
 
 **Date**: 2025-01-11
-**Status**: Research module only. ML-KEM, ML-DSA and a hybrid KEM exist in `encrypted_ir.research.post_quantum` (pqcrypto 0.4) and are not used by the durable path. The hybrid combiner is not X-Wing ([#38]).
+**Status**: Research module only. ML-KEM, ML-DSA and a hybrid KEM exist in `encrypted_ir.research.post_quantum` (pqcrypto 0.4) and are not used by the durable path. The hybrid combiner is a custom `SHA256(kem_ss ‖ x25519_ss)`, not X-Wing; it is documented as such rather than replaced ([#38]).
 **Decision Makers**: Security Architecture Team
 
 ### Context

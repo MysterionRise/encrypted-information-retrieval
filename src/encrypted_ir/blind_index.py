@@ -156,13 +156,16 @@ class BlindIndexGenerator:
         Returns:
             Normalized value
         """
-        # Strip leading/trailing whitespace
-        normalized = value.strip()
-
-        # Unicode normalization (e.g., decompose accented characters)
+        # Unicode normalization first: compatibility forms can turn a spacing character
+        # into whitespace (NFKC maps U+00B4 ACUTE ACCENT to a space plus U+0301), so
+        # stripping before normalizing would give equivalent spellings different indexes.
+        normalized = value
         if config.unicode_normalize is not None:
             normalization = cast(UnicodeNormalization, config.unicode_normalize)
             normalized = unicodedata.normalize(normalization, normalized)
+
+        # Strip leading/trailing whitespace
+        normalized = normalized.strip()
 
         # Case normalization
         if not config.case_sensitive:

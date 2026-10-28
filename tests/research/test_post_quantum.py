@@ -1,10 +1,20 @@
 """Tests for Post-Quantum Cryptography module."""
 
+import base64
+import hashlib
+import json
+
 import pytest
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
 
 pytest.importorskip("pqcrypto")
 
-from encrypted_ir.research.post_quantum import MLDSA, MLKEM, HybridKEM, PostQuantumEncryption
+from encrypted_ir.research.post_quantum import (  # noqa: E402
+    MLDSA,
+    MLKEM,
+    HybridKEM,
+    PostQuantumEncryption,
+)
 
 # ---------------------------------------------------------------------------
 # ML-KEM Tests
@@ -522,3 +532,217 @@ class TestPostQuantumSecurityLevels:
             sender_dsa_public_key=sender_keys["dsa_public_key"],
         )
         assert decrypted == plaintext
+
+
+def _fields(encrypted):
+    return (
+        encrypted["kem_ciphertext"],
+        encrypted["x25519_ephemeral"],
+        encrypted["nonce"],
+        encrypted["ciphertext"],
+    )
+
+
+class TestRequireSignature:
+    """Regression (#38): stripping the signature skipped verification."""
+
+    def setup_method(self):
+        self.sender = PostQuantumEncryption(768, 65)
+        self.sender_keys = self.sender.generate_keypair()
+        self.recipient = PostQuantumEncryption(768, 65)
+        self.recipient_keys = self.recipient.generate_keypair()
+        self.signed = self.sender.encrypt(
+            b"signed payload",
+            self.recipient_keys["kem_public_key"],
+            self.recipient_keys["x25519_public_key"],
+            sign=True,
+        )
+        self.unsigned = self.sender.encrypt(
+            b"unsigned payload",
+            self.recipient_keys["kem_public_key"],
+            self.recipient_keys["x25519_public_key"],
+        )
+
+    def test_stripped_signature_rejected_when_sender_key_given(self):
+        """Passing the sender's key implies a signature is required."""
+        with pytest.raises(ValueError, match="Signature required"):
+            self.recipient.decrypt(
+                *_fields(self.signed), sender_dsa_public_key=self.sender_keys["dsa_public_key"]
+            )
+
+    def test_explicit_require_signature_without_signature_rejected(self):
+        with pytest.raises(ValueError, match="Signature required"):
+            self.recipient.decrypt(*_fields(self.unsigned), require_signature=True)
+
+    def test_require_signature_needs_sender_key(self):
+        with pytest.raises(ValueError, match="sender_dsa_public_key required"):
+            self.recipient.decrypt(
+                *_fields(self.signed),
+                signature=self.signed["signature"],
+                require_signature=True,
+            )
+
+    def test_require_signature_with_valid_signature(self):
+        decrypted = self.recipient.decrypt(
+            *_fields(self.signed),
+            signature=self.signed["signature"],
+            sender_dsa_public_key=self.sender_keys["dsa_public_key"],
+            require_signature=True,
+        )
+        assert decrypted == b"signed payload"
+
+    def test_unsigned_message_accepted_without_sender_key(self):
+        """Without a sender key the default is not to require a signature."""
+        assert self.recipient.decrypt(*_fields(self.unsigned)) == b"unsigned payload"
+
+    def test_explicit_opt_out_accepts_unsigned_message(self):
+        decrypted = self.recipient.decrypt(
+            *_fields(self.unsigned),
+            sender_dsa_public_key=self.sender_keys["dsa_public_key"],
+            require_signature=False,
+        )
+        assert decrypted == b"unsigned payload"
+
+    def test_supplied_signature_is_always_verified(self):
+        """Even with require_signature=False, a wrong signature fails."""
+        with pytest.raises(ValueError, match="Signature verification failed"):
+            self.recipient.decrypt(
+                *_fields(self.unsigned),
+                signature=self.signed["signature"],
+                sender_dsa_public_key=self.sender_keys["dsa_public_key"],
+                require_signature=False,
+            )
+
+
+class TestInvalidSecurityLevels:
+    """Regression (#38): static methods raised KeyError for an unknown level."""
+
+    def test_mlkem_encapsulate(self):
+        pub = MLKEM(768).generate_keypair()
+        with pytest.raises(ValueError, match="security_level"):
+            MLKEM.encapsulate(pub, 256)
+
+    def test_mldsa_verify(self):
+        dsa = MLDSA(65)
+        pub = dsa.generate_keypair()
+        with pytest.raises(ValueError, match="security_level"):
+            MLDSA.verify(pub, b"m", dsa.sign(b"m"), 128)
+
+    def test_hybrid_encapsulate(self):
+        kem_pub, x_pub = HybridKEM(768).generate_keypair()
+        with pytest.raises(ValueError, match="security_level"):
+            HybridKEM.encapsulate(kem_pub, x_pub, 999)
+
+    @pytest.mark.parametrize("level", [999, "768", None, [768]])
+    def test_constructors(self, level):
+        for factory in (MLKEM, MLDSA, HybridKEM):
+            with pytest.raises(ValueError, match="security_level"):
+                factory(level)
+        with pytest.raises(ValueError, match="security_level"):
+            PostQuantumEncryption(kem_security_level=level)
+        with pytest.raises(ValueError, match="security_level"):
+            PostQuantumEncryption(dsa_security_level=level)
+
+
+class TestKeyPersistence:
+    """Regression (#38): the X25519 private key could not be loaded, so a restarted
+    HybridKEM or PostQuantumEncryption could not decrypt."""
+
+    def test_hybrid_kem_restore_from_secret_keys(self):
+        original = HybridKEM(768)
+        kem_pub, x_pub = original.generate_keypair()
+        shared, kem_ct, eph = HybridKEM.encapsulate(kem_pub, x_pub, 768)
+
+        restored = HybridKEM.from_secret_keys(
+            original.export_kem_secret_key(),
+            original.export_x25519_private_key(),
+            768,
+            kem_public_key_b64=original.export_kem_public_key(),
+        )
+
+        assert restored.decapsulate(kem_ct, eph) == shared
+        assert restored.get_x25519_public_key() == x_pub
+        assert restored.get_kem_public_key() == kem_pub
+
+    def test_load_x25519_private_key_returns_public_key(self):
+        original = HybridKEM(768)
+        _, x_pub = original.generate_keypair()
+        raw = base64.b64decode(original.export_x25519_private_key())
+
+        fresh = HybridKEM(768)
+        assert fresh.load_x25519_private_key(raw) == x_pub
+
+    @pytest.mark.parametrize("bad", [b"", b"\x01" * 31, b"\x01" * 33, "a" * 32])
+    def test_load_x25519_private_key_rejects_bad_input(self, bad):
+        with pytest.raises(ValueError, match="32 raw bytes"):
+            HybridKEM(768).load_x25519_private_key(bad)
+
+    def test_from_secret_keys_rejects_invalid_base64(self):
+        original = HybridKEM(768)
+        original.generate_keypair()
+        with pytest.raises(ValueError, match="base64"):
+            HybridKEM.from_secret_keys("not base64!", original.export_x25519_private_key())
+        with pytest.raises(ValueError, match="base64"):
+            HybridKEM.from_secret_keys(original.export_kem_secret_key(), 12345)
+
+    def test_get_x25519_public_key_without_keypair(self):
+        with pytest.raises(RuntimeError, match="No keypair"):
+            HybridKEM(768).get_x25519_public_key()
+        with pytest.raises(RuntimeError, match="No keypair"):
+            HybridKEM(768).export_x25519_private_key()
+
+    def test_post_quantum_encryption_round_trip_through_json(self):
+        recipient = PostQuantumEncryption(768, 65)
+        public = recipient.generate_keypair()
+        sender = PostQuantumEncryption(768, 65)
+        sender.generate_keypair()
+        encrypted = sender.encrypt(
+            b"survives a restart", public["kem_public_key"], public["x25519_public_key"]
+        )
+
+        exported = json.loads(json.dumps(recipient.export_keys()))
+        restored = PostQuantumEncryption.from_keys(exported)
+
+        assert restored.decrypt(*_fields(encrypted)) == b"survives a restart"
+        assert restored.get_public_keys() == public
+        signature = restored.sign_document(b"audit record")
+        assert MLDSA.verify(public["dsa_public_key"], b"audit record", signature, 65)
+
+    @pytest.mark.parametrize(
+        "mutate,match",
+        [
+            (lambda k: k.update(version=2), "version"),
+            (lambda k: k.pop("x25519_private_key"), "Malformed"),
+            (lambda k: k.update(dsa_secret_key="%%%"), "base64"),
+            (lambda k: k.update(kem_security_level=1), "security_level"),
+        ],
+    )
+    def test_from_keys_rejects_malformed_export(self, mutate, match):
+        source = PostQuantumEncryption(768, 65)
+        source.generate_keypair()
+        keys = source.export_keys()
+        mutate(keys)
+        with pytest.raises(ValueError, match=match):
+            PostQuantumEncryption.from_keys(keys)
+
+    def test_from_keys_rejects_non_mapping(self):
+        with pytest.raises(ValueError, match="Malformed"):
+            PostQuantumEncryption.from_keys(None)
+
+    def test_export_keys_without_keypair(self):
+        with pytest.raises(RuntimeError):
+            PostQuantumEncryption(768, 65).export_keys()
+
+
+class TestCombiner:
+    """Pins the documented custom combiner: SHA-256(kem_ss || x25519_ss)."""
+
+    def test_combined_secret_is_sha256_of_both_secrets(self):
+        hybrid = HybridKEM(768)
+        kem_pub, x_pub = hybrid.generate_keypair()
+        combined, kem_ct, eph = HybridKEM.encapsulate(kem_pub, x_pub, 768)
+
+        kem_ss = hybrid._mlkem.decapsulate(kem_ct)
+        x25519_ss = hybrid._x25519_private.exchange(X25519PublicKey.from_public_bytes(eph))
+
+        assert combined == hashlib.sha256(kem_ss + x25519_ss).digest()
