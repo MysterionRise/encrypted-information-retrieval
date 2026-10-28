@@ -729,6 +729,7 @@ class TestPostgres:
         )
         writer = pg_engine.connect()
         transaction = writer.begin()
+        writer_pid = writer.execute(text("SELECT pg_backend_pid()")).scalar_one()
         writer.execute(
             insert(documents_table).values(
                 tenant_id=tenant,
@@ -749,7 +750,9 @@ class TestPostgres:
         )
         rotator.start()
         try:
-            assert _wait_for_lock_wait(pg_engine), "retiring the key did not wait for the writer"
+            assert _wait_until_blocked_by(
+                pg_engine, writer_pid
+            ), "retiring the key did not wait for the writer"
             assert rotator.is_alive()
         finally:
             transaction.commit()
@@ -778,16 +781,21 @@ class TestPostgres:
         assert [c.doc_id for c in service.search_documents(tenant, "flight")] == ["in-flight"]
 
 
-def _wait_for_lock_wait(engine, timeout: float = 20.0) -> bool:
-    """Poll until some session of this database waits on a lock."""
+def _wait_until_blocked_by(engine, blocker_pid: int, timeout: float = 20.0) -> bool:
+    """Poll until some session waits on a lock held by the backend ``blocker_pid``.
+
+    Only waits on that backend count: other sessions of the database (parallel test workers)
+    may be waiting on unrelated locks.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         with engine.connect() as conn:
             waiting = conn.execute(
                 text(
                     "SELECT count(*) FROM pg_stat_activity "
-                    "WHERE datname = current_database() AND wait_event_type = 'Lock'"
-                )
+                    "WHERE CAST(:pid AS integer) = ANY(pg_blocking_pids(pid))"
+                ),
+                {"pid": blocker_pid},
             ).scalar_one()
         if waiting:
             return True
