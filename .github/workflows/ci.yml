@@ -306,8 +306,11 @@ jobs:
 
       - name: PostgreSQL is not published to the host
         run: |
-          if docker compose port postgres 5432 > /dev/null 2>&1; then
-            echo "postgres:5432 is published on the host"; exit 1
+          # `docker port` lists only published ports (`docker compose port` prints ":0" and exits
+          # 0 for an unpublished one).
+          published="$(docker port "$(docker compose ps -q postgres)")"
+          if [ -n "$published" ]; then
+            echo "postgres is published on the host: $published"; exit 1
           fi
           for files in docker-compose.yml docker-compose.yml:docker-compose.kms.yml \
               docker-compose.yml:docker-compose.kms.yml:docker-compose.oidc.yml; do
