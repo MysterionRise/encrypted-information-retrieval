@@ -11,8 +11,14 @@ from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import insert, inspect, select, text
 
+from encrypted_ir import migrations
 from encrypted_ir.database import audit_log_table, create_database_engine, metadata
-from encrypted_ir.migrations import alembic_config, migration_head, migration_status
+from encrypted_ir.migrations import (
+    alembic_config,
+    database_revision,
+    migration_head,
+    migration_status,
+)
 from encrypted_ir.tools import benchmark_retrieval
 
 
@@ -34,6 +40,65 @@ def _document_columns(database_url):
         return {column["name"] for column in inspect(engine).get_columns("encrypted_ir_documents")}
     finally:
         engine.dispose()
+
+
+def test_configured_url_wins_over_database_url(tmp_path, monkeypatch):
+    """alembic_config(url) migrates that URL even when DATABASE_URL names another database."""
+    other = tmp_path / "other.db"
+    target = tmp_path / "target.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+pysqlite:///{other}")
+
+    command.upgrade(alembic_config(f"sqlite+pysqlite:///{target}"), "head")
+
+    assert target.exists()
+    assert not other.exists()
+
+
+def test_alembic_cli_config_uses_database_url(tmp_path, monkeypatch):
+    """With no URL configured (as in alembic.ini), the environment names the database."""
+    database = tmp_path / "from-env.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+pysqlite:///{database}")
+
+    command.upgrade(alembic_config(), "head")
+
+    engine = create_database_engine(f"sqlite+pysqlite:///{database}")
+    try:
+        assert migration_status(engine)["at_head"] is True
+    finally:
+        engine.dispose()
+
+
+def test_no_database_url_is_an_error(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    with pytest.raises(RuntimeError, match="No database URL"):
+        command.upgrade(alembic_config(), "head")
+
+
+def test_alembic_ini_names_no_database():
+    ini = (Path(__file__).resolve().parents[1] / "alembic.ini").read_text()
+    assert not any(line.strip().startswith("sqlalchemy.url") for line in ini.splitlines())
+
+
+class TestMigrationsCli:
+    def test_upgrade_current_and_downgrade(self, tmp_path, monkeypatch, capsys):
+        url = f"sqlite+pysqlite:///{tmp_path / 'cli.db'}"
+        monkeypatch.setenv("DATABASE_URL", url)
+
+        assert migrations.main(["upgrade", "head"]) == 0
+        assert migrations.main(["current"]) == 0
+        assert migration_head(url) in capsys.readouterr().out
+
+        assert migrations.main(["--database-url", url, "downgrade", "20261021_0003"]) == 0
+        engine = create_database_engine(url)
+        try:
+            assert database_revision(engine) == "20261021_0003"
+        finally:
+            engine.dispose()
+
+    def test_requires_a_database_url(self, monkeypatch, capsys):
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        assert migrations.main(["upgrade"]) == 2
+        assert "DATABASE_URL" in capsys.readouterr().err
 
 
 def test_migration_0002_round_trip_on_sqlite(tmp_path):

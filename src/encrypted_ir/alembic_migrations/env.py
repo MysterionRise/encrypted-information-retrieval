@@ -19,7 +19,13 @@ target_metadata = metadata
 
 
 def _database_url() -> str:
-    return os.environ.get("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+    """The URL set on the Alembic config wins; the DATABASE_URL environment variable is the
+    fallback for the ``alembic`` CLI. A caller that passes a URL (tests, the migrations CLI)
+    must never migrate a different database because the environment happens to name one."""
+    url = config.get_main_option("sqlalchemy.url") or os.environ.get("DATABASE_URL")
+    if not url:
+        raise RuntimeError("No database URL: set DATABASE_URL or sqlalchemy.url")
+    return url
 
 
 def run_migrations_offline() -> None:

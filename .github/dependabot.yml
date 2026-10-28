@@ -11,6 +11,19 @@ updates:
     commit-message:
       prefix: "deps"
 
+  # The Dockerfile's base image is pinned by digest.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "docker"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
