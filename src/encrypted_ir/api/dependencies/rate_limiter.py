@@ -32,6 +32,10 @@ from encrypted_ir.settings import (
     DEFAULT_RATE_LIMITS,
 )
 
+# Float timestamps accumulate rounding error far below this; it never changes a decision that
+# matters, since Retry-After is whole seconds.
+CLOCK_SLACK_SECONDS = 1e-6
+
 
 @dataclass(frozen=True)
 class RateLimitConfig:
@@ -44,6 +48,11 @@ class RateLimitConfig:
     def interval(self) -> float:
         """Seconds of allowance one request uses."""
         return self.window_seconds / self.max_requests
+
+    @property
+    def burst_tolerance(self) -> float:
+        """How far ahead of now the theoretical arrival time may run: ``window - interval``."""
+        return self.window_seconds - self.interval
 
 
 DEFAULT_LIMITS: dict[str, RateLimitConfig] = {
@@ -101,13 +110,17 @@ class RateLimiter:
             buckets = self._buckets[operation]
             self._evict_refilled(buckets, now)
 
-            arrival = max(buckets.get(key, now), now) + config.interval
-            allowed_at = arrival - config.window_seconds
-            if allowed_at > now:
-                buckets.move_to_end(key)
+            # A key with no bucket (tat == now) is always allowed: the tolerance is never
+            # negative. Within a burst, float rounding can put a request a few femtoseconds
+            # "early"; anything within CLOCK_SLACK_SECONDS of its slot is allowed.
+            tat = max(buckets.get(key, now), now)
+            allowed_at = tat - config.burst_tolerance
+            if allowed_at - now > CLOCK_SLACK_SECONDS:
+                if key in buckets:
+                    buckets.move_to_end(key)
                 return allowed_at - now
 
-            buckets[key] = arrival
+            buckets[key] = tat + config.interval
             buckets.move_to_end(key)
             while len(buckets) > self._max_keys:
                 buckets.popitem(last=False)
