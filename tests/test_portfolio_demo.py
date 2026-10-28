@@ -23,6 +23,13 @@ def test_portfolio_demo_summary_expected_shape():
     assert data["encrypted_document_search"]["index_contains_plaintext"] is False
     assert data["ore_range_query"]["matched_txn_ids"] == ["txn-002", "txn-003"]
     assert data["key_and_audit_lifecycle"]["old_key_state"] == "retired"
+    assert data["key_and_audit_lifecycle"]["audit_events_in_order"] == [
+        "key.create",
+        "key.read",
+        "key.create",
+        "key.rotate",
+    ]
+    assert data["key_and_audit_lifecycle"]["audit_chain_verified"] is True
     assert data["ai_retrieval_narrative"]["model_call_performed"] is False
 
 

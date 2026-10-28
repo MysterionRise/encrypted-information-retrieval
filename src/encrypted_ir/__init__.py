@@ -10,7 +10,7 @@ privacy, forward-private SSE and the use-case demos) live in ``encrypted_ir.rese
 issue a :class:`ResearchPrototypeWarning` when imported. Nothing here imports them.
 """
 
-from .audit import AuditEventType, AuditLogger
+from .audit import AuditEvent, AuditEventType, ChainVerification
 from .blind_index import BlindIndexConfig, BlindIndexGenerator, BlindIndexSearch
 from .deterministic import DeterministicEncryption
 from .document_service import DocumentRecord, DocumentService, RetrievalCandidate
@@ -54,8 +54,9 @@ __all__ = [
     "get_correlation_id",
     "new_correlation_id",
     "EncryptionMetrics",
-    "AuditLogger",
+    "AuditEvent",
     "AuditEventType",
+    "ChainVerification",
     # Warnings
     "ResearchPrototypeWarning",
 ]

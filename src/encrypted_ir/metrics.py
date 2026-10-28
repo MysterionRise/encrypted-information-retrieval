@@ -73,7 +73,8 @@ class EncryptionMetrics:
         )
         self.security_audit_dropped_total = Counter(
             f"{namespace}_security_audit_dropped_total",
-            "Rejected requests not written to the audit log because of its rate bound",
+            "Rejected requests not written to the audit log, by the bound that dropped them",
+            ["limit"],
             registry=self.registry,
         )
         self.key_cache_tenants = Gauge(
@@ -92,9 +93,9 @@ class EncryptionMetrics:
         """Count a 401, 403 or 429 response."""
         self.auth_rejections_total.labels(status=str(status), reason=reason).inc()
 
-    def record_security_audit_dropped(self) -> None:
-        """Count a rejection that was not audited because of the audit rate bound."""
-        self.security_audit_dropped_total.inc()
+    def record_security_audit_dropped(self, limit: str) -> None:
+        """Count a rejection not audited because of the ``per_source`` or ``total`` bound."""
+        self.security_audit_dropped_total.labels(limit=limit).inc()
 
     def track_key_cache(self, size: Callable[[], int]) -> None:
         """Report the key-manager cache size by calling ``size`` at scrape time."""
