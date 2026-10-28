@@ -191,26 +191,91 @@ def test_migrated_schema_matches_models(request, tmp_path, database_kind):
     assert diff == []
 
 
-def test_retrieval_benchmark_writes_report(tmp_path, monkeypatch):
-    report_path = tmp_path / "report.md"
-    monkeypatch.setattr(
-        "sys.argv",
+def test_retrieval_benchmark_writes_json_and_markdown_with_provenance(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_SHA", raising=False)
+    status = benchmark_retrieval.main(
         [
-            "benchmark_retrieval",
-            "--database-url",
-            "sqlite+pysqlite:///:memory:",
             "--documents",
             "5",
-            "--report",
-            str(report_path),
-        ],
+            "8",
+            "--rounds",
+            "3",
+            "--warmup",
+            "1",
+            "--output-dir",
+            str(tmp_path),
+            "--commit",
+            "abc1234",
+            "--dirty",
+        ]
     )
 
-    benchmark_retrieval.main()
+    assert status == 0
+    result = json.loads((tmp_path / "retrieval_8.json").read_text())
+    assert (tmp_path / "retrieval_5.json").exists()
+    prov = result["provenance"]
+    assert (prov["commit"], prov["dirty_tree"]) == ("abc1234", True)
+    assert set(prov) >= {"generated_at", "cpu_model", "cpu_count", "os", "python", "sqlalchemy"}
+    assert prov["database"]["dialect"] == "sqlite"
+    assert prov["database"]["driver"] == "pysqlite"
+    assert result["parameters"]["documents"] == 8
+    assert result["corpus"]["rows_in_database_before"] == 0  # a fresh in-memory database
+    ops = result["operations"]
+    assert set(ops) == {"ingest", "search_or", "search_and", "get_document", "rag_retrieve"}
+    assert ops["ingest"]["n"] == 8
+    assert ops["rag_retrieve"]["n"] == 3
+    # Three samples are too few for p95 and p99.
+    assert ops["search_or"]["p95_ms"] is None and ops["search_or"]["p99_ms"] is None
+    # Two of the eight documents are about fraud; all mention controls.
+    assert result["corpus"]["documents_matching_and"] == 2
+    assert ops["search_and"]["results"] == 2
 
-    text = Path(report_path).read_text()
-    assert "Retrieval Benchmark Report" in text
-    assert "Documents: 5" in text
+    markdown = (tmp_path / "retrieval_8.md").read_text()
+    assert markdown == benchmark_retrieval.render_markdown(result)
+    assert "`abc1234` (uncommitted changes)" in markdown
+    assert "| n/a |" in markdown
+
+
+def test_retrieval_benchmark_takes_the_commit_from_github_sha(tmp_path, monkeypatch):
+    monkeypatch.setenv("GITHUB_SHA", "f" * 40)
+    benchmark_retrieval.main(
+        ["--documents", "2", "--rounds", "1", "--warmup", "0", "--output-dir", str(tmp_path)]
+    )
+
+    result = json.loads((tmp_path / "retrieval_2.json").read_text())
+    assert result["provenance"]["commit"] == "f" * 40
+
+
+def test_benchmark_percentiles_need_enough_samples():
+    twenty = benchmark_retrieval.summarize([float(i) for i in range(1, 21)])
+    hundred = benchmark_retrieval.summarize([float(i) for i in range(1, 101)])
+
+    assert twenty["n"] == 20 and twenty["p95_ms"] is not None and twenty["p99_ms"] is None
+    assert hundred["p50_ms"] == 50.5
+    assert hundred["p99_ms"] is not None and hundred["p95_ms"] <= hundred["p99_ms"] <= 100
+    assert benchmark_retrieval.summarize([4.0])["p50_ms"] == 4.0
+
+
+def test_benchmark_refuses_an_unmigrated_database(monkeypatch):
+    class Dialect:
+        name = "postgresql"
+
+    class Engine:
+        dialect = Dialect()
+
+    monkeypatch.setattr(
+        benchmark_retrieval,
+        "migration_status",
+        lambda engine, url: {"current": None, "head": "20261028_0005", "at_head": False},
+    )
+    with pytest.raises(SystemExit, match="upgrade head"):
+        benchmark_retrieval._prepare(Engine(), "postgresql+psycopg://example/db")
+
+
+@pytest.mark.parametrize("argv", [["--documents", "0"], ["--rounds", "0"], ["--search-limit", "0"]])
+def test_benchmark_rejects_bad_arguments(tmp_path, argv):
+    with pytest.raises(SystemExit):
+        benchmark_retrieval.main([*argv, "--output-dir", str(tmp_path)])
 
 
 def test_makefile_uses_configured_python_variable():
@@ -253,3 +318,41 @@ def test_compare_benchmarks(tmp_path, capsys):
     assert compare.main([str(slower), "--baseline", str(baseline)]) == 1
     assert "REGRESSION" in capsys.readouterr().out
     assert compare.main([str(slower), "--baseline", str(baseline), "--threshold", "4"]) == 0
+
+
+def test_portfolio_evidence_benchmark_table_matches_the_reports():
+    """docs/PORTFOLIO_EVIDENCE.md must be re-rendered whenever a benchmark report changes."""
+    assert _load_script("render_evidence").main(["--check"]) == 0
+
+
+def test_render_evidence_builds_a_row_per_report(tmp_path, monkeypatch):
+    render = _load_script("render_evidence")
+    monkeypatch.delenv("GITHUB_SHA", raising=False)
+    out = tmp_path / "benchmarks" / "reports" / "sqlite-memory"
+    benchmark_retrieval.main(
+        ["--documents", "5", "--rounds", "3", "--warmup", "0", "--output-dir", str(out)]
+        + ["--commit", "0123456789abcdef"]
+    )
+
+    section = render.render_benchmarks(
+        render.load_benchmarks(tmp_path / "benchmarks" / "reports"), root=tmp_path
+    )
+
+    [row] = [line for line in section.splitlines() if line.startswith("| SQLite")]
+    assert "(in memory) | 5 |" in row
+    assert " / n/a |" in row  # three samples: no p95
+    assert "(../benchmarks/reports/sqlite-memory/retrieval_5.md)" in row
+    assert "commit `0123456789ab`" in section
+
+
+def test_render_evidence_needs_the_markers():
+    render = _load_script("render_evidence")
+    with pytest.raises(SystemExit, match="generated:benchmarks"):
+        render.apply("no markers here", {"benchmarks": "x"})
+    assert (
+        render.apply(
+            "<!-- generated:benchmarks:begin -->\nold\n<!-- generated:benchmarks:end -->",
+            {"benchmarks": "new\n"},
+        )
+        == "<!-- generated:benchmarks:begin -->\nnew\n<!-- generated:benchmarks:end -->"
+    )

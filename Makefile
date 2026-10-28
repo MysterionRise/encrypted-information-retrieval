@@ -1,4 +1,4 @@
-.PHONY: help setup test test-verbose test-coverage lint format type-check security clean docs docs-check bench all install-dev
+.PHONY: help setup test test-verbose test-coverage lint format type-check security clean docs docs-check bench bench-retrieval bench-retrieval-postgres all install-dev
 
 # Default target
 .DEFAULT_GOAL := help
@@ -75,6 +75,15 @@ bench: ## Run performance benchmarks
 		--benchmark-only \
 		--benchmark-json=benchmarks/results/latest.json
 	$(PYTHON) scripts/compare_benchmarks.py benchmarks/results/latest.json
+
+bench-retrieval: ## Retrieval benchmark on in-memory SQLite, with provenance (benchmarks/reports/sqlite-memory)
+	PYTHONPATH=src:$$PYTHONPATH $(PYTHON) -m encrypted_ir.tools.benchmark_retrieval \
+		--documents 100 1000 10000 --output-dir benchmarks/reports/sqlite-memory \
+		--commit "$$(git rev-parse HEAD)" \
+		$$(test -z "$$(git status --porcelain --untracked-files=no -- . ':!benchmarks/reports')" || echo --dirty)
+
+bench-retrieval-postgres: ## Retrieval benchmark on the Compose PostgreSQL (benchmarks/reports/postgresql)
+	./scripts/bench_postgres.sh
 
 lint: ## Run all code quality checks (ruff, bandit, mypy)
 	@echo "$(BLUE)Running code quality checks...$(NC)"

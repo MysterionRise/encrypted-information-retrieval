@@ -111,6 +111,9 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Removed
 
+- The mean-only retrieval reports in `benchmarks/reports/` and the archived report template
+  the tool never filled (#50). Latency figures in `docs/DECISIONS.md` that were never measured
+  are gone; figures from published work are kept and labelled as such.
 - `requirements-api.txt`, replaced by the generated, hash-pinned `requirements-docker.txt`
   (#45).
 - `encrypted_ir.key_rotation` (`KeyRotationManager`, `RotationPolicy`, `RotationProgress`,
@@ -290,6 +293,20 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Added
 
+- Retrieval benchmarks with provenance (#50):
+  - `encrypted_ir.tools.benchmark_retrieval` now times every ingest, then runs search OR, search
+    AND, get-and-decrypt and RAG retrieve with warm-up rounds.
+  - It reports n, mean, min, max and p50/p95/p99 ("n/a" below 20 or 100 samples).
+  - It records the commit, the time, the CPU, the OS, Python, the SQLAlchemy driver and the
+    database server, and writes JSON plus Markdown rendered from it. **Breaking:** `--report`,
+    `--tenant-id` and `--auto-create` are replaced by `--output-dir`.
+  - Reports for in-memory SQLite and the Compose PostgreSQL (100, 1,000 and 10,000 documents)
+    are committed under `benchmarks/reports/<engine>/`.
+  - New: `make bench-retrieval`, `make bench-retrieval-postgres` (`scripts/bench_postgres.sh`,
+    which runs inside the image so PostgreSQL stays unpublished) and `benchmarks/README.md`.
+  - `scripts/render_evidence.py` builds the PORTFOLIO_EVIDENCE benchmark table from the JSON, and
+    a test fails if the table is out of date.
+  - The master-only benchmarks job also runs the tool on SQLite and on PostgreSQL.
 - The production auth path, end to end, without a cloud account (#48):
   - `docker-compose.oidc.yml` adds Keycloak 26, with a hand-written realm in
     `deploy/keycloak/`:

@@ -65,7 +65,7 @@ We need deterministic encryption for equality searches on account numbers, custo
 
 **Cons**:
 - ⚠️ **Deterministic leakage**: Equality patterns visible (acceptable trade-off for use case)
-- ⚠️ **Slightly slower**: ~20% overhead vs. AES-GCM (negligible for our latency requirements)
+- ⚠️ **Slightly slower**: ~20% overhead vs. AES-GCM (published estimate; not measured here)
 
 **Alternatives Considered**:
 - **AES-GCM with fixed nonce**: Rejected (catastrophic if nonce reused accidentally)
@@ -75,7 +75,7 @@ We need deterministic encryption for equality searches on account numbers, custo
 ### Consequences
 
 - **Security**: Strong confidentiality and authenticity; controlled equality leakage documented in THREAT_MODEL.md
-- **Performance**: 2-5x slower than plaintext lookups (acceptable for <10ms latency requirement)
+- **Performance**: not measured for this ADR. Measured retrieval numbers, with provenance, are in `benchmarks/reports/`.
 - **Leakage Mitigation**: Complement with blind indexes (ADR-002) for reduced leakage
 
 ### Compliance Mapping
@@ -146,7 +146,7 @@ def create_blind_index(value: str, tenant_id: str, field_type: str) -> str:
 ### Consequences
 
 - **Security**: Equality leakage scoped to tenant; frequency analysis limited to tenant dataset
-- **Performance**: HMAC computation ~1-2ms; minimal overhead
+- **Performance**: not measured on its own. Token computation is part of the per-document ingest time in `benchmarks/reports/`.
 - **Storage**: Index stored alongside encrypted ciphertext
 - **Rotation**: Index keys rotate with DEKs (90-day cycle)
 
@@ -184,7 +184,7 @@ Searchable Symmetric Encryption (SSE) enables keyword search on encrypted docume
 **Pros**:
 - ✅ **Forward privacy**: New document additions unlinkable to past queries
 - ✅ **Replay protection**: Nonce-based freshness
-- ✅ **Practical performance**: 20-50ms search latency @ 10k documents
+- ✅ **Practical performance**: the design-time figure was never measured. Measured search latency at 10,000 documents is in `benchmarks/reports/`.
 - ✅ **Well-studied**: Σoφoς-style constructions analyzed in literature
 
 **Cons**:
@@ -194,7 +194,7 @@ Searchable Symmetric Encryption (SSE) enables keyword search on encrypted docume
 
 **Alternatives Considered**:
 - **Static SSE**: Rejected (no forward privacy; vulnerable to LEAP-style attacks)
-- **ORAM**: Rejected (100-1000x overhead; impractical for FS latency requirements)
+- **ORAM**: Rejected (100-1000x overhead (published estimate; not measured here); impractical for FS latency requirements)
 - **PIR only**: Use as optional mode; too slow for default
 
 ### Leakage Profile
@@ -274,7 +274,7 @@ Searchable Symmetric Encryption (SSE) enables keyword search on encrypted docume
 ### Consequences
 
 - **Security**: Order leakage acceptable for dates/timestamps; avoid for amounts if possible
-- **Performance**: ORE comparison ~30ms (vs. 10ms for OPE)
+- **Performance**: not measured. The ORE prototype's micro-benchmarks are in `benchmarks/test_research.py`.
 - **Migration**: Lazy re-encryption on read; complete migration in 90 days
 
 ### Compliance Mapping
@@ -315,7 +315,7 @@ We need encrypted computation for credit scoring and analytics. Options:
 - ✅ **Production-ready**: Microsoft SEAL used in real-world deployments
 
 **Cons**:
-- ⚠️ **Performance**: 100-1000x slower than plaintext
+- ⚠️ **Performance**: 100-1000x slower than plaintext (published estimate; not measured here)
 - ⚠️ **Ciphertext size**: 100KB+ per encrypted vector
 - ⚠️ **Complexity**: Requires crypto expertise for parameter tuning
 
@@ -382,7 +382,7 @@ Key management complexity is a top operational challenge (59% of IT professional
 **Cons**:
 - ⚠️ **Cloud dependency**: Requires AWS/Azure/GCP KMS
 - ⚠️ **Cost**: ~$1/month per CMK + API call charges
-- ⚠️ **Latency**: KMS API call adds ~50ms (mitigated by DEK caching)
+- ⚠️ **Latency**: a KMS call costs a network round trip. The built system calls KMS once, at startup (ADR-014); that call was not timed.
 
 **Alternatives Considered**:
 - **Local HSM (Thales Luna)**: For on-premises deployments
@@ -412,7 +412,7 @@ Key management complexity is a top operational challenge (59% of IT professional
 ### Consequences
 
 - **Security**: KEK isolation, HSM-backed, audit trail
-- **Performance**: DEK cache (5-minute TTL) → 2ms decrypt (cached), 50ms (cache miss)
+- **Performance**: no DEK cache with a TTL was built. The API unwraps the master key once at startup and keeps tenant keys in memory (ADR-014); single-document decrypt times are in `benchmarks/reports/`.
 - **Operational**: Automated rotation; 90-day DEK rotation, annual KEK rotation
 
 ### Compliance Mapping
@@ -516,12 +516,12 @@ SSE leaks access patterns. For high-sensitivity collections (e.g., sanctions lis
 - ✅ **Opt-in**: Use only for sensitive collections (performance vs. privacy trade-off)
 
 **Cons**:
-- ⚠️ **Performance**: 10-100x slower than SSE
+- ⚠️ **Performance**: 10-100x slower than SSE (published estimate; not measured here)
 - ⚠️ **Database size limit**: Practical for <1M records
 - ⚠️ **Implementation complexity**: Requires specialized library (SealPIR, SimplePIR)
 
 **Alternatives Considered**:
-- **ORAM**: Rejected (1000x+ overhead)
+- **ORAM**: Rejected (1000x+ overhead (published estimate; not measured here))
 - **TEE-only**: Complementary; PIR provides no-trust-anchor alternative
 
 ### Implementation Plan
@@ -532,8 +532,8 @@ SSE leaks access patterns. For high-sensitivity collections (e.g., sanctions lis
 
 ### Consequences
 
-- **Performance**: 100-500ms per query (vs. 20ms for SSE)
-- **Scalability**: Per-server capacity: ~10 QPS (PIR) vs. 500 QPS (SSE)
+- **Performance**: no PIR mode was built, so nothing was measured. Published PIR schemes cost far more per query than keyword-token search.
+- **Scalability**: not measured (no PIR mode exists).
 - **Operational**: Enable via feature flag; document trade-offs clearly
 
 ### References
@@ -570,7 +570,7 @@ Some operations require plaintext processing (e.g., complex predicates, ML infer
 
 **Cons**:
 - ⚠️ **AWS-specific**: Vendor lock-in (Azure Confidential VMs, GCP Confidential Computing as alternatives)
-- ⚠️ **Performance**: ~10% overhead vs. non-enclave
+- ⚠️ **Performance**: ~10% overhead vs. non-enclave (published estimate; not measured here)
 - ⚠️ **Operational complexity**: Attestation flow, enclave management
 
 **Alternatives Considered**:
@@ -587,7 +587,7 @@ Some operations require plaintext processing (e.g., complex predicates, ML infer
 ### Consequences
 
 - **Security**: Zero server-side leakage (outside enclave); rely on enclave integrity
-- **Performance**: 10% overhead; acceptable for high-sensitivity operations
+- **Performance**: 10% overhead (published estimate; not measured here); acceptable for high-sensitivity operations
 - **Operational**: Require attestation flow; document in runbooks
 
 ### References
@@ -619,7 +619,7 @@ NIST finalized PQC standards (FIPS 203/204/205) in August 2024. Large-scale quan
 - ✅ **Standards-based**: NIST-approved algorithms (Kyber, Dilithium, Falcon)
 
 **Cons**:
-- ⚠️ **Performance**: PQC key operations ~2-10x slower
+- ⚠️ **Performance**: PQC key operations ~2-10x slower (published estimate; not measured here)
 - ⚠️ **Key/signature sizes**: Kyber public key ~1.6KB (vs. 32 bytes for X25519)
 - ⚠️ **Implementation maturity**: Libraries stabilizing (liboqs, PQClean)
 
@@ -638,7 +638,7 @@ NIST finalized PQC standards (FIPS 203/204/205) in August 2024. Large-scale quan
 
 ### Consequences
 
-- **Performance**: 5-10% overhead (hybrid mode)
+- **Performance**: 5-10% overhead (hybrid mode) (published estimate; not measured here)
 - **Storage**: ~2KB per key (vs. 32 bytes classical)
 - **Compliance**: Meet PQC migration mandates (expected 2026-2028)
 

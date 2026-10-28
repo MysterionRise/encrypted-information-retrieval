@@ -1,0 +1,89 @@
+{
+  "corpus": {
+    "documents_matching_and": 200,
+    "rows_in_database_before": 0,
+    "tenant_id": "bench-dc99d7f56434"
+  },
+  "ingest": {
+    "documents_per_second": 409.9938599442533,
+    "total_seconds": 2.439060917
+  },
+  "operations": {
+    "get_document": {
+      "max_ms": 0.395084,
+      "mean_ms": 0.238657245,
+      "min_ms": 0.165062,
+      "n": 200,
+      "p50_ms": 0.2278575,
+      "p95_ms": 0.34269279999999996,
+      "p99_ms": 0.37621222000000004
+    },
+    "ingest": {
+      "max_ms": 5.262744,
+      "mean_ms": 2.436907123,
+      "min_ms": 1.93702,
+      "n": 1000,
+      "p50_ms": 2.2506885,
+      "p95_ms": 3.4263495,
+      "p99_ms": 3.78697696,
+      "unit": "one document"
+    },
+    "rag_retrieve": {
+      "max_ms": 6.665716,
+      "mean_ms": 5.923083555,
+      "min_ms": 5.66178,
+      "n": 200,
+      "p50_ms": 5.8813794999999995,
+      "p95_ms": 6.264605650000001,
+      "p99_ms": 6.494573549999999,
+      "results": 10
+    },
+    "search_and": {
+      "max_ms": 10.904951,
+      "mean_ms": 6.03268794,
+      "min_ms": 5.13591,
+      "n": 200,
+      "p50_ms": 5.7505515,
+      "p95_ms": 7.68273615,
+      "p99_ms": 9.38476703,
+      "results": 100
+    },
+    "search_or": {
+      "max_ms": 9.626478,
+      "mean_ms": 6.2136425,
+      "min_ms": 5.269725,
+      "n": 200,
+      "p50_ms": 5.78636,
+      "p95_ms": 9.08272345,
+      "p99_ms": 9.32786284,
+      "results": 100
+    }
+  },
+  "parameters": {
+    "documents": 1000,
+    "query": "fraud controls",
+    "rag_top_k": 10,
+    "rounds": 200,
+    "search_limit": 100,
+    "warmup": 20
+  },
+  "provenance": {
+    "commit": "7ca442f836921e2f3ee0a971f9e3e808d266644b",
+    "cpu_count": 4,
+    "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "database": {
+      "dialect": "sqlite",
+      "driver": "pysqlite",
+      "server_version": "3.45.1",
+      "url": "sqlite+pysqlite:///%3Amemory%3A"
+    },
+    "dirty_tree": false,
+    "generated_at": "2026-10-28T19:11:27+00:00",
+    "os": "Linux-6.18.44-fc-v180-x86_64-with-glibc2.39",
+    "package_version": "0.9.0",
+    "python": "CPython 3.11.17",
+    "sqlalchemy": "2.1.5"
+  },
+  "schema_version": 1,
+  "tool": "encrypted_ir.tools.benchmark_retrieval"
+}
