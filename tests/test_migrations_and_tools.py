@@ -318,3 +318,41 @@ def test_compare_benchmarks(tmp_path, capsys):
     assert compare.main([str(slower), "--baseline", str(baseline)]) == 1
     assert "REGRESSION" in capsys.readouterr().out
     assert compare.main([str(slower), "--baseline", str(baseline), "--threshold", "4"]) == 0
+
+
+def test_portfolio_evidence_benchmark_table_matches_the_reports():
+    """docs/PORTFOLIO_EVIDENCE.md must be re-rendered whenever a benchmark report changes."""
+    assert _load_script("render_evidence").main(["--check"]) == 0
+
+
+def test_render_evidence_builds_a_row_per_report(tmp_path, monkeypatch):
+    render = _load_script("render_evidence")
+    monkeypatch.delenv("GITHUB_SHA", raising=False)
+    out = tmp_path / "benchmarks" / "reports" / "sqlite-memory"
+    benchmark_retrieval.main(
+        ["--documents", "5", "--rounds", "3", "--warmup", "0", "--output-dir", str(out)]
+        + ["--commit", "0123456789abcdef"]
+    )
+
+    section = render.render_benchmarks(
+        render.load_benchmarks(tmp_path / "benchmarks" / "reports"), root=tmp_path
+    )
+
+    [row] = [line for line in section.splitlines() if line.startswith("| SQLite")]
+    assert "(in memory) | 5 |" in row
+    assert " / n/a |" in row  # three samples: no p95
+    assert "(../benchmarks/reports/sqlite-memory/retrieval_5.md)" in row
+    assert "commit `0123456789ab`" in section
+
+
+def test_render_evidence_needs_the_markers():
+    render = _load_script("render_evidence")
+    with pytest.raises(SystemExit, match="generated:benchmarks"):
+        render.apply("no markers here", {"benchmarks": "x"})
+    assert (
+        render.apply(
+            "<!-- generated:benchmarks:begin -->\nold\n<!-- generated:benchmarks:end -->",
+            {"benchmarks": "new\n"},
+        )
+        == "<!-- generated:benchmarks:begin -->\nnew\n<!-- generated:benchmarks:end -->"
+    )
