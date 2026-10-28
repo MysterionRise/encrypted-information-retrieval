@@ -31,8 +31,7 @@ from sqlalchemy import func, select
 
 from encrypted_ir import audit
 from encrypted_ir.database import audit_log_table, create_database_engine
-from encrypted_ir.master_key import resolve_master_key
-from encrypted_ir.settings import EncryptedIRSettings
+from encrypted_ir.tools._settings import load_settings_and_master_key
 
 EXIT_OK = 0
 EXIT_CONFIG = 1
@@ -86,13 +85,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        settings = EncryptedIRSettings.from_env()
-        if settings.generated_ephemeral_master_key:
-            raise ValueError(
-                "No master key is configured; set the one the API uses "
-                "(ENCRYPTED_IR_MASTER_KEY_B64 or the KMS settings)"
-            )
-        master_key, _ = resolve_master_key(settings)
+        settings, master_key = load_settings_and_master_key()
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_CONFIG

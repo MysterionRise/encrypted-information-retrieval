@@ -83,6 +83,9 @@ documents_table = Table(
     # Sealed metadata for "aes-256-gcm/v1" rows; NULL for legacy "aes-gcm" rows, whose
     # metadata stays in metadata_json.
     Column("encrypted_metadata", LargeBinary, nullable=True),
+    # The sealed, sorted keyword list, so key rotation can rebuild the search tokens. NULL for
+    # rows ingested before Alembic 20261028_0005.
+    Column("encrypted_keywords", LargeBinary, nullable=True),
     Column("algorithm", String(64), nullable=False, default="aes-gcm"),
     Column("encryption_key_id", String(255), nullable=False),
     Column("search_key_id", String(255), nullable=False),
@@ -96,6 +99,20 @@ documents_table = Table(
         onupdate=func.now(),
         nullable=False,
     ),
+    Index("ix_encrypted_ir_documents_tenant_encryption_key", "tenant_id", "encryption_key_id"),
+    Index("ix_encrypted_ir_documents_tenant_search_key", "tenant_id", "search_key_id"),
+)
+
+# One row per tenant while a key rotation runs: a second rotation conflicts on the primary key.
+key_rotations_table = Table(
+    "encrypted_ir_key_rotations",
+    metadata,
+    Column("tenant_id", String(255), primary_key=True),
+    Column("run_id", String(64), nullable=False),
+    Column("target_encryption_key_id", String(255), nullable=False, default=""),
+    Column("target_search_key_id", String(255), nullable=False, default=""),
+    Column("started_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
+    Column("updated_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
 )
 
 document_tokens_table = Table(

@@ -16,10 +16,10 @@ from .deterministic import DeterministicEncryption
 from .document_service import DocumentRecord, DocumentService, RetrievalCandidate
 from .errors import ResearchPrototypeWarning
 from .key_manager import KeyLifecycleState, KeyManager
-from .key_rotation import KeyRotationManager, RotationPolicy, RotationProgress
 from .kms_provider import AWSKMSProvider, EnvelopeEncryption, KMSProvider
 from .logging import LoggingConfig, StructuredFormatter, get_correlation_id, new_correlation_id
 from .metrics import EncryptionMetrics
+from .rotation import RotationReport, rotate_tenant_keys
 from .searchable import BooleanQuery, SearchableEncryption
 from .storage_backend import DatabaseStorageBackend, FileStorageBackend, StorageBackend
 
@@ -39,9 +39,8 @@ __all__ = [
     # Key management
     "KeyManager",
     "KeyLifecycleState",
-    "KeyRotationManager",
-    "RotationPolicy",
-    "RotationProgress",
+    "rotate_tenant_keys",
+    "RotationReport",
     "StorageBackend",
     "FileStorageBackend",
     "DatabaseStorageBackend",

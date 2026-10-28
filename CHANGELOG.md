@@ -13,6 +13,22 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Security
 
+- **Key rotation re-encrypts documents** (#42, ADR-018). `python -m
+  encrypted_ir.tools.rotate_tenant_keys --tenant T` rotates a tenant's document and search keys
+  while the API serves:
+  - It creates successor keys, then re-encrypts every document in resumable batches with a
+    compare-and-swap write.
+  - It rebuilds each document's search tokens from a keyword list now sealed at ingest.
+  - It then retires the old document key and destroys the old search key, clearing its bytes.
+  - Legacy rows are upgraded to the sealed format.
+  - Concurrency: an ingest that races a rotation retries with fresh keys, a search that races
+    one runs again, and a second rotation of the same tenant is refused. A document that does not
+    decrypt blocks retirement and is reported.
+  - Documents ingested with explicit keywords before this release keep their old search key,
+    which stays searchable, until they are ingested again; the tool reports them.
+- `generate_kms_master_key` lets KMS create the master key with `GenerateDataKey` instead of
+  generating it locally and calling `Encrypt` (#42). The operator now needs
+  `kms:GenerateDataKey`. Rotate the master key with KMS-side rotation of the customer master key.
 - **Audit rows form a tamper-evident chain** (#44, ADR-017). Every row has one schema and an
   `entry_hash = HMAC-SHA256(audit_key, prev_hash || canonical_json(entry))`, where `audit_key` is
   derived from the app master key per tenant; a head row per tenant records the last `seq` and
@@ -88,6 +104,10 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Removed
 
+- `encrypted_ir.key_rotation` (`KeyRotationManager`, `RotationPolicy`, `RotationProgress`,
+  `rotate_kek`) and `KeyManager.rotate_key` (#42). The rotation tool is now the only rotation
+  path. `rotate_kek` never persisted the re-wrapped master key, and nothing called
+  `KeyRotationManager`'s re-encryption. Use `KeyManager.begin_rotation` in library code.
 - `encrypted_ir.audit.AuditLogger` and its helpers, `KeyManager.get_audit_log()` and the
   in-memory key audit log, `StorageBackend.save_audit_entry`/`load_audit_log`, and the file
   backend's `audit.jsonl` (#44). Key events are written by `DatabaseStorageBackend.save_key(...,
@@ -134,6 +154,13 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Changed
 
+- **Breaking: migration 0005** (#42). Run `alembic upgrade head`. It adds:
+  - `encrypted_ir_documents.encrypted_keywords`;
+  - indexes on `(tenant_id, encryption_key_id)` and `(tenant_id, search_key_id)`;
+  - `encrypted_ir_key_rotations`.
+
+  `StorageBackend` implementations must provide `save_keys`. `refresh()` loads destroyed keys'
+  metadata without unwrapping them.
 - **Breaking: migration 0004 and one audit schema** (#44). Run `alembic upgrade head`. Audit rows
   gain `schema_version`, `event_type`, `actor`, `request_id`, `success`, `seq`, `prev_hash` and
   `entry_hash`, and `encrypted_ir_audit_chain_heads` is new. Rows written before the migration
@@ -233,6 +260,9 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Added
 
+- `encrypted_ir.rotation.rotate_tenant_keys`, `RotationReport`,
+  `KeyManager.begin_rotation`, `KeyManager.stored_key_ids` and
+  `StorageBackend.save_keys` (#42).
 - `ENCRYPTED_IR_RATE_LIMITS` (JSON overrides of the per-operation and per-client limits),
   `ENCRYPTED_IR_RATE_LIMIT_MAX_KEYS` and `ENCRYPTED_IR_TRUSTED_PROXIES` (#47).
 - Structured JSON logging is configured by `create_app` (#43): one access line per request with
