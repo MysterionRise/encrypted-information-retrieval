@@ -66,6 +66,27 @@ class TestGCRA:
         assert all(limiter.try_acquire("t", "other") is None for _ in range(10))
         assert limiter.bucket_count() == 0
 
+    @pytest.mark.parametrize("max_requests", [1, 2, 3, 7])
+    @pytest.mark.parametrize(
+        "start", [9.676010000000002, 0.1, 3.3, 17.000000000000004, 59.99, 1e-9]
+    )
+    def test_exact_burst_at_any_clock_value(self, max_requests, start):
+        # At small clock values (a freshly booted host), (now + interval) - window can round
+        # above now; the first max_requests requests must still pass and the next must not.
+        clock = _Clock(start)
+        limiter = RateLimiter({"op": RateLimitConfig(max_requests, 60)}, clock=clock)
+
+        results = [limiter.try_acquire("k", "op") for _ in range(max_requests + 1)]
+
+        assert results[:max_requests] == [None] * max_requests
+        assert results[-1] == pytest.approx(60 / max_requests)
+
+    def test_rounding_regression_value(self):
+        start = 9.676010000000002
+        assert (start + 60.0) - 60.0 > start  # the value really does round up
+        limiter = RateLimiter({"op": RateLimitConfig(1, 60)}, clock=_Clock(start))
+        assert limiter.try_acquire("new-key", "op") is None
+
     def test_retry_after_header_rounds_up(self):
         assert retry_after_header(0.01) == "1"
         assert retry_after_header(19.2) == "20"
