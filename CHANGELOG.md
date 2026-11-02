@@ -12,6 +12,23 @@ its changes ship in `0.10.0`.
 
 ## [Unreleased]
 
+### Added
+
+- The AWS KMS path, end to end, without an AWS account (#49):
+  - `docker-compose.kms.yml` adds moto server as a KMS emulator. LocalStack, which the roadmap
+    named, needs an account auth token since its 2026.03.0 release.
+  - `scripts/kms_smoke.sh`:
+    - wraps a master key with `generate_kms_master_key` and starts the API with
+      `ENCRYPTED_IR_KMS_PROVIDER=aws`;
+    - ingests, restarts and retrieves;
+    - checks the `_system` audit chain for one `key.unwrap` row per start;
+    - checks that a key wrapped for `dev` fails to unwrap under `ENCRYPTED_IR_ENV=test`.
+  - A new gating CI job, `e2e`, runs the script.
+  - `docs/KMS_DEPLOYMENT.md` covers the production steps and CloudTrail. `docs/iam/` holds the
+    IAM policies for the API role (`kms:Decrypt` only, with the encryption context required) and
+    the operator role. `tests/test_kms_iam_policy.py` checks them against the code's context.
+  - CI now checks relative Markdown links. Dependabot updates the Compose image digests.
+
 ## [0.10.0] - 2026-11-02
 
 The first tagged release. It contains Phase 0 (honest docs, real CI gates, the release workflow)

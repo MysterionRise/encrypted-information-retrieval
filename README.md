@@ -181,17 +181,15 @@ KMS creates the key with `GenerateDataKey`, so the operator running the tool nee
 KMS encryption context `application=encrypted-information-retrieval`,
 `environment=<--environment>` and `purpose=app-master-key`, and the API unwraps it with the same
 context, so set `--environment` to the `ENCRYPTED_IR_ENV` it will run under. A key generated before
-this context existed must be regenerated. To make the context mandatory, add a condition to the
-API role's `kms:Decrypt` permission:
+this context existed must be regenerated. The IAM policies for the API role (`kms:Decrypt` only,
+with that context required) and the operator role are in [`docs/iam/`](docs/iam/), with the
+production steps and the CloudTrail setup in [KMS_DEPLOYMENT.md](docs/KMS_DEPLOYMENT.md).
 
-```json
-"Condition": {
-  "StringEquals": {
-    "kms:EncryptionContext:application": "encrypted-information-retrieval",
-    "kms:EncryptionContext:environment": "prod",
-    "kms:EncryptionContext:purpose": "app-master-key"
-  }
-}
+Run the KMS path without an AWS account, with moto server standing in for AWS KMS:
+
+```bash
+cp .env.example .env
+./scripts/kms_smoke.sh
 ```
 
 Rotate a tenant's document and search keys while the API keeps serving. Use the same

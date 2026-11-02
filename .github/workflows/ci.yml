@@ -53,6 +53,9 @@ jobs:
         run: |
           PYTHONPATH=src:$PYTHONPATH mypy --disable-error-code redundant-cast src/encrypted_ir --ignore-missing-imports --no-strict-optional
 
+      - name: Relative links in Markdown resolve
+        run: python scripts/check_links.py
+
   # Unit and integration tests against PostgreSQL on every supported Python.
   test:
     name: Test Suite (Python ${{ matrix.python-version }})
@@ -325,6 +328,39 @@ jobs:
         if: always()
         run: docker compose down -v
 
+  # The production key path without an AWS account: moto server stands in for AWS KMS.
+  # Each script runs its own Compose project on a fresh volume, prints the service logs if it
+  # fails, and removes the stack on exit.
+  e2e:
+    name: End-to-end KMS
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Create .env from the committed demo values
+        run: cp .env.example .env
+
+      - name: Build the API image
+        run: docker compose build api
+
+      - name: KMS path (moto) - wrap, start, ingest, restart, retrieve, context binding
+        env:
+          RESULT_JSON: e2e-results/kms.json
+        run: |
+          mkdir -p e2e-results
+          ./scripts/kms_smoke.sh
+
+      - name: Upload end-to-end results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-results
+          path: e2e-results/
+          if-no-files-found: ignore
+          retention-days: 90
+
   # Performance benchmarks on master only. Informational: not part of CI Success.
   benchmarks:
     name: Performance Benchmarks
@@ -418,7 +454,7 @@ jobs:
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [lint, test, coverage, security, research, docker, build]
+    needs: [lint, test, coverage, security, research, docker, e2e, build]
     if: always()
     steps:
       - name: Check all gating jobs

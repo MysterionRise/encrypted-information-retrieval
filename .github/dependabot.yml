@@ -24,6 +24,20 @@ updates:
     commit-message:
       prefix: "docker"
 
+  # The moto (and, with the OIDC profile, Keycloak) images in the Compose overlays are pinned
+  # by digest.
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "docker"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
