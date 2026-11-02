@@ -139,6 +139,21 @@ def test_settings_prod_requires_oidc_and_kms():
         settings.validate()
 
 
+def test_settings_prod_requires_kms_once_oidc_is_configured():
+    settings = EncryptedIRSettings(
+        environment="prod",
+        master_key=None,
+        dev_auth_enabled=False,
+        auto_create_tables=False,
+        oidc_issuer="https://issuer.example",
+        oidc_audience="encrypted-ir",
+        oidc_jwks_url="https://issuer.example/jwks",
+    )
+
+    with pytest.raises(ValueError, match="ENCRYPTED_IR_KMS_PROVIDER=aws is required in prod"):
+        settings.validate()
+
+
 def test_kms_master_key_resolution_with_fake_provider():
     plaintext = os.urandom(32)
     settings = EncryptedIRSettings(

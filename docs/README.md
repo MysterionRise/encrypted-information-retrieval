@@ -13,7 +13,8 @@ never imported by the core package or the API. THREAT_MODEL.md covers both, and 
 | Document | Purpose |
 | --- | --- |
 | [../README.md](../README.md) | Entry point: what is real, demo paths, boundaries and commands. |
-| [PORTFOLIO_EVIDENCE.md](PORTFOLIO_EVIDENCE.md) | The dated evidence run, current status, known limitations, and how to reproduce. |
+| [REVIEW_GUIDE.md](REVIEW_GUIDE.md) | Every README claim next to the test, CI step or run that proves it; the leakage to accept; what is not claimed. |
+| [PORTFOLIO_EVIDENCE.md](PORTFOLIO_EVIDENCE.md) | The evidence run of the release commit (rendered by CI), benchmarks, current status, known limitations, and how to reproduce. |
 | [ROADMAP.md](ROADMAP.md) | Phased roadmap (v0.9.0, then v0.10.0, then v1.0.0), the findings behind it, and links to the GitHub issues. |
 | [THREAT_MODEL.md](THREAT_MODEL.md) | What the code protects, what it leaks, and each known gap with its tracking issue. |
 | [LEAKAGE_AND_ENDPOINTS.md](LEAKAGE_AND_ENDPOINTS.md) | Per-endpoint leakage map and production boundary. |
@@ -27,6 +28,7 @@ never imported by the core package or the API. THREAT_MODEL.md covers both, and 
 | [DECISIONS.md](DECISIONS.md) | Architecture decision records. ADR-001 to ADR-010 are 2025 target decisions with corrected statuses. ADR-011 to ADR-018 record decisions reflected in the code or accepted for the roadmap. |
 | [OIDC_DEPLOYMENT.md](OIDC_DEPLOYMENT.md) | What the API requires of a token, the local Keycloak run in production mode, and claim mappings for Cognito, Auth0, Okta and Entra ID. |
 | [KMS_DEPLOYMENT.md](KMS_DEPLOYMENT.md) | The AWS KMS key path: running it locally against an emulator, the production steps, the IAM policies in [iam/](iam/), and CloudTrail. |
+| [REVIEW_REQUEST_TEMPLATE.md](REVIEW_REQUEST_TEMPLATE.md) | The request to send to a third-party reviewer: scope, out of scope, questions. |
 | [PORTFOLIO_CASE_STUDY.md](PORTFOLIO_CASE_STUDY.md) | Short narrative of the problem, the approach and the leakage trade-offs. |
 
 ## Archive

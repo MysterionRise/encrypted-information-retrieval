@@ -1,14 +1,22 @@
-"""Render the generated sections of docs/PORTFOLIO_EVIDENCE.md from JSON results.
+"""Render the generated sections of docs/PORTFOLIO_EVIDENCE.md.
 
-    python scripts/render_evidence.py          # rewrite the generated sections in place
-    python scripts/render_evidence.py --check  # exit 1 if they are out of date
+    python scripts/render_evidence.py          # rewrite the benchmark section in place
+    python scripts/render_evidence.py --check  # exit 1 if it is out of date
+
+    # In CI (the `evidence` job), from the artifacts of the gating jobs of one run:
+    python scripts/render_evidence.py --ci-evidence evidence/ --needs-json needs.json \
+        --commit "$GITHUB_SHA" --run-url "$RUN_URL" --ref "$GITHUB_REF_NAME"
 
 A generated section sits between ``<!-- generated:NAME:begin -->`` and
 ``<!-- generated:NAME:end -->``; everything outside the markers is written by hand.
 
 Sections:
-- ``benchmarks``: the retrieval benchmark summary, from
+- ``benchmarks``: the retrieval benchmark summary, from the committed
   ``benchmarks/reports/<engine>/retrieval_<N>.json`` (encrypted_ir.tools.benchmark_retrieval).
+- ``run``, ``jobs``, ``tests`` and ``e2e``, only with ``--ci-evidence``: the CI run (commit, run
+  URL, and an ``evidence-commit`` comment that the release workflow checks), each gating job's
+  result, pytest counts per job from JUnit XML with total coverage from ``coverage.xml``, and the
+  end-to-end JSON results of scripts/compose_smoke.sh, kms_smoke.sh and oidc_smoke.sh.
 """
 
 from __future__ import annotations
@@ -17,8 +25,10 @@ import argparse
 import json
 import re
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parent.parent
 EVIDENCE = ROOT / "docs" / "PORTFOLIO_EVIDENCE.md"
@@ -86,6 +96,101 @@ def render_benchmarks(results: list[tuple[Path, dict[str, Any]]], root: Path = R
     return "\n".join(lines) + "\n"
 
 
+JUNIT_LABELS = {
+    "junit-test-py3.11": "Test Suite, Python 3.11, on PostgreSQL 16",
+    "junit-test-py3.12": "Test Suite, Python 3.12, on PostgreSQL 16",
+    "junit-coverage": "Test Coverage, research extras, on PostgreSQL 16",
+    "junit-research": "Research Modules, Python 3.11, research extras",
+}
+E2E_LABELS = {
+    "compose": "Docker Compose: ingest, restart, retrieve (`scripts/compose_smoke.sh`)",
+    "kms": "AWS KMS path against moto server (`scripts/kms_smoke.sh`)",
+    "oidc": "Production mode with Keycloak and moto (`scripts/oidc_smoke.sh`)",
+}
+
+
+def junit_totals(path: Path) -> dict[str, float]:
+    """Sum the counts of every ``testsuite`` in a JUnit XML file written by pytest."""
+    root = ElementTree.parse(path).getroot()  # noqa: S314 - our own CI artifact
+    suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
+    totals = {"tests": 0.0, "failures": 0.0, "errors": 0.0, "skipped": 0.0, "time": 0.0}
+    for suite in suites:
+        for key in totals:
+            totals[key] += float(suite.get(key, 0))
+    return totals
+
+
+def coverage_percent(path: Path) -> float:
+    """Total coverage as pytest-cov reports it: covered lines and branches over all of them."""
+    root = ElementTree.parse(path).getroot()  # noqa: S314 - our own CI artifact
+    covered = float(root.get("lines-covered", 0)) + float(root.get("branches-covered", 0))
+    valid = float(root.get("lines-valid", 0)) + float(root.get("branches-valid", 0))
+    return 100.0 * covered / valid if valid else 0.0
+
+
+def render_run(commit: str, run_url: str, ref: str, rendered_at: str) -> str:
+    return "\n".join(
+        [
+            f"<!-- evidence-commit: {commit} -->",
+            "| Run | Value |",
+            "| --- | --- |",
+            f"| Commit | `{commit}` |",
+            f"| Branch or tag | `{ref}` |",
+            f"| CI run | [{run_url.rsplit('/', 1)[-1]}]({run_url}) |",
+            f"| Rendered (UTC) | {rendered_at} |",
+            "",
+        ]
+    )
+
+
+def render_jobs(needs: dict[str, Any]) -> str:
+    lines = ["| CI job | Result |", "| --- | --- |"]
+    for job in sorted(needs):
+        lines.append(f"| `{job}` | {needs[job].get('result', 'unknown')} |")
+    return "\n".join(lines) + "\n"
+
+
+def render_tests(evidence: Path) -> str:
+    lines = [
+        "| Job | Tests | Passed | Failed | Errors | Skipped | Time (s) |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for path in sorted(evidence.rglob("junit-*.xml")):
+        t = junit_totals(path)
+        passed = t["tests"] - t["failures"] - t["errors"] - t["skipped"]
+        label = JUNIT_LABELS.get(path.stem, path.stem)
+        lines.append(
+            f"| {label} | {t['tests']:.0f} | {passed:.0f} | {t['failures']:.0f} | "
+            f"{t['errors']:.0f} | {t['skipped']:.0f} | {t['time']:.0f} |"
+        )
+    coverage = sorted(evidence.rglob("coverage.xml"))
+    lines.append("")
+    if coverage:
+        lines.append(
+            f"Total coverage (lines and branches, `src/encrypted_ir`): "
+            f"{coverage_percent(coverage[0]):.2f}%; the job fails under 86%."
+        )
+    else:
+        lines.append("No coverage report was found in this run.")
+    return "\n".join(lines) + "\n"
+
+
+def render_e2e(evidence: Path) -> str:
+    lines = ["| Check | Result | Date (UTC) | What ran |", "| --- | --- | --- | --- |"]
+    for name, label in E2E_LABELS.items():
+        found = sorted(evidence.rglob(f"{name}.json"))
+        if not found:
+            lines.append(f"| {label} | not run | | |")
+            continue
+        result = json.loads(found[0].read_text())
+        outcome = "passed" if result.get("passed") else "FAILED"
+        lines.append(
+            f"| {label} | {outcome} | {result.get('date', '')} | "
+            f"{'; '.join(result.get('steps', []))} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
 SECTIONS = {"benchmarks": lambda: render_benchmarks(load_benchmarks())}
 
 
@@ -106,10 +211,24 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--check", action="store_true", help="Exit 1 if out of date")
+    parser.add_argument("--ci-evidence", type=Path, help="Directory of the CI evidence artifacts")
+    parser.add_argument("--needs-json", type=Path, help="toJSON(needs) of the evidence job")
+    parser.add_argument("--commit", help="Commit the CI run tested")
+    parser.add_argument("--run-url", help="URL of the CI run")
+    parser.add_argument("--ref", default="", help="Branch or tag of the CI run")
     args = parser.parse_args(argv)
 
+    sections = {name: render() for name, render in SECTIONS.items()}
+    if args.ci_evidence:
+        if not (args.needs_json and args.commit and args.run_url):
+            parser.error("--ci-evidence needs --needs-json, --commit and --run-url")
+        rendered_at = datetime.now(UTC).isoformat(timespec="seconds")
+        sections["run"] = render_run(args.commit, args.run_url, args.ref, rendered_at)
+        sections["jobs"] = render_jobs(json.loads(args.needs_json.read_text()))
+        sections["tests"] = render_tests(args.ci_evidence)
+        sections["e2e"] = render_e2e(args.ci_evidence)
     current = EVIDENCE.read_text()
-    rendered = apply(current, {name: render() for name, render in SECTIONS.items()})
+    rendered = apply(current, sections)
     if args.check:
         if rendered != current:
             print(f"{EVIDENCE} is out of date: run scripts/render_evidence.py", file=sys.stderr)

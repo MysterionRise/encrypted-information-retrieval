@@ -2,8 +2,16 @@
 
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html). While the version is
-below 1.0.0, minor versions may contain breaking changes.
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html). From 1.0.0, a breaking change
+to the public surface needs a major version. The public surface is:
+- the HTTP API under `/v1`, plus `/health`, `/ready` and `/metrics`;
+- the `ENCRYPTED_IR_*` settings;
+- the command-line tools in `encrypted_ir.tools` and `python -m encrypted_ir.migrations`;
+- the database schema, which changes only through Alembic migrations;
+- the names exported by the `encrypted_ir` package.
+
+`encrypted_ir.research` is excluded: its prototypes may change in any release. Before 1.0.0,
+minor versions could contain breaking changes.
 
 The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 `0.10.0` closes Phase 0 (issue #26) and Phase 1 (issue #27), and `1.0.0` closes
@@ -12,14 +20,45 @@ its changes ship in `0.10.0`.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-02
+
+Phase 2 (issue #28): the production KMS and OIDC paths run end to end without a cloud account,
+the benchmarks carry provenance, and [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md) maps every
+README claim to the test, CI job or run that proves it. The public surface listed above is now
+covered by Semantic Versioning.
+
 ### Removed
 
 - The mean-only retrieval reports in `benchmarks/reports/` and the archived report template
   the tool never filled (#50). Latency figures in `docs/DECISIONS.md` that were never measured
   are gone; figures from published work are kept and labelled as such.
 
+### Changed
+
+- Version `1.0.0`, with the classifier `Development Status :: 4 - Beta` (the research modules
+  remain prototypes) (#51). This file now says what Semantic Versioning covers from 1.0.0: the
+  HTTP API, the settings, the CLI tools, the migrations and the package exports;
+  `encrypted_ir.research` is excluded.
+
 ### Added
 
+- A reviewer guide and release evidence from CI (#51):
+  - `docs/REVIEW_GUIDE.md` maps every README claim to the test, CI step or recorded run that
+    proves it, and says where the proof is weak. It also lists the per-endpoint leakage a
+    reviewer must accept and what the project does not claim.
+  - `tests/test_review_guide.py` fails when a cited test, file, CI job or step does not exist, or
+    when a "What Is Real" line has no row.
+  - `docs/REVIEW_REQUEST_TEMPLATE.md` is the request to send to a third-party reviewer.
+  - CI jobs now keep their JUnit counts, coverage and end-to-end JSON results. A new `evidence`
+    job renders `docs/PORTFOLIO_EVIDENCE.md` from one run (`scripts/render_evidence.py`) and
+    uploads it.
+  - The release workflow refuses a tag when files other than that document changed since its
+    evidence commit, checked by a test against the real workflow step.
+  - New tests: the same keyword is stored as different tokens in two tenants; PS256 tokens
+    verify; prod requires KMS once OIDC is configured. CI checks that PostgreSQL is not
+    published by any Compose layering.
+  - The CTO demo shows the audit export, `/metrics`, deletion and rotation, and lists the
+    whole HTTP surface.
 - Retrieval benchmarks with provenance (#50):
   - `encrypted_ir.tools.benchmark_retrieval` now times every ingest, then runs search OR, search
     AND, get-and-decrypt and RAG retrieve with warm-up rounds.

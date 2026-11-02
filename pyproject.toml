@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["encryption", "searchable-encryption", "privacy", "rag", "regulated-ai", "postgresql", "oidc", "kms"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Financial and Insurance Industry",
     "Programming Language :: Python :: 3",
