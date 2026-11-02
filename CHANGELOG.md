@@ -14,10 +14,106 @@ to the public surface needs a major version. The public surface is:
 minor versions could contain breaking changes.
 
 The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
-`0.9.0` closes Phase 0 (issue #26), `0.10.0` closes Phase 1 (issue #27), and
-`1.0.0` closes Phase 2 (issue #28).
+`0.10.0` closes Phase 0 (issue #26) and Phase 1 (issue #27), and `1.0.0` closes
+Phase 2 (issue #28). Phase 0 set the version to `0.9.0` but was never tagged, so
+its changes ship in `0.10.0`.
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-11-02
+
+Phase 2 (issue #28): the production KMS and OIDC paths run end to end without a cloud account,
+the benchmarks carry provenance, and [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md) maps every
+README claim to the test, CI job or run that proves it. The public surface listed above is now
+covered by Semantic Versioning.
+
+### Removed
+
+- The mean-only retrieval reports in `benchmarks/reports/` and the archived report template
+  the tool never filled (#50). Latency figures in `docs/DECISIONS.md` that were never measured
+  are gone; figures from published work are kept and labelled as such.
+
+### Changed
+
+- Version `1.0.0`, with the classifier `Development Status :: 4 - Beta` (the research modules
+  remain prototypes) (#51). This file now says what Semantic Versioning covers from 1.0.0: the
+  HTTP API, the settings, the CLI tools, the migrations and the package exports;
+  `encrypted_ir.research` is excluded.
+
+### Added
+
+- A reviewer guide and release evidence from CI (#51):
+  - `docs/REVIEW_GUIDE.md` maps every README claim to the test, CI step or recorded run that
+    proves it, and says where the proof is weak. It also lists the per-endpoint leakage a
+    reviewer must accept and what the project does not claim.
+  - `tests/test_review_guide.py` fails when a cited test, file, CI job or step does not exist, or
+    when a "What Is Real" line has no row.
+  - `docs/REVIEW_REQUEST_TEMPLATE.md` is the request to send to a third-party reviewer.
+  - CI jobs now keep their JUnit counts, coverage and end-to-end JSON results. A new `evidence`
+    job renders `docs/PORTFOLIO_EVIDENCE.md` from one run (`scripts/render_evidence.py`) and
+    uploads it.
+  - The release workflow refuses a tag when files other than that document changed since its
+    evidence commit, checked by a test against the real workflow step.
+  - New tests: the same keyword is stored as different tokens in two tenants; PS256 tokens
+    verify; prod requires KMS once OIDC is configured. CI checks that PostgreSQL is not
+    published by any Compose layering.
+  - The CTO demo shows the audit export, `/metrics`, deletion and rotation, and lists the
+    whole HTTP surface.
+- Retrieval benchmarks with provenance (#50):
+  - `encrypted_ir.tools.benchmark_retrieval` now times every ingest, then runs search OR, search
+    AND, get-and-decrypt and RAG retrieve with warm-up rounds.
+  - It reports n, mean, min, max and p50/p95/p99 ("n/a" below 20 or 100 samples).
+  - It records the commit, the time, the CPU, the OS, Python, the SQLAlchemy driver and the
+    database server, and writes JSON plus Markdown rendered from it. **Breaking:** `--report`,
+    `--tenant-id` and `--auto-create` are replaced by `--output-dir`.
+  - Reports for in-memory SQLite and the Compose PostgreSQL (100, 1,000 and 10,000 documents)
+    are committed under `benchmarks/reports/<engine>/`.
+  - New: `make bench-retrieval`, `make bench-retrieval-postgres` (`scripts/bench_postgres.sh`,
+    which runs inside the image so PostgreSQL stays unpublished) and `benchmarks/README.md`.
+  - `scripts/render_evidence.py` builds the PORTFOLIO_EVIDENCE benchmark table from the JSON, and
+    a test fails if the table is out of date.
+  - The master-only benchmarks job also runs the tool on SQLite and on PostgreSQL.
+- The production auth path, end to end, without a cloud account (#48):
+  - `docker-compose.oidc.yml` adds Keycloak 26, with a hand-written realm in
+    `deploy/keycloak/`:
+    - two tenants, a `tenant_id` attribute that only an administrator can edit;
+    - client roles emitted as a top-level `roles` claim;
+    - an audience mapper;
+    - a confidential demo client (password grant, demo only).
+  - The same file runs the API in `ENCRYPTED_IR_ENV=prod` on top of the KMS emulator, with no raw
+    master key and no dev auth in its environment.
+  - `scripts/oidc_smoke.sh` gets RS256 tokens for three users and checks their claims, then
+    checks:
+    - ingest and retrieval within a tenant;
+    - 404 and empty results across tenants;
+    - 403 for a read-only ingest;
+    - 401 for a broken signature and for the dev API key;
+    - the data and audit chain after a restart.
+  - The CI `e2e` job runs it.
+  - `docs/OIDC_DEPLOYMENT.md` covers the token rules, the local run, and claim mappings for
+    Cognito, Auth0, Okta and Entra ID, taken from vendor documentation.
+  - `ENCRYPTED_IR_TENANT_CLAIM` and `ENCRYPTED_IR_ROLES_CLAIM` are now in the README settings
+    table.
+- The AWS KMS path, end to end, without an AWS account (#49):
+  - `docker-compose.kms.yml` adds moto server as a KMS emulator. LocalStack, which the roadmap
+    named, needs an account auth token since its 2026.03.0 release.
+  - `scripts/kms_smoke.sh`:
+    - wraps a master key with `generate_kms_master_key` and starts the API with
+      `ENCRYPTED_IR_KMS_PROVIDER=aws`;
+    - ingests, restarts and retrieves;
+    - checks the `_system` audit chain for one `key.unwrap` row per start;
+    - checks that a key wrapped for `dev` fails to unwrap under `ENCRYPTED_IR_ENV=test`.
+  - A new gating CI job, `e2e`, runs the script.
+  - `docs/KMS_DEPLOYMENT.md` covers the production steps and CloudTrail. `docs/iam/` holds the
+    IAM policies for the API role (`kms:Decrypt` only, with the encryption context required) and
+    the operator role. `tests/test_kms_iam_policy.py` checks them against the code's context.
+  - CI now checks relative Markdown links. Dependabot updates the Compose image digests.
+
+## [0.10.0] - 2026-11-02
+
+The first tagged release. It contains Phase 0 (honest docs, real CI gates, the release workflow)
+and Phase 1 (the durable document path hardened, demo routes removed, research modules
+quarantined). Entries that need action when upgrading start with **Breaking**.
 
 ### Security
 
@@ -119,9 +215,6 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Removed
 
-- The mean-only retrieval reports in `benchmarks/reports/` and the archived report template
-  the tool never filled (#50). Latency figures in `docs/DECISIONS.md` that were never measured
-  are gone; figures from published work are kept and labelled as such.
 - `requirements-api.txt`, replaced by the generated, hash-pinned `requirements-docker.txt`
   (#45).
 - `encrypted_ir.key_rotation` (`KeyRotationManager`, `RotationPolicy`, `RotationProgress`,
@@ -176,10 +269,6 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Changed
 
-- Version `1.0.0`, with the classifier `Development Status :: 4 - Beta` (the research modules
-  remain prototypes) (#51). This file now says what Semantic Versioning covers from 1.0.0: the
-  HTTP API, the settings, the CLI tools, the migrations and the package exports;
-  `encrypted_ir.research` is excluded.
 - **The whole test suite runs on PostgreSQL in CI, in parallel** (#46). Each pytest-xdist worker
   gets its own migrated schema, truncated after every test; API tests use the `app_factory` and
   `db_url` fixtures, which dispose engines. Any 500 response fails a test unless it is marked
@@ -305,72 +394,6 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Added
 
-- A reviewer guide and release evidence from CI (#51):
-  - `docs/REVIEW_GUIDE.md` maps every README claim to the test, CI step or recorded run that
-    proves it, and says where the proof is weak. It also lists the per-endpoint leakage a
-    reviewer must accept and what the project does not claim.
-  - `tests/test_review_guide.py` fails when a cited test, file, CI job or step does not exist, or
-    when a "What Is Real" line has no row.
-  - `docs/REVIEW_REQUEST_TEMPLATE.md` is the request to send to a third-party reviewer.
-  - CI jobs now keep their JUnit counts, coverage and end-to-end JSON results. A new `evidence`
-    job renders `docs/PORTFOLIO_EVIDENCE.md` from one run (`scripts/render_evidence.py`) and
-    uploads it.
-  - The release workflow refuses a tag when files other than that document changed since its
-    evidence commit, checked by a test against the real workflow step.
-  - New tests: the same keyword is stored as different tokens in two tenants; PS256 tokens
-    verify; prod requires KMS once OIDC is configured. CI checks that PostgreSQL is not
-    published by any Compose layering.
-  - The CTO demo shows the audit export, `/metrics`, deletion and rotation, and lists the
-    whole HTTP surface.
-- Retrieval benchmarks with provenance (#50):
-  - `encrypted_ir.tools.benchmark_retrieval` now times every ingest, then runs search OR, search
-    AND, get-and-decrypt and RAG retrieve with warm-up rounds.
-  - It reports n, mean, min, max and p50/p95/p99 ("n/a" below 20 or 100 samples).
-  - It records the commit, the time, the CPU, the OS, Python, the SQLAlchemy driver and the
-    database server, and writes JSON plus Markdown rendered from it. **Breaking:** `--report`,
-    `--tenant-id` and `--auto-create` are replaced by `--output-dir`.
-  - Reports for in-memory SQLite and the Compose PostgreSQL (100, 1,000 and 10,000 documents)
-    are committed under `benchmarks/reports/<engine>/`.
-  - New: `make bench-retrieval`, `make bench-retrieval-postgres` (`scripts/bench_postgres.sh`,
-    which runs inside the image so PostgreSQL stays unpublished) and `benchmarks/README.md`.
-  - `scripts/render_evidence.py` builds the PORTFOLIO_EVIDENCE benchmark table from the JSON, and
-    a test fails if the table is out of date.
-  - The master-only benchmarks job also runs the tool on SQLite and on PostgreSQL.
-- The production auth path, end to end, without a cloud account (#48):
-  - `docker-compose.oidc.yml` adds Keycloak 26, with a hand-written realm in
-    `deploy/keycloak/`:
-    - two tenants, a `tenant_id` attribute that only an administrator can edit;
-    - client roles emitted as a top-level `roles` claim;
-    - an audience mapper;
-    - a confidential demo client (password grant, demo only).
-  - The same file runs the API in `ENCRYPTED_IR_ENV=prod` on top of the KMS emulator, with no raw
-    master key and no dev auth in its environment.
-  - `scripts/oidc_smoke.sh` gets RS256 tokens for three users and checks their claims, then
-    checks:
-    - ingest and retrieval within a tenant;
-    - 404 and empty results across tenants;
-    - 403 for a read-only ingest;
-    - 401 for a broken signature and for the dev API key;
-    - the data and audit chain after a restart.
-  - The CI `e2e` job runs it.
-  - `docs/OIDC_DEPLOYMENT.md` covers the token rules, the local run, and claim mappings for
-    Cognito, Auth0, Okta and Entra ID, taken from vendor documentation.
-  - `ENCRYPTED_IR_TENANT_CLAIM` and `ENCRYPTED_IR_ROLES_CLAIM` are now in the README settings
-    table.
-- The AWS KMS path, end to end, without an AWS account (#49):
-  - `docker-compose.kms.yml` adds moto server as a KMS emulator. LocalStack, which the roadmap
-    named, needs an account auth token since its 2026.03.0 release.
-  - `scripts/kms_smoke.sh`:
-    - wraps a master key with `generate_kms_master_key` and starts the API with
-      `ENCRYPTED_IR_KMS_PROVIDER=aws`;
-    - ingests, restarts and retrieves;
-    - checks the `_system` audit chain for one `key.unwrap` row per start;
-    - checks that a key wrapped for `dev` fails to unwrap under `ENCRYPTED_IR_ENV=test`.
-  - A new gating CI job, `e2e`, runs the script.
-  - `docs/KMS_DEPLOYMENT.md` covers the production steps and CloudTrail. `docs/iam/` holds the
-    IAM policies for the API role (`kms:Decrypt` only, with the encryption context required) and
-    the operator role. `tests/test_kms_iam_policy.py` checks them against the code's context.
-  - CI now checks relative Markdown links. Dependabot updates the Compose image digests.
 - Tests (#46): a route matrix that fails when a `/v1` route lacks a 401, 403 or cross-tenant case;
   AES-SIV bit-flip, truncation and row-swap tamper tests; a test that pins token replay within its
   lifetime (documented in THREAT_MODEL as by design); the slow-JWKS test synchronizes with events
@@ -413,7 +436,8 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
   CycloneDX SBOM, and publishes a GitHub Release whose notes are this file's section for that
   version.
 
-## History before 0.9.0
+## History before 0.10.0
 
-No version was tagged or released before 0.9.0. Earlier work is in the git history and in
-`docs/PORTFOLIO_EVIDENCE.md`.
+No version was tagged or released before 0.10.0. Version 0.9.0 was set in the code during
+Phase 0 but never tagged; its changes are part of 0.10.0. Earlier work is in the git history and
+in `docs/PORTFOLIO_EVIDENCE.md`.

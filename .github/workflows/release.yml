@@ -1,7 +1,7 @@
 name: Release
 
 # Publishes a GitHub Release when a version tag is pushed, for example:
-#   git tag -a v0.9.0 -m "v0.9.0" && git push origin v0.9.0
+#   git tag -a v0.10.0 -m "v0.10.0" && git push origin v0.10.0
 # The tag must match encrypted_ir.__version__, and CHANGELOG.md must have a
 # "## [X.Y.Z]" section for that version; its text becomes the release notes.
 # docs/PORTFOLIO_EVIDENCE.md must come from the CI `evidence` job of a commit whose tree equals
