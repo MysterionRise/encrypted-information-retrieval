@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import (
     JSON,
     Column,
@@ -14,6 +16,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    event,
     func,
 )
 from sqlalchemy.engine import Engine
@@ -82,15 +85,37 @@ document_tokens_table = Table(
 
 
 def create_database_engine(database_url: str) -> Engine:
-    """Create a SQLAlchemy engine with SQLite in-memory settings when needed."""
+    """Create a SQLAlchemy engine for ``database_url``.
+
+    Bound parameters are hidden from exception messages (``hide_parameters``), so a failed
+    statement never prints ciphertext, search tokens or tenant IDs into logs. In-memory SQLite
+    shares one connection between threads and is for tests only. File SQLite waits up to 30 s
+    for locks and uses WAL so readers and a writer can run concurrently.
+    """
     if database_url == "sqlite+pysqlite:///:memory:":
         return create_engine(
             database_url,
             future=True,
+            hide_parameters=True,
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
-    return create_engine(database_url, future=True)
+    if database_url.startswith("sqlite"):
+        engine = create_engine(
+            database_url,
+            future=True,
+            hide_parameters=True,
+            connect_args={"check_same_thread": False, "timeout": 30},
+        )
+        event.listen(engine, "connect", _sqlite_wal)
+        return engine
+    return create_engine(database_url, future=True, hide_parameters=True)
+
+
+def _sqlite_wal(dbapi_connection: Any, _connection_record: Any) -> None:
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.close()
 
 
 def create_database_schema(engine: Engine) -> None:

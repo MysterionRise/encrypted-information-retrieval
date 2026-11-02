@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import logging
 import time
 
 from fastapi import FastAPI, Request, status
-from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -15,7 +13,9 @@ from encrypted_ir import __version__
 from encrypted_ir.database import create_database_engine, create_database_schema
 from encrypted_ir.document_service import DocumentService
 from encrypted_ir.errors import DocumentAlreadyExistsError
+from encrypted_ir.logging import LoggingConfig
 from encrypted_ir.master_key import resolve_master_key
+from encrypted_ir.metrics import EncryptionMetrics
 from encrypted_ir.settings import EncryptedIRSettings
 
 from .dependencies.auth import AuthConfig, OIDCVerifier
@@ -25,20 +25,9 @@ from .middleware import (
     RequestBodyTooLargeError,
     SecurityAuditLimiter,
     error_body,
-    sanitize_request_id,
 )
+from .request_context import SYSTEM_TENANT_ID, RequestContextMiddleware
 from .routes import admin, documents
-
-logger = logging.getLogger(__name__)
-
-SYSTEM_TENANT_ID = "_system"
-
-# Rejections that are counted in /metrics and written (rate-bounded) to the audit log.
-SECURITY_EVENTS = {
-    status.HTTP_401_UNAUTHORIZED: ("auth.failure", "unauthenticated"),
-    status.HTTP_403_FORBIDDEN: ("authz.failure", "forbidden"),
-    status.HTTP_429_TOO_MANY_REQUESTS: ("rate_limit.exceeded", "rate_limited"),
-}
 
 CORS_ALLOWED_METHODS = ["GET", "POST", "DELETE"]
 CORS_ALLOWED_HEADERS = ["Authorization", "Content-Type", "X-API-Key", "X-Request-ID"]
@@ -49,6 +38,7 @@ def create_app(settings: EncryptedIRSettings | None = None) -> FastAPI:  # noqa:
     """Create and configure the FastAPI application."""
     settings = settings or EncryptedIRSettings.from_env()
     settings.validate()
+    LoggingConfig(level=settings.log_level, extra_loggers=("uvicorn.error",)).setup()
     app = FastAPI(
         title="Encrypted Information Retrieval API",
         description=(
@@ -63,6 +53,7 @@ def create_app(settings: EncryptedIRSettings | None = None) -> FastAPI:  # noqa:
         openapi_url="/openapi.json" if settings.enable_docs else None,
     )
     app.state.settings = settings
+    app.state.started_at = time.monotonic()
     app.state.auth_config = AuthConfig.from_settings(settings)
     app.state.oidc_verifier = OIDCVerifier(app.state.auth_config)
     app.state.database_engine = create_database_engine(settings.database_url)
@@ -85,6 +76,8 @@ def create_app(settings: EncryptedIRSettings | None = None) -> FastAPI:  # noqa:
             request_id="startup",
         )
     app.state.security_audit_limiter = SecurityAuditLimiter()
+    app.state.metrics = EncryptionMetrics()
+    app.state.metrics.track_key_cache(app.state.document_service.cached_tenant_count)
 
     # Middleware added later wraps middleware added earlier, so requests pass through the
     # request context first, then CORS, then the body limit.
@@ -100,56 +93,8 @@ def create_app(settings: EncryptedIRSettings | None = None) -> FastAPI:  # noqa:
         expose_headers=CORS_EXPOSED_HEADERS,
     )
 
-    async def audit_rejection(request: Request, status_code: int) -> None:
-        """Count a 401/403/429 and write a rate-bounded audit row for it."""
-        admin.record_rejection(status_code)
-        if not app.state.security_audit_limiter.allow():
-            admin.record_security_audit_dropped()
-            return
-
-        event_type, default_reason = SECURITY_EVENTS[status_code]
-        route = request.scope.get("route")
-        try:
-            await run_in_threadpool(
-                app.state.document_service.record_audit_event,
-                tenant_id=getattr(request.state, "tenant_id", None) or SYSTEM_TENANT_ID,
-                event_type=event_type,
-                actor=getattr(request.state, "actor", None) or "anonymous",
-                success=False,
-                resource=getattr(route, "path", ""),
-                details={
-                    "status": status_code,
-                    "method": request.method,
-                    "reason": getattr(request.state, "auth_failure", default_reason),
-                },
-                request_id=request.state.request_id,
-            )
-        except Exception:
-            logger.warning("Failed to audit a rejected request", exc_info=True)
-
-    # Request ID, timing, metrics and security-event middleware
-    @app.middleware("http")
-    async def add_request_context(request: Request, call_next):
-        request_id = sanitize_request_id(request.headers.get("X-Request-ID"))
-        request.state.request_id = request_id
-        start_time = time.monotonic()
-
-        response = await call_next(request)
-
-        latency_ms = (time.monotonic() - start_time) * 1000
-        response.headers["X-Request-ID"] = request_id
-        response.headers["X-Response-Time-Ms"] = f"{latency_ms:.2f}"
-
-        # Record metrics
-        tenant_id = getattr(request.state, "tenant_id", None)
-        admin.record_request(request.url.path, tenant_id, latency_ms)
-
-        if response.status_code >= 400:
-            admin.record_error()
-        if response.status_code in SECURITY_EVENTS:
-            await audit_rejection(request, response.status_code)
-
-        return response
+    # Outermost: request ID, access log, metrics, rejection audit, and the JSON 500 body.
+    app.add_middleware(RequestContextMiddleware)
 
     # Custom exception handlers
     @app.exception_handler(RequestValidationError)
@@ -214,21 +159,18 @@ def create_app(settings: EncryptedIRSettings | None = None) -> FastAPI:  # noqa:
             ),
         )
 
-    @app.exception_handler(Exception)
-    async def general_exception_handler(request: Request, exc: Exception):
-        request_id = getattr(request.state, "request_id", "unknown")
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={
-                "error": "internal_error",
-                "message": f"Internal server error (request_id: {request_id})",
-                "request_id": request_id,
-                "details": [],
-            },
-        )
+    # Unhandled exceptions are turned into the JSON 500 body by RequestContextMiddleware, so
+    # they keep the request ID and are counted.
 
     # Register routers
     app.include_router(documents.router)
     app.include_router(admin.router)
+
+    # Route templates for requests that never reach a route (404s, early rejections).
+    app.state.route_index = [
+        *documents.router.routes,
+        *admin.router.routes,
+        *(route for route in app.router.routes if isinstance(getattr(route, "path", None), str)),
+    ]
 
     return app

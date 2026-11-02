@@ -78,6 +78,11 @@ class DocumentService:
         self._key_managers: OrderedDict[str, tuple[float, KeyManager]] = OrderedDict()
         self._key_cache_lock = threading.Lock()
 
+    def cached_tenant_count(self) -> int:
+        """Number of tenants whose key managers are cached (for the metrics gauge)."""
+        with self._key_cache_lock:
+            return len(self._key_managers)
+
     def _cached_key_manager(self, tenant_id: str) -> KeyManager | None:
         entry = self._key_managers.get(tenant_id)
         if entry is None:

@@ -13,6 +13,19 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Security
 
+- **`/metrics` no longer leaks document IDs** (#43). It served JSON keyed by the raw request
+  path, so every `GET /v1/documents/{doc_id}` added the document ID as a key, and kept an
+  unbounded set of active tenants. It now serves Prometheus text whose route label is the route
+  template, with bounded method and status labels. `ENCRYPTED_IR_METRICS_TOKEN` optionally
+  requires a bearer token.
+- Logs are redacted by one shared policy, `encrypted_ir.redaction.redact` (#43): sensitive key
+  names are dropped even when nested, bytes are never written, key-like base64 and Luhn-valid
+  card numbers are masked, and exception tracebacks are redacted too. Lower-case hex digests and
+  millisecond timestamps are no longer mistaken for keys and cards. SQL errors hide their bound
+  parameters (`hide_parameters=True`), so a failed statement cannot print ciphertext or tokens.
+- The Docker image runs uvicorn with `--no-access-log`; its access log printed raw paths with
+  document IDs (#43).
+
 - **Tokens are fully validated** (#41). Dev and OIDC tokens must carry `exp` and `iat` (30 s
   leeway, `ENCRYPTED_IR_JWT_LEEWAY_SECONDS`); OIDC tokens also need `aud` and `iss`, and are
   accepted only with an allowlisted asymmetric algorithm (`ENCRYPTED_IR_OIDC_ALGORITHMS`, default
@@ -94,6 +107,25 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Changed
 
+- **Breaking: `/metrics` is Prometheus text** (#43), not JSON. The JSON fields
+  (`request_count`, `requests_by_endpoint`, `unauthorized_count` and the rest) are replaced by
+  `encrypted_ir_http_requests_total{route,method,status}`,
+  `encrypted_ir_http_request_duration_seconds{route,method}`,
+  `encrypted_ir_auth_rejections_total{status,reason}`,
+  `encrypted_ir_security_audit_dropped_total` and `encrypted_ir_key_cache_tenants`. Each app has
+  its own registry, so metrics are per process. `EncryptionMetrics` is rebuilt around these;
+  its unused counters and gauges are removed, as are `MetricsResponse` and
+  `api.routes.admin.reset_metrics`.
+- Unhandled exceptions now pass through the request middleware (#43): the 500 response carries
+  `X-Request-ID` and `X-Response-Time-Ms`, is counted, and its traceback is logged with the
+  request ID. The body message is `Internal server error`.
+- The request middleware is pure ASGI instead of `BaseHTTPMiddleware` (#43).
+- `StructuredFormatter` timestamps are UTC ISO 8601 with milliseconds; the old format printed a
+  literal `%f` and local time labelled `Z` (#43). `correlation_id` is `null` outside a request
+  instead of a fresh random ID. `LoggingConfig` logs to stdout by default and can route other
+  loggers (`uvicorn.error`) through the same JSON handler.
+- File-based SQLite engines wait up to 30 s for locks and use WAL (#43).
+
 - **Breaking: dev auth is off by default** (#41). `ENCRYPTED_IR_DEV_AUTH_ENABLED` defaults to
   `false`, is refused unless `ENCRYPTED_IR_ENV=dev`, and needs `ENCRYPTED_IR_JWT_SECRET` of at
   least 32 bytes; there is no built-in secret any more. The dev API key works only when
@@ -157,6 +189,12 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
   pytest-timeout, sphinx, types-setuptools.
 
 ### Added
+
+- Structured JSON logging is configured by `create_app` (#43): one access line per request with
+  the route template, and `ENCRYPTED_IR_LOG_LEVEL`. Every line logged while handling a request
+  carries its `X-Request-ID`.
+- `ENCRYPTED_IR_METRICS_TOKEN` (#43).
+- Docker `HEALTHCHECK` against `/health` (#43); the Compose CI job checks it reports healthy.
 
 - Settings (#41): `ENCRYPTED_IR_DEV_API_KEY`, `ENCRYPTED_IR_DEV_TENANT_ID` and
   `ENCRYPTED_IR_JWT_SECRET` now live in `EncryptedIRSettings`, alongside the new

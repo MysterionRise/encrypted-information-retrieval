@@ -14,7 +14,7 @@ API serves.
 | `GET /health` | None (unauthenticated) | Package version and process uptime | Version fingerprinting | Acceptable for a liveness probe; restrict at the network edge if needed |
 | `GET /ready` | Database, migration, auth and key-provider checks (unauthenticated) | One pass/fail boolean per check and HTTP 503 when any fails. Exception text, Alembic revisions, auth mode and key source go to the server log only ([#41](https://github.com/MysterionRise/encrypted-information-retrieval/issues/41)) | Learning that a dependency is down | Restrict at the network edge if needed |
 | `GET /docs`, `/redoc`, `/openapi.json` | Off unless `ENCRYPTED_IR_ENABLE_DOCS=true` | When enabled, the full route and schema list | Surface mapping | Leave off outside local development |
-| `GET /metrics` | Process-global JSON counters (unauthenticated) | Request counts keyed by raw URL path, so the document IDs passed to `GET /v1/documents/{doc_id}` appear as keys; number of active tenants; error count; average latency | Document-ID and tenant-activity disclosure to anyone who can reach the port | Prometheus metrics with route-template labels and optional protection: [#43](https://github.com/MysterionRise/encrypted-information-retrieval/issues/43) |
+| `GET /metrics` | Prometheus text from a per-process registry; unauthenticated unless `ENCRYPTED_IR_METRICS_TOKEN` is set | Request counts and latency by route *template* (`/v1/documents/{doc_id}`), method and status; 401/403/429 counts by reason; the number of tenants with cached keys | Traffic-volume and timing analysis per route, and an estimate of active tenants | Set the metrics token or restrict the port at the network edge ([#43](https://github.com/MysterionRise/encrypted-information-retrieval/issues/43)) |
 
 Error responses never carry exception text. Every 401 has the same body
 (`{"detail": "Not authenticated"}`), whether the token is missing, expired, wrongly signed or names
@@ -22,6 +22,13 @@ an invalid tenant, and every 403 says only `Insufficient permissions`. The speci
 route template and the caller's tenant (or `_system` when unauthenticated) go to an audit row
 (`auth.failure`, `authz.failure` or `rate_limit.exceeded`). Those rows are limited to 60 per
 minute per process; `/metrics` counts every rejection and how many were not audited.
+
+Logs are JSON lines on stdout. Each request writes one access line with the method, route
+template, status, latency, tenant ID and request ID; warnings and tracebacks carry the same
+request ID. Document IDs, queries, plaintext and keys are not logged: values under sensitive key
+names are dropped, strings are scanned for key-like base64, card numbers, SSNs and email
+addresses, and SQL errors hide their bound parameters. Uvicorn's own access log, which prints raw
+paths, is turned off in the Docker image. Logs do reveal which tenants are active and when.
 
 The demo routes `/v1/encrypt`, `/v1/decrypt`, `/v1/search/{equality,range,keyword}` and
 `/v1/keys*` were removed in [#36](https://github.com/MysterionRise/encrypted-information-retrieval/issues/36).

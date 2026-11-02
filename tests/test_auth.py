@@ -49,7 +49,7 @@ from encrypted_ir.api.middleware import (
 from encrypted_ir.api.routes import admin
 from encrypted_ir.database import audit_log_table
 from encrypted_ir.settings import EncryptedIRSettings
-from tests.conftest import TEST_JWT_SECRET, bearer
+from tests.conftest import TEST_JWT_SECRET, bearer, metric
 
 ISSUER = "https://issuer.example"
 AUDIENCE = "encrypted-ir"
@@ -839,7 +839,15 @@ class TestSecurityEvents:
         assert tenant == "test-tenant-001"
         assert entry["event_type"] == "rate_limit.exceeded"
         assert entry["details"]["reason"] == "rate_limited"
-        assert client.get("/metrics").json()["rate_limited_count"] == 1
+        assert (
+            metric(
+                app,
+                "encrypted_ir_auth_rejections_total",
+                status="429",
+                reason="rate_limited",
+            )
+            == 1
+        )
 
     def test_audit_rows_are_rate_bounded_but_all_rejections_are_counted(self, app, client):
         app.state.security_audit_limiter = SecurityAuditLimiter(max_events=3)
@@ -847,13 +855,28 @@ class TestSecurityEvents:
             client.post(SEARCH, json=SEARCH_BODY)
 
         assert len(_security_rows(app)) == 3
-        metrics = client.get("/metrics").json()
-        assert metrics["unauthorized_count"] == 10
-        assert metrics["security_audit_dropped_count"] == 7
+        assert (
+            metric(
+                app,
+                "encrypted_ir_auth_rejections_total",
+                status="401",
+                reason="missing_credentials",
+            )
+            == 10
+        )
+        assert metric(app, "encrypted_ir_security_audit_dropped_total") == 7
 
-    def test_forbidden_counter(self, client, read_only_headers):
+    def test_forbidden_counter(self, app, client, read_only_headers):
         client.delete("/v1/documents/doc-1", headers=read_only_headers)
-        assert client.get("/metrics").json()["forbidden_count"] == 1
+        assert (
+            metric(
+                app,
+                "encrypted_ir_auth_rejections_total",
+                status="403",
+                reason="insufficient_role",
+            )
+            == 1
+        )
 
     def test_audit_failure_does_not_change_the_response(self, app, client):
         def _broken(**kwargs):
