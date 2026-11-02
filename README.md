@@ -269,7 +269,7 @@ Use the project to discuss architecture and controls, not to claim compliance or
 
 The roadmap lives in [docs/ROADMAP.md](docs/ROADMAP.md) and is tracked as GitHub issues grouped into three phases:
 
-1. **v0.9.0 Honest prototype**: make every claim in code, docs, and CI verifiable. No behavioural change.
+1. **v0.9.0 Honest prototype**: make every claim in code, docs, and CI verifiable. No behavioural change. Never tagged; it ships in v0.10.0.
 2. **v0.10.0 Durable path hardened**: fix the real bugs in the document/RAG path, remove demo-only routes, quarantine research modules.
 3. **v1.0.0 Reviewed portfolio release**: cloud-free OIDC and KMS end-to-end evidence, benchmarks with provenance, a reviewer guide, and a tagged release.
 
