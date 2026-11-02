@@ -6,10 +6,17 @@ All notable changes to this project are documented here. The format follows
 below 1.0.0, minor versions may contain breaking changes.
 
 The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
-`0.9.0` closes Phase 0 (issue #26), `0.10.0` closes Phase 1 (issue #27), and
-`1.0.0` closes Phase 2 (issue #28).
+`0.10.0` closes Phase 0 (issue #26) and Phase 1 (issue #27), and `1.0.0` closes
+Phase 2 (issue #28). Phase 0 set the version to `0.9.0` but was never tagged, so
+its changes ship in `0.10.0`.
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-11-02
+
+The first tagged release. It contains Phase 0 (honest docs, real CI gates, the release workflow)
+and Phase 1 (the durable document path hardened, demo routes removed, research modules
+quarantined). Entries that need action when upgrading start with **Breaking**.
 
 ### Security
 
@@ -332,7 +339,8 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
   CycloneDX SBOM, and publishes a GitHub Release whose notes are this file's section for that
   version.
 
-## History before 0.9.0
+## History before 0.10.0
 
-No version was tagged or released before 0.9.0. Earlier work is in the git history and in
-`docs/PORTFOLIO_EVIDENCE.md`.
+No version was tagged or released before 0.10.0. Version 0.9.0 was set in the code during
+Phase 0 but never tagged; its changes are part of 0.10.0. Earlier work is in the git history and
+in `docs/PORTFOLIO_EVIDENCE.md`.
