@@ -372,6 +372,20 @@ jobs:
     name: Performance Benchmarks
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: encrypted_ir_bench
+          POSTGRES_USER: encrypted_ir
+          POSTGRES_PASSWORD: encrypted_ir_bench_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U encrypted_ir -d encrypted_ir_bench"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -414,6 +428,23 @@ jobs:
         # so only a large slowdown is a signal. Refresh the baseline with
         # scripts/compare_benchmarks.py --update when a change is expected.
         run: python scripts/compare_benchmarks.py benchmarks/results/latest.json
+
+      - name: Retrieval benchmark with provenance (SQLite in memory and PostgreSQL)
+        # Informational, like the step above. The committed reports in benchmarks/reports/ come
+        # from `make bench-retrieval` and `make bench-retrieval-postgres`; these runs record what
+        # a shared runner measures for the same code.
+        if: always()
+        env:
+          DATABASE_URL: postgresql+psycopg://encrypted_ir:encrypted_ir_bench_password@localhost:5432/encrypted_ir_bench
+        run: |
+          PYTHONPATH=src:$PYTHONPATH python -m encrypted_ir.tools.benchmark_retrieval \
+            --documents 100 1000 --commit "$GITHUB_SHA" \
+            --output-dir benchmarks/results/retrieval/sqlite-memory
+          PYTHONPATH=src:$PYTHONPATH python -m encrypted_ir.migrations upgrade head
+          PYTHONPATH=src:$PYTHONPATH python -m encrypted_ir.tools.benchmark_retrieval \
+            --database-url "$DATABASE_URL" --documents 100 1000 --commit "$GITHUB_SHA" \
+            --output-dir benchmarks/results/retrieval/postgresql
+          cat benchmarks/results/retrieval/*/retrieval_1000.md
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v7

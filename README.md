@@ -231,14 +231,15 @@ It verifies the whole chain, prints the head (`head_seq`, `head_hash`) to stderr
 chain is broken. Keep the head somewhere the database's writers cannot change, and pass it back as
 `--check-head SEQ:HASH` on later exports to detect rows dropped from the end.
 
-Run the retrieval benchmark locally:
+Run the retrieval benchmark, with provenance (commit, date, hardware, Python, driver and database
+server) and p50/p95/p99, on in-memory SQLite or on the Compose PostgreSQL:
 
 ```bash
-python -m encrypted_ir.tools.benchmark_retrieval \
-  --database-url sqlite+pysqlite:///:memory: \
-  --documents 1000 \
-  --report benchmarks/reports/latest_retrieval.md
+make bench-retrieval            # benchmarks/reports/sqlite-memory/
+make bench-retrieval-postgres   # benchmarks/reports/postgresql/
 ```
+
+[benchmarks/README.md](benchmarks/README.md) explains what the numbers do and do not show.
 
 ## Documentation
 
