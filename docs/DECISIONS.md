@@ -667,7 +667,7 @@ supported for tests and local runs.
 - Docker Compose runs PostgreSQL plus the API. The persistence smoke test in `docs/CTO_DEMO_SCRIPT.md`
   exercises it.
 - The per-tenant key cache reloads from the database, so several workers can share one database
-  ([#39]). The rate limiter is still in memory and per process ([#47]).
+  ([#39]). The rate limiter is in memory and per process by design ([#47]).
 
 ---
 

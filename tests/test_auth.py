@@ -37,7 +37,6 @@ from encrypted_ir.api.dependencies.auth import (
 from encrypted_ir.api.dependencies.rate_limiter import (
     RateLimitConfig,
     RateLimiter,
-    set_rate_limiter,
 )
 from encrypted_ir.api.main import create_app
 from encrypted_ir.api.middleware import (
@@ -825,10 +824,8 @@ class TestSecurityEvents:
         assert entry["details"]["reason"] == "insufficient_role"
 
     @pytest.fixture()
-    def one_search_per_minute(self):
-        set_rate_limiter(RateLimiter({"document_search": RateLimitConfig(max_requests=1)}))
-        yield
-        set_rate_limiter(RateLimiter())
+    def one_search_per_minute(self, app):
+        app.state.rate_limiter = RateLimiter({"document_search": RateLimitConfig(max_requests=1)})
 
     def test_429_is_audited_and_counted(self, app, client, auth_headers, one_search_per_minute):
         client.post(SEARCH, json=SEARCH_BODY, headers=auth_headers)

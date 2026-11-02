@@ -21,4 +21,5 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
 
 # The app writes its own JSON access log with route templates. Uvicorn's access log is off
 # because it prints raw paths, which contain document IDs.
-CMD ["sh", "-c", "alembic upgrade head && uvicorn encrypted_ir.api.main:create_app --factory --host 0.0.0.0 --port 8000 --no-access-log"]
+# Proxy headers are handled by the app (ENCRYPTED_IR_TRUSTED_PROXIES), not by uvicorn.
+CMD ["sh", "-c", "alembic upgrade head && uvicorn encrypted_ir.api.main:create_app --factory --host 0.0.0.0 --port 8000 --no-access-log --no-proxy-headers"]

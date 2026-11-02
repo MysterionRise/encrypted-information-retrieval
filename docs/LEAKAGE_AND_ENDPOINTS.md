@@ -23,6 +23,11 @@ route template and the caller's tenant (or `_system` when unauthenticated) go to
 (`auth.failure`, `authz.failure` or `rate_limit.exceeded`). Those rows are limited to 60 per
 minute per process; `/metrics` counts every rejection and how many were not audited.
 
+Rate limits are per process. Each tenant has a limit per document operation, and every request
+except `/health` also counts against a limit per client address, so unauthenticated floods,
+`/ready` and `/metrics` are throttled too. A 429 carries `Retry-After` and reveals only that a
+limit was reached.
+
 Logs are JSON lines on stdout. Each request writes one access line with the method, route
 template, status, latency, tenant ID and request ID; warnings and tracebacks carry the same
 request ID. Document IDs, queries, plaintext and keys are not logged: values under sensitive key

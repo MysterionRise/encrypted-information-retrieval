@@ -16,7 +16,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from encrypted_ir.api.dependencies.rate_limiter import RateLimiter, set_rate_limiter
 from encrypted_ir.api.main import create_app
 from encrypted_ir.settings import EncryptedIRSettings
 
@@ -54,8 +53,7 @@ def settings_factory() -> SettingsFactory:
 
 @pytest.fixture()
 def app(settings_factory: SettingsFactory) -> FastAPI:
-    """Create a fresh app (with its own metrics registry) and reset the global rate limiter."""
-    set_rate_limiter(RateLimiter())
+    """Create a fresh app; metrics and rate limits live on ``app.state``, so nothing is shared."""
     return create_app(settings_factory())
 
 

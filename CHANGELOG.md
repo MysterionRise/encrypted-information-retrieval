@@ -13,6 +13,13 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Security
 
+- **Rate limiting covers unauthenticated requests and has bounded state** (#47). Every request
+  except `/health` counts against a per-client-address limit (600 per minute by default), checked
+  before authentication, so floods of bad tokens, `/ready` and `/metrics` are throttled. Buckets
+  that have refilled are dropped and each operation keeps at most 10,000, so rotating tenant IDs
+  or client addresses can no longer grow memory without bound. Behind a reverse proxy, set
+  `ENCRYPTED_IR_TRUSTED_PROXIES` so the client address comes from `X-Forwarded-For`; the header is
+  ignored from any other peer.
 - **`/metrics` no longer leaks document IDs** (#43). It served JSON keyed by the raw request
   path, so every `GET /v1/documents/{doc_id}` added the document ID as a key, and kept an
   unbounded set of active tenants. It now serves Prometheus text whose route label is the route
@@ -107,6 +114,15 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Changed
 
+- **Breaking: the rate limiter lives on `app.state.rate_limiter`** (#47). The module-level
+  limiter and `set_rate_limiter` are removed; `get_rate_limiter` reads the app's limiter. The
+  limiter uses GCRA (one timestamp per key, exact `Retry-After`) instead of lists of
+  timestamps; a limit of N per window still allows a burst of N.
+- The Docker image runs uvicorn with `--no-proxy-headers`; the app handles proxy headers itself
+  (#47).
+- The architecture doc no longer shows a Redis cache and several API replicas; rate limits and
+  metrics are per process, and the docs say so (#47).
+
 - **Breaking: `/metrics` is Prometheus text** (#43), not JSON. The JSON fields
   (`request_count`, `requests_by_endpoint`, `unauthorized_count` and the rest) are replaced by
   `encrypted_ir_http_requests_total{route,method,status}`,
@@ -190,6 +206,8 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Added
 
+- `ENCRYPTED_IR_RATE_LIMITS` (JSON overrides of the per-operation and per-client limits),
+  `ENCRYPTED_IR_RATE_LIMIT_MAX_KEYS` and `ENCRYPTED_IR_TRUSTED_PROXIES` (#47).
 - Structured JSON logging is configured by `create_app` (#43): one access line per request with
   the route template, and `ENCRYPTED_IR_LOG_LEVEL`. Every line logged while handling a request
   carries its `X-Request-ID`.

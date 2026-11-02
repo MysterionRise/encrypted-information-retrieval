@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from encrypted_ir import __version__
 from encrypted_ir.database import create_database_engine, create_database_schema
@@ -19,6 +20,7 @@ from encrypted_ir.metrics import EncryptionMetrics
 from encrypted_ir.settings import EncryptedIRSettings
 
 from .dependencies.auth import AuthConfig, OIDCVerifier
+from .dependencies.rate_limiter import RateLimiter
 from .middleware import (
     HTTP_413_CONTENT_TOO_LARGE,
     BodySizeLimitMiddleware,
@@ -77,6 +79,9 @@ def create_app(settings: EncryptedIRSettings | None = None) -> FastAPI:  # noqa:
         )
     app.state.security_audit_limiter = SecurityAuditLimiter()
     app.state.metrics = EncryptionMetrics()
+    app.state.rate_limiter = RateLimiter.from_limits(
+        settings.effective_rate_limits, max_keys=settings.rate_limit_max_keys
+    )
     app.state.metrics.track_key_cache(app.state.document_service.cached_tenant_count)
 
     # Middleware added later wraps middleware added earlier, so requests pass through the
@@ -93,8 +98,14 @@ def create_app(settings: EncryptedIRSettings | None = None) -> FastAPI:  # noqa:
         expose_headers=CORS_EXPOSED_HEADERS,
     )
 
-    # Outermost: request ID, access log, metrics, rejection audit, and the JSON 500 body.
+    # Request ID, client rate limit, access log, metrics, rejection audit, JSON 500 body.
     app.add_middleware(RequestContextMiddleware)
+
+    # Behind a reverse proxy, take the client address from X-Forwarded-For, but only when the
+    # direct peer is a configured trusted proxy. Run uvicorn with --no-proxy-headers so the
+    # headers are not processed twice.
+    if settings.trusted_proxies:
+        app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=list(settings.trusted_proxies))
 
     # Custom exception handlers
     @app.exception_handler(RequestValidationError)
