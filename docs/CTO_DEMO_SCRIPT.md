@@ -105,14 +105,21 @@ KMS. The script wraps a master key with `generate_kms_master_key`, starts the AP
 unwrap under `ENCRYPTED_IR_ENV=test`. [KMS_DEPLOYMENT.md](KMS_DEPLOYMENT.md) has the IAM
 policies and the CloudTrail setup for a real account.
 
-Optional live-validation path if cloud credentials are available:
-- Generate an AWS KMS-wrapped app master key with
-  `python -m encrypted_ir.tools.generate_kms_master_key --environment prod`, as the operator
-  role in `docs/iam/kms-operator-policy.json`.
-- Configure a real OIDC issuer, audience, JWKS URL, tenant claim, and roles
-  claim.
-- Start the API with `ENCRYPTED_IR_ENV=prod` and verify `/ready` only reports
-  ready after DB migrations, OIDC settings, and KMS settings are valid.
+### OIDC path, locally
+
+Production mode, with no cloud account: `./scripts/oidc_smoke.sh`. Keycloak is the identity
+provider and moto stands in for KMS, because `ENCRYPTED_IR_ENV=prod` refuses to start without
+both. Show:
+- The API's environment has no raw master key and no dev auth, and `/ready` reports every
+  check `true`. In prod, `key_provider` is `true` only for a key unwrapped by KMS.
+- Keycloak issues RS256 tokens whose `tenant_id` and `roles` claims the API reads.
+- alice (tenant-a, read and write) ingests and retrieves.
+- bob (tenant-b) gets 404 for alice's document and does not see it in retrieval.
+- carol (tenant-a, read only) can retrieve but gets 403 on ingest.
+- A token with a broken signature, and the dev API key, both get 401.
+- After a restart (KMS unwraps the key again), the document is still there.
+
+[OIDC_DEPLOYMENT.md](OIDC_DEPLOYMENT.md) maps the claims for Cognito, Auth0, Okta and Entra ID.
 
 ## Notes
 

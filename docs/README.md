@@ -25,6 +25,7 @@ never imported by the core package or the API. THREAT_MODEL.md covers both, and 
 | --- | --- |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | The "As built" section describes the current code. The "Target state" section is the original 2025 design, kept as reference and clearly labelled. |
 | [DECISIONS.md](DECISIONS.md) | Architecture decision records. ADR-001 to ADR-010 are 2025 target decisions with corrected statuses. ADR-011 to ADR-018 record decisions reflected in the code or accepted for the roadmap. |
+| [OIDC_DEPLOYMENT.md](OIDC_DEPLOYMENT.md) | What the API requires of a token, the local Keycloak run in production mode, and claim mappings for Cognito, Auth0, Okta and Entra ID. |
 | [KMS_DEPLOYMENT.md](KMS_DEPLOYMENT.md) | The AWS KMS key path: running it locally against an emulator, the production steps, the IAM policies in [iam/](iam/), and CloudTrail. |
 | [PORTFOLIO_CASE_STUDY.md](PORTFOLIO_CASE_STUDY.md) | Short narrative of the problem, the approach and the leakage trade-offs. |
 

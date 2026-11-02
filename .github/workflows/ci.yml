@@ -328,13 +328,14 @@ jobs:
         if: always()
         run: docker compose down -v
 
-  # The production key path without an AWS account: moto server stands in for AWS KMS.
-  # Each script runs its own Compose project on a fresh volume, prints the service logs if it
-  # fails, and removes the stack on exit.
+  # The production key and auth paths without a cloud account: moto server stands in for AWS KMS
+  # and Keycloak is the identity provider, with the API in ENCRYPTED_IR_ENV=prod. Each script runs
+  # its own Compose project on a fresh volume, prints the service logs if it fails, and removes
+  # the stack on exit.
   e2e:
-    name: End-to-end KMS
+    name: End-to-end KMS and OIDC
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -351,6 +352,11 @@ jobs:
         run: |
           mkdir -p e2e-results
           ./scripts/kms_smoke.sh
+
+      - name: Production mode (Keycloak + moto) - tenants, roles, 401/403/404, restart
+        env:
+          RESULT_JSON: e2e-results/oidc.json
+        run: ./scripts/oidc_smoke.sh
 
       - name: Upload end-to-end results
         if: always()

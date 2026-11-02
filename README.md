@@ -110,6 +110,8 @@ Auth and HTTP settings (all optional except where noted):
 | `ENCRYPTED_IR_DEV_TENANT_ID` | `local-demo` | Tenant for the dev API key. |
 | `ENCRYPTED_IR_OIDC_ISSUER`, `_AUDIENCE`, `_JWKS_URL` | none | OIDC verification; all three are required in `prod`. |
 | `ENCRYPTED_IR_OIDC_ALGORITHMS` | `RS256` | Comma-separated subset of `RS256`, `PS256`, `ES256`. |
+| `ENCRYPTED_IR_TENANT_CLAIM` | `tenant_id` | Top-level token claim holding the tenant ID. |
+| `ENCRYPTED_IR_ROLES_CLAIM` | `roles` | Top-level token claim holding the roles (`read`, `write`, `admin`; any other value means 403). |
 | `ENCRYPTED_IR_JWT_LEEWAY_SECONDS` | `30` | Clock skew allowed for `exp` and `iat` (0 to 300). |
 | `ENCRYPTED_IR_JWKS_TIMEOUT_SECONDS` | `5` | Timeout for fetching the JWKS. |
 | `ENCRYPTED_IR_ENABLE_DOCS` | `false` | Serve `/docs`, `/redoc` and `/openapi.json`. |
@@ -122,7 +124,10 @@ Auth and HTTP settings (all optional except where noted):
 | `ENCRYPTED_IR_TRUSTED_PROXIES` | none | Comma-separated proxy IPs or networks whose `X-Forwarded-For` is trusted for the client address. |
 
 Every token must carry `exp`, `iat`, a tenant claim matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`
-and a non-empty roles claim; OIDC tokens also need `aud` and `iss`.
+and a non-empty roles claim; OIDC tokens also need `aud` and `iss`. Run the production auth path
+locally, with Keycloak as the identity provider and the API in `ENCRYPTED_IR_ENV=prod`, using
+`./scripts/oidc_smoke.sh`. [OIDC_DEPLOYMENT.md](docs/OIDC_DEPLOYMENT.md) maps the claims for
+Cognito, Auth0, Okta and Entra ID.
 
 The API logs JSON lines to stdout: one access line per request (method, route template, status,
 latency, tenant) and any warnings, each carrying the request's `X-Request-ID` as
