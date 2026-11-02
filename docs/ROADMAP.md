@@ -51,6 +51,9 @@ Docs, CI, metadata and docstrings only. No behavioural code change. Cheapest wor
 Exit: CI on `master` green with real gates; every doc current, labelled target-state, or archived; `SECURITY.md`
 usable; `v0.9.0` tagged by the release workflow.
 
+**Status:** the exit criteria are met except the tag: `v0.9.0` was never tagged, and Phase 0 ships in `v0.10.0`
+together with Phase 1 (see `CHANGELOG.md`). #30 stays open for one box, pinning actions by commit SHA.
+
 ## Phase 1: Durable path correctness and honest scope (epic #27, tag `v0.10.0`)
 
 | Issue | Title | Area |
@@ -74,6 +77,23 @@ together (they touch the same code), then #42, #43, #44, #45, with #38, #46 and 
 Exit: API is `/v1/documents*`, `/v1/rag/retrieve`, `/health`, `/ready`, `/metrics`, each on the leakage map; research
 modules warn on import and their tests run in CI; the full API suite passes on PostgreSQL in CI; a real rotation
 tool is proven by a Postgres-backed test; `v0.10.0` tagged.
+
+**Status:** done in `v0.10.0`. Each exit criterion and its proof:
+
+- [x] The API is `/v1/documents*`, `/v1/rag/retrieve`, `/health`, `/ready` and `/metrics`:
+  `tests/test_api.py::TestOpenAPI::test_openapi_lists_exactly_the_durable_routes`,
+  `tests/test_api.py::TestOpenAPI::test_removed_demo_routes_return_404` and
+  `tests/test_route_matrix.py::test_every_durable_route_is_covered`.
+- [x] Each route is on the leakage map: one row per route in
+  [LEAKAGE_AND_ENDPOINTS.md](LEAKAGE_AND_ENDPOINTS.md).
+- [x] Research modules warn on import and their tests run in CI:
+  `tests/research/test_research_package.py::test_importing_research_warns`, run with the research extras by the
+  CI `research` and `coverage` jobs.
+- [x] The full API suite passes on PostgreSQL in CI: the CI `test` and `coverage` jobs set
+  `POSTGRES_TEST_DATABASE_URL`, which makes `tests/conftest.py` run every database-backed test on PostgreSQL.
+- [x] A real rotation tool is proven by a Postgres-backed test:
+  `tests/test_rotation.py::TestPostgres::test_rotation_on_postgres`.
+- [ ] `v0.10.0` tagged by the release workflow.
 
 ## Phase 2: Evidence and reviewed release (epic #28, tag `v1.0.0`)
 
