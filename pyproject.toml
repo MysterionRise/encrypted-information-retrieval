@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["encryption", "searchable-encryption", "privacy", "rag", "regulated-ai", "postgresql", "oidc", "kms"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Financial and Insurance Industry",
     "Programming Language :: Python :: 3",
@@ -37,7 +37,8 @@ dependencies = [
 
 [project.optional-dependencies]
 aws = [
-    "boto3>=1.28.0",
+    # 1.28.57 is the first release that reads service endpoints such as AWS_ENDPOINT_URL_KMS.
+    "boto3>=1.28.57",
 ]
 research = [
     "numpy>=1.24.0",
@@ -49,6 +50,7 @@ dev = [
     "pytest-cov>=4.1.0",
     "pytest-benchmark>=4.0.0",
     "hypothesis>=6.100.0",
+    "pytest-xdist>=3.5.0",
     "black>=23.7.0",
     "ruff>=0.0.285",
     "mypy>=1.5.0",
@@ -177,6 +179,7 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
     "benchmark: marks tests as benchmarks",
+    "allow_500: the test expects a 500 response (otherwise any 500 fails the test)",
 ]
 
 [tool.coverage.run]

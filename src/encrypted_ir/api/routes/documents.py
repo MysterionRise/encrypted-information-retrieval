@@ -88,25 +88,19 @@ def ingest_document(
     rate_limiter.check_limit(tenant.tenant_id, "document_ingest")
 
     try:
+        # The success audit row is written in the same transaction as the document.
         result = _service(request).ingest_document(
             tenant_id=tenant.tenant_id,
             doc_id=body.doc_id,
             content=body.content,
             metadata=body.metadata,
             keywords=set(body.keywords) if body.keywords is not None else None,
+            actor=_actor(request),
+            request_id=request.state.request_id,
         )
     except Exception as exc:
         _record_failure(request, tenant, "document.encrypt", exc, resource=body.doc_id)
         raise
-    _service(request).record_audit_event(
-        tenant_id=tenant.tenant_id,
-        event_type="document.encrypt",
-        actor=_actor(request),
-        success=True,
-        resource=body.doc_id,
-        details={"indexed_token_count": result["indexed_token_count"]},
-        request_id=request.state.request_id,
-    )
     return DocumentIngestResponse(**result, request_id=request.state.request_id)
 
 
@@ -216,20 +210,18 @@ def delete_document(
     rate_limiter.check_limit(tenant.tenant_id, "document_delete")
 
     try:
-        deleted = _service(request).delete_document(tenant.tenant_id, doc_id)
+        # The success audit row is written in the same transaction as the delete.
+        deleted = _service(request).delete_document(
+            tenant.tenant_id,
+            doc_id,
+            actor=_actor(request),
+            request_id=request.state.request_id,
+        )
         if not deleted:
             raise DocumentNotFoundError(doc_id)
     except Exception as exc:
         _record_failure(request, tenant, "document.delete", exc, resource=doc_id)
         raise
-    _service(request).record_audit_event(
-        tenant_id=tenant.tenant_id,
-        event_type="document.delete",
-        actor=_actor(request),
-        success=True,
-        resource=doc_id,
-        request_id=request.state.request_id,
-    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

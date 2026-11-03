@@ -4,7 +4,10 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from encrypted_ir.key_manager import KeyManager, KeyMetadata
+from encrypted_ir import audit
+from encrypted_ir.database import create_database_engine, create_database_schema
+from encrypted_ir.key_manager import KeyLifecycleState, KeyManager, KeyMetadata
+from encrypted_ir.storage_backend import DatabaseStorageBackend
 
 
 class TestKeyMetadata:
@@ -157,17 +160,27 @@ class TestKeyManager:
         manager = KeyManager()
 
         old_key_id = manager.create_key("deterministic")
-        new_key_id = manager.rotate_key(old_key_id)
+        other_type = manager.create_key("searchable")
+        new_key_id = manager.begin_rotation(["deterministic"])["deterministic"]
 
         assert new_key_id != old_key_id
 
-        # Old key should be inactive
+        # The old key is rotating: inactive for new writes, still decryptable
         old_metadata = manager.get_metadata(old_key_id)
         assert old_metadata.active is False
+        assert old_metadata.lifecycle_state == KeyLifecycleState.ROTATING
+        assert old_metadata.successor_key_id == new_key_id
+        assert manager.get_key_for_decryption(old_key_id) is not None
 
-        # New key should be active
+        # The successor is the active key, one version up
         new_metadata = manager.get_metadata(new_key_id)
         assert new_metadata.active is True
+        assert new_metadata.version == 2
+        assert new_metadata.predecessor_key_id == old_key_id
+        assert manager.get_or_create_active_key("deterministic") == new_key_id
+
+        # Other key types are untouched
+        assert manager.get_metadata(other_type).lifecycle_state == KeyLifecycleState.ACTIVE
 
     def test_key_deletion(self):
         """Test key deletion."""
@@ -282,33 +295,39 @@ class TestKeyManager:
         assert key1 == manager1.get_key(key_id1)
         assert key2 == manager1.get_key(key_id2)
 
-    def test_audit_log(self):
-        """Test audit logging."""
-        manager = KeyManager()
+    def test_key_events_go_to_the_backend_audit_chain(self):
+        engine = create_database_engine("sqlite+pysqlite:///:memory:")
+        create_database_schema(engine)
+        manager = KeyManager(storage_backend=DatabaseStorageBackend(engine, "tenant-a"))
 
         key_id = manager.create_key("deterministic")
-        manager.get_key(key_id)
-        manager.rotate_key(key_id)
+        manager.get_key(key_id)  # reads are not audited by default
+        new_key_id = manager.begin_rotation(["deterministic"])["deterministic"]
+        manager.delete_key(new_key_id)
+        with pytest.raises(KeyError):
+            manager.get_key("deterministic_missing")
 
-        # Check audit log
-        logs = manager.get_audit_log()
-        assert len(logs) >= 3  # create, get, rotate
+        with engine.connect() as conn:
+            rows, head = audit.load_chain(conn, "tenant-a")
+        assert [(r.event_type, r.success, r.key_id) for r in rows] == [
+            ("key.create", True, key_id),
+            ("key.create", True, new_key_id),
+            ("key.rotate", True, key_id),
+            ("key.deactivate", True, new_key_id),
+            ("key.read", False, "deterministic_missing"),
+        ]
+        assert rows[2].entry_json["details"] == {"successor_key_id": new_key_id}
+        assert rows[4].entry_json["details"] == {"reason": "not_found"}
+        assert all(r.actor == "key-manager" for r in rows)
+        assert audit.verify_chain(
+            rows, head, "tenant-a", audit.derive_audit_key(manager.master_key, "tenant-a")
+        ).ok
 
-        # Check specific key log
-        key_logs = manager.get_audit_log(key_id=key_id)
-        assert len(key_logs) >= 2  # create, get
-
-    def test_audit_log_limit(self):
-        """Test audit log limit."""
+    def test_without_a_backend_nothing_is_audited(self):
         manager = KeyManager()
-
-        # Create many keys
-        for _i in range(20):
-            manager.create_key("deterministic")
-
-        # Get limited log
-        logs = manager.get_audit_log(limit=10)
-        assert len(logs) == 10
+        manager.create_key("deterministic")
+        assert not hasattr(manager, "get_audit_log")
+        assert not hasattr(manager, "_audit_log")
 
     def test_invalid_master_key_size(self):
         """Test that invalid master key size raises error."""
@@ -354,3 +373,134 @@ class TestKeyManager:
 
         assert metadata1.rotation_period_days == 30
         assert metadata2.rotation_period_days == 90
+
+
+class TestKeyMetadataLifecycle:
+    """Test the new lifecycle fields on KeyMetadata."""
+
+    def test_default_lifecycle_state(self):
+        """New metadata defaults to active lifecycle."""
+        meta = KeyMetadata(key_id="test", key_type="det", created_at=datetime.now())
+        assert meta.lifecycle_state == KeyLifecycleState.ACTIVE
+        assert meta.version == 1
+        assert meta.successor_key_id is None
+        assert meta.predecessor_key_id is None
+        assert meta.retention_expires_at is None
+        assert meta.compromise_detected_at is None
+        assert meta.total_records_encrypted == 0
+
+    def test_lifecycle_serialization(self):
+        """Lifecycle fields survive to_dict/from_dict round-trip."""
+        meta = KeyMetadata(key_id="test", key_type="det", created_at=datetime.now())
+        meta.version = 3
+        meta.lifecycle_state = KeyLifecycleState.ARCHIVED
+        meta.successor_key_id = "next_key"
+        meta.predecessor_key_id = "prev_key"
+        meta.retention_expires_at = datetime(2033, 6, 15)
+        meta.compromise_detected_at = datetime(2026, 1, 1)
+        meta.total_records_encrypted = 42
+
+        data = meta.to_dict()
+        restored = KeyMetadata.from_dict(data)
+
+        assert restored.version == 3
+        assert restored.lifecycle_state == KeyLifecycleState.ARCHIVED
+        assert restored.successor_key_id == "next_key"
+        assert restored.predecessor_key_id == "prev_key"
+        assert restored.retention_expires_at == datetime(2033, 6, 15)
+        assert restored.compromise_detected_at == datetime(2026, 1, 1)
+        assert restored.total_records_encrypted == 42
+
+    def test_needs_rotation_respects_lifecycle(self):
+        """needs_rotation() returns False for non-active lifecycle states."""
+        meta = KeyMetadata(
+            key_id="test",
+            key_type="det",
+            created_at=datetime.now(),
+            rotation_period_days=1,
+        )
+        meta.last_rotated = datetime.now() - timedelta(days=10)
+
+        # Active + past period -> needs rotation
+        assert meta.needs_rotation() is True
+
+        # Rotating -> doesn't need rotation
+        meta.lifecycle_state = KeyLifecycleState.ROTATING
+        assert meta.needs_rotation() is False
+
+        # Retired -> doesn't need rotation
+        meta.lifecycle_state = KeyLifecycleState.RETIRED
+        assert meta.needs_rotation() is False
+
+    def test_backward_compatible_from_dict(self):
+        """from_dict works with old-format dicts (no lifecycle fields)."""
+        old_dict = {
+            "key_id": "legacy_key",
+            "key_type": "det",
+            "created_at": datetime.now().isoformat(),
+            "active": True,
+        }
+        meta = KeyMetadata.from_dict(old_dict)
+        assert meta.version == 1
+        assert meta.lifecycle_state == KeyLifecycleState.ACTIVE
+        assert meta.successor_key_id is None
+
+
+class TestGetKeyForDecryption:
+    """Test KeyManager.get_key_for_decryption()."""
+
+    def test_active_key(self):
+        """Can get active key for decryption."""
+        manager = KeyManager()
+        key_id = manager.create_key("deterministic")
+        key = manager.get_key_for_decryption(key_id)
+        assert key == manager.get_key(key_id)
+
+    def test_retired_key(self):
+        """Can get retired key for decryption."""
+        manager = KeyManager()
+        key_id = manager.create_key("deterministic")
+        expected = manager.get_key(key_id)
+        meta = manager.get_metadata(key_id)
+        meta.active = False
+        meta.lifecycle_state = KeyLifecycleState.RETIRED
+
+        key = manager.get_key_for_decryption(key_id)
+        assert key == expected
+
+    def test_archived_key(self):
+        """Can get archived key for decryption."""
+        manager = KeyManager()
+        key_id = manager.create_key("deterministic")
+        expected = manager.get_key(key_id)
+        meta = manager.get_metadata(key_id)
+        meta.active = False
+        meta.lifecycle_state = KeyLifecycleState.ARCHIVED
+
+        key = manager.get_key_for_decryption(key_id)
+        assert key == expected
+
+    def test_destroyed_key_raises(self):
+        """Cannot get destroyed key for decryption."""
+        manager = KeyManager()
+        key_id = manager.create_key("deterministic")
+        meta = manager.get_metadata(key_id)
+        meta.lifecycle_state = KeyLifecycleState.DESTROYED
+
+        with pytest.raises(ValueError, match="destroyed"):
+            manager.get_key_for_decryption(key_id)
+
+    def test_nonexistent_key_raises(self):
+        """Getting nonexistent key for decryption raises KeyError."""
+        manager = KeyManager()
+        with pytest.raises(KeyError):
+            manager.get_key_for_decryption("nonexistent")
+
+    def test_increments_access_count(self):
+        """get_key_for_decryption increments access count."""
+        manager = KeyManager()
+        key_id = manager.create_key("deterministic")
+        manager.get_key_for_decryption(key_id)
+        manager.get_key_for_decryption(key_id)
+        meta = manager.get_metadata(key_id)
+        assert meta.access_count >= 2

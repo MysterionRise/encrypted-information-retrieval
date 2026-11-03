@@ -1,0 +1,18 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "UnwrapTheAppMasterKeyAtStartup",
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": "arn:aws:kms:REGION:ACCOUNT_ID:key/KEY_ID",
+      "Condition": {
+        "StringEquals": {
+          "kms:EncryptionContext:application": "encrypted-information-retrieval",
+          "kms:EncryptionContext:environment": "prod",
+          "kms:EncryptionContext:purpose": "app-master-key"
+        }
+      }
+    }
+  ]
+}

@@ -2,8 +2,6 @@
 
 import base64
 import os
-import shutil
-import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -146,29 +144,26 @@ class TestKeyManagerFromKMS:
         manager2 = KeyManager.from_kms(provider, encrypted_master_key=enc_mk)
         assert manager2.master_key == manager1.master_key
 
-    def test_from_kms_with_storage_backend(self):
+    def test_from_kms_with_storage_backend(self, tmp_path):
         """from_kms works with a storage backend for full persistence."""
-        storage_dir = tempfile.mkdtemp()
-        try:
-            provider = MockKMSProvider()
+        storage_dir = str(tmp_path / "keys")
+        provider = MockKMSProvider()
 
-            # Create manager with KMS + file backend
-            master_key_for_backend = os.urandom(32)
-            backend1 = FileStorageBackend(storage_dir, master_key_for_backend)
-            manager1 = KeyManager.from_kms(provider, storage_backend=backend1)
-            key_id = manager1.create_key("searchable", description="kms test key")
-            original_key = manager1.get_key(key_id)
-            enc_mk = manager1.get_encrypted_master_key()
+        # Create manager with KMS + file backend
+        master_key_for_backend = os.urandom(32)
+        backend1 = FileStorageBackend(storage_dir, master_key_for_backend)
+        manager1 = KeyManager.from_kms(provider, storage_backend=backend1)
+        key_id = manager1.create_key("searchable", description="kms test key")
+        original_key = manager1.get_key(key_id)
+        enc_mk = manager1.get_encrypted_master_key()
 
-            # Simulate restart: recover master key from KMS, reload from backend
-            recovered_mk = provider.decrypt(enc_mk)
-            backend2 = FileStorageBackend(storage_dir, master_key_for_backend)
-            manager2 = KeyManager(master_key=recovered_mk, storage_backend=backend2)
+        # Simulate restart: recover master key from KMS, reload from backend
+        recovered_mk = provider.decrypt(enc_mk)
+        backend2 = FileStorageBackend(storage_dir, master_key_for_backend)
+        manager2 = KeyManager(master_key=recovered_mk, storage_backend=backend2)
 
-            restored_key = manager2.get_key(key_id)
-            assert restored_key == original_key
-        finally:
-            shutil.rmtree(storage_dir)
+        restored_key = manager2.get_key(key_id)
+        assert restored_key == original_key
 
     def test_from_kms_different_providers_different_keys(self):
         """Different KMS providers produce different master keys."""
@@ -203,17 +198,13 @@ class TestKeyManagerFromKMS:
         assert meta.key_type == "deterministic"
 
         # Rotate
-        new_key_id = manager.rotate_key(key_id)
+        new_key_id = manager.begin_rotation(["deterministic"])["deterministic"]
         assert manager.get_metadata(key_id).active is False
         assert manager.get_metadata(new_key_id).active is True
 
         # Delete
         manager.delete_key(new_key_id)
         assert manager.get_metadata(new_key_id).active is False
-
-        # Audit
-        logs = manager.get_audit_log()
-        assert len(logs) >= 3
 
     def test_from_kms_export_import(self):
         """Export/import works with KMS-created manager."""
@@ -441,27 +432,24 @@ class TestKeyManagerFromKMSWithAWSMock:
         recovered_mk = aws_provider.decrypt(enc_mk)
         assert recovered_mk == manager.master_key
 
-    def test_full_workflow_with_persistence(self, aws_provider):
+    def test_full_workflow_with_persistence(self, aws_provider, tmp_path):
         """End-to-end with file backend persistence."""
-        storage_dir = tempfile.mkdtemp()
-        try:
-            backend_key = os.urandom(32)
+        storage_dir = str(tmp_path / "keys")
+        backend_key = os.urandom(32)
 
-            # Create and populate
-            backend1 = FileStorageBackend(storage_dir, backend_key)
-            manager1 = KeyManager.from_kms(aws_provider, storage_backend=backend1)
-            enc_mk = manager1.get_encrypted_master_key()
-            key_id = manager1.create_key("searchable")
-            original_key = manager1.get_key(key_id)
+        # Create and populate
+        backend1 = FileStorageBackend(storage_dir, backend_key)
+        manager1 = KeyManager.from_kms(aws_provider, storage_backend=backend1)
+        enc_mk = manager1.get_encrypted_master_key()
+        key_id = manager1.create_key("searchable")
+        original_key = manager1.get_key(key_id)
 
-            # Simulate restart: unwrap master key, reload backend
-            recovered_mk = aws_provider.decrypt(enc_mk)
-            backend2 = FileStorageBackend(storage_dir, backend_key)
-            manager2 = KeyManager(master_key=recovered_mk, storage_backend=backend2)
+        # Simulate restart: unwrap master key, reload backend
+        recovered_mk = aws_provider.decrypt(enc_mk)
+        backend2 = FileStorageBackend(storage_dir, backend_key)
+        manager2 = KeyManager(master_key=recovered_mk, storage_backend=backend2)
 
-            assert manager2.get_key(key_id) == original_key
-        finally:
-            shutil.rmtree(storage_dir)
+        assert manager2.get_key(key_id) == original_key
 
 
 class TestEncryptionContext:
@@ -538,9 +526,12 @@ class TestEncryptionContext:
             def __init__(self, key_id, region=None, encryption_context=None):
                 created.update(key_id=key_id, region=region, context=encryption_context)
 
-            def encrypt(self, plaintext):
-                created["plaintext_length"] = len(plaintext)
-                return b"wrapped-master-key"
+            def generate_data_key(self, key_spec="AES_256"):
+                created["key_spec"] = key_spec
+                return b"k" * 32, b"wrapped-master-key"
+
+            def encrypt(self, plaintext):  # pragma: no cover - must not be called
+                raise AssertionError("the tool must let KMS generate the key")
 
         monkeypatch.setattr(generate_kms_master_key, "AWSKMSProvider", FakeProvider)
 
@@ -560,5 +551,35 @@ class TestEncryptionContext:
                 "environment": "dev",
                 "purpose": "app-master-key",
             },
-            "plaintext_length": 32,
+            "key_spec": "AES_256",
         }
+
+    def test_generate_tool_calls_generate_data_key_with_the_context(self, capsys):
+        """End to end against a stub KMS client: KMS generates the key; nothing else is sent."""
+        from encrypted_ir.tools import generate_kms_master_key
+
+        client = MagicMock()
+        client.generate_data_key.return_value = {
+            "Plaintext": b"p" * 32,
+            "CiphertextBlob": b"blob-from-kms",
+        }
+        boto3 = MagicMock()
+        boto3.client.return_value = client
+        with patch.dict("sys.modules", {"boto3": boto3}):
+            generate_kms_master_key.main(["--kms-key-id", "alias/app", "--environment", "prod"])
+
+        client.generate_data_key.assert_called_once_with(
+            KeyId="alias/app",
+            KeySpec="AES_256",
+            EncryptionContext={
+                "application": "encrypted-information-retrieval",
+                "environment": "prod",
+                "purpose": "app-master-key",
+            },
+        )
+        client.encrypt.assert_not_called()
+        output = capsys.readouterr().out
+        assert output.strip() == (
+            "ENCRYPTED_IR_ENCRYPTED_MASTER_KEY_B64=" + base64.b64encode(b"blob-from-kms").decode()
+        )
+        assert base64.b64encode(b"p" * 32).decode() not in output

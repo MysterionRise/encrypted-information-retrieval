@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import (
     JSON,
+    BigInteger,
+    Boolean,
     Column,
     DateTime,
+    Index,
     Integer,
     LargeBinary,
     MetaData,
@@ -14,6 +19,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    event,
     func,
 )
 from sqlalchemy.engine import Engine
@@ -37,6 +43,8 @@ key_store_table = Table(
     ),
 )
 
+# Audit rows. Rows written before the hash chain (Alembic 20261027_0004) have NULL chain columns
+# and are not part of any chain; see encrypted_ir.audit.
 audit_log_table = Table(
     "encrypted_ir_audit_log",
     metadata,
@@ -45,6 +53,25 @@ audit_log_table = Table(
     Column("key_id", String(255), nullable=True, index=True),
     Column("entry_json", JSON, nullable=False),
     Column("created_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
+    Column("schema_version", Integer, nullable=True),
+    Column("event_type", String(64), nullable=True),
+    Column("actor", String(255), nullable=True),
+    Column("request_id", String(64), nullable=True),
+    Column("success", Boolean, nullable=True),
+    Column("seq", BigInteger, nullable=True),
+    Column("prev_hash", String(64), nullable=True),
+    Column("entry_hash", String(64), nullable=True),
+    Index("uq_encrypted_ir_audit_log_tenant_seq", "tenant_id", "seq", unique=True),
+    Index("ix_encrypted_ir_audit_log_created_at", "created_at"),
+)
+
+# One row per tenant: the last appended seq and its hash. Appends lock this row.
+audit_chain_heads_table = Table(
+    "encrypted_ir_audit_chain_heads",
+    metadata,
+    Column("tenant_id", String(255), primary_key=True),
+    Column("seq", BigInteger, nullable=False),
+    Column("entry_hash", String(64), nullable=False),
 )
 
 documents_table = Table(
@@ -56,6 +83,9 @@ documents_table = Table(
     # Sealed metadata for "aes-256-gcm/v1" rows; NULL for legacy "aes-gcm" rows, whose
     # metadata stays in metadata_json.
     Column("encrypted_metadata", LargeBinary, nullable=True),
+    # The sealed, sorted keyword list, so key rotation can rebuild the search tokens. NULL for
+    # rows ingested before Alembic 20261028_0005.
+    Column("encrypted_keywords", LargeBinary, nullable=True),
     Column("algorithm", String(64), nullable=False, default="aes-gcm"),
     Column("encryption_key_id", String(255), nullable=False),
     Column("search_key_id", String(255), nullable=False),
@@ -69,6 +99,20 @@ documents_table = Table(
         onupdate=func.now(),
         nullable=False,
     ),
+    Index("ix_encrypted_ir_documents_tenant_encryption_key", "tenant_id", "encryption_key_id"),
+    Index("ix_encrypted_ir_documents_tenant_search_key", "tenant_id", "search_key_id"),
+)
+
+# One row per tenant while a key rotation runs: a second rotation conflicts on the primary key.
+key_rotations_table = Table(
+    "encrypted_ir_key_rotations",
+    metadata,
+    Column("tenant_id", String(255), primary_key=True),
+    Column("run_id", String(64), nullable=False),
+    Column("target_encryption_key_id", String(255), nullable=False, default=""),
+    Column("target_search_key_id", String(255), nullable=False, default=""),
+    Column("started_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
+    Column("updated_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
 )
 
 document_tokens_table = Table(
@@ -82,15 +126,37 @@ document_tokens_table = Table(
 
 
 def create_database_engine(database_url: str) -> Engine:
-    """Create a SQLAlchemy engine with SQLite in-memory settings when needed."""
+    """Create a SQLAlchemy engine for ``database_url``.
+
+    Bound parameters are hidden from exception messages (``hide_parameters``), so a failed
+    statement never prints ciphertext, search tokens or tenant IDs into logs. In-memory SQLite
+    shares one connection between threads and is for tests only. File SQLite waits up to 30 s
+    for locks and uses WAL so readers and a writer can run concurrently.
+    """
     if database_url == "sqlite+pysqlite:///:memory:":
         return create_engine(
             database_url,
             future=True,
+            hide_parameters=True,
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
-    return create_engine(database_url, future=True)
+    if database_url.startswith("sqlite"):
+        engine = create_engine(
+            database_url,
+            future=True,
+            hide_parameters=True,
+            connect_args={"check_same_thread": False, "timeout": 30},
+        )
+        event.listen(engine, "connect", _sqlite_wal)
+        return engine
+    return create_engine(database_url, future=True, hide_parameters=True)
+
+
+def _sqlite_wal(dbapi_connection: Any, _connection_record: Any) -> None:
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.close()
 
 
 def create_database_schema(engine: Engine) -> None:

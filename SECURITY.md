@@ -62,7 +62,7 @@ This is a single-maintainer project, so responses are best effort:
 - The CI and release workflows.
 
 **Out of scope:**
-- Demo credentials in `docker-compose.yml`. They are documented demo values.
+- Demo credentials in `.env.example`. They are documented, public demo values.
 - Leakage that [`docs/LEAKAGE_AND_ENDPOINTS.md`](docs/LEAKAGE_AND_ENDPOINTS.md) already documents,
   unless the actual leakage is larger than documented.
 - Vulnerabilities in third-party dependencies. Please report those upstream; `pip-audit` runs in
@@ -77,10 +77,11 @@ These are tracked publicly. They are not secrets, and you do not need to report 
 | Retrieval leakage | Keyword tokens and blind indexes leak equality, query repetition, result sizes and access patterns by design. | [`docs/LEAKAGE_AND_ENDPOINTS.md`](docs/LEAKAGE_AND_ENDPOINTS.md) |
 | ORE prototype | `ORE.compare()` needs no key, so anyone holding the ciphertexts learns their total order. Ciphertexts also leak partial plaintext bytes. It is a CLWW-style prototype in `encrypted_ir.research`. | [#34](https://github.com/MysterionRise/encrypted-information-retrieval/issues/34), [#38](https://github.com/MysterionRise/encrypted-information-retrieval/issues/38) |
 | Research modules | FPE, CKKS, post-quantum, differential privacy and the forward/backward-private SSE classes in `encrypted_ir.research` are unaudited prototypes. Their known limitations (for example the custom, non-X-Wing hybrid KEM combiner, floating-point DP noise, and the absence of backward privacy) are listed in each module's docstring and in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md). Importing the package issues a `ResearchPrototypeWarning`. | [#38](https://github.com/MysterionRise/encrypted-information-retrieval/issues/38) |
-| Authentication | OIDC verification is tested against a fake JWKS only; it has not been run against a live identity provider. Dev auth (an API key and HS256 tokens) is off by default and refused outside `ENCRYPTED_IR_ENV=dev`. | [#48](https://github.com/MysterionRise/encrypted-information-retrieval/issues/48) |
-| Key rotation | Rotation does not re-encrypt stored documents. | [#42](https://github.com/MysterionRise/encrypted-information-retrieval/issues/42) |
-| Observability | `/metrics` is unauthenticated and keyed by raw request path, which can expose document IDs. | [#43](https://github.com/MysterionRise/encrypted-information-retrieval/issues/43) |
-| Audit | Audit rows are ordinary database rows, not tamper-evident, and have no export. | [#44](https://github.com/MysterionRise/encrypted-information-retrieval/issues/44) |
+| Authentication | OIDC verification runs end to end in CI against Keycloak with the API in production mode; it has not run against a commercial identity provider, whose claim shapes differ ([`docs/OIDC_DEPLOYMENT.md`](docs/OIDC_DEPLOYMENT.md)). Dev auth (an API key and HS256 tokens) is off by default and refused outside `ENCRYPTED_IR_ENV=dev`. | [#48](https://github.com/MysterionRise/encrypted-information-retrieval/issues/48) |
+| Key rotation | The rotation tool re-encrypts documents and retires old keys, but only when an operator runs it. Documents ingested with explicit keywords before it existed keep their old search key until they are ingested again. Master-key rotation relies on KMS-side rotation, which no test exercises. | [#42](https://github.com/MysterionRise/encrypted-information-retrieval/issues/42) |
+| AWS KMS | The KMS path runs end to end against moto server, an emulator, not against AWS. moto does not enforce IAM, so the documented policies in `docs/iam/` are checked for shape only. CloudTrail is the operator's to configure. | [`docs/KMS_DEPLOYMENT.md`](docs/KMS_DEPLOYMENT.md) |
+| Observability | `/metrics` is unauthenticated unless `ENCRYPTED_IR_METRICS_TOKEN` is set. It reveals request volumes per route and the number of cached tenants, not document IDs. Metrics are per process. | [`docs/LEAKAGE_AND_ENDPOINTS.md`](docs/LEAKAGE_AND_ENDPOINTS.md) |
+| Audit | Audit rows form a per-tenant HMAC chain keyed from the app master key, so whoever holds that key can rewrite it, and dropping the newest rows together with the head row is caught only against an exported head (`export_audit --check-head`). Failure and rejection audits are best effort. | [#44](https://github.com/MysterionRise/encrypted-information-retrieval/issues/44) |
 
 The roadmap epics order this work: [#26](https://github.com/MysterionRise/encrypted-information-retrieval/issues/26) (Phase 0), [#27](https://github.com/MysterionRise/encrypted-information-retrieval/issues/27) (Phase 1) and [#28](https://github.com/MysterionRise/encrypted-information-retrieval/issues/28) (Phase 2).
 
@@ -89,7 +90,7 @@ The roadmap epics order this work: [#26](https://github.com/MysterionRise/encryp
 **CI** (`.github/workflows/ci.yml`) runs on every push and pull request:
 - **bandit** static analysis of `src/`.
 - **ruff**, including the flake8-bandit `S` rules.
-- **pip-audit** over `requirements.txt`, `requirements-api.txt` and `requirements-research.txt`.
+- **pip-audit** over `requirements-ci.txt`, `requirements-docker.txt` and `requirements-research.txt`.
   This step is blocking.
 - The full test suite on Python 3.11 and 3.12, with a PostgreSQL service.
 - A research job that runs the tests needing the optional TenSEAL and pqcrypto extras.
@@ -111,6 +112,7 @@ pre-commit install       # optional local hooks; CI does not run pre-commit
 - **Audit rows contain no plaintext, queries, tokens or key material:**
   - `tests/test_security_hardening.py::test_document_operations_write_sanitized_audit_rows`
   - `tests/test_security_hardening.py::test_document_operation_failures_write_sanitized_audit_rows`
+- **The audit chain detects edited, deleted, reordered and moved rows:** `tests/test_audit.py::TestVerify`
 - **Production settings validation:**
   - `tests/test_security_hardening.py::test_settings_prod_rejects_dev_auth_and_raw_master_key`
   - `tests/test_security_hardening.py::test_settings_prod_requires_oidc_and_kms`

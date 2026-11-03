@@ -28,6 +28,7 @@ from encrypted_ir.searchable import SearchableEncryption, extract_keywords, norm
 from encrypted_ir.storage_backend import DatabaseStorageBackend
 
 TENANT = "tenant-a"
+SEARCH = DocumentService.DOC_SEARCH_KEY_TYPE
 
 
 @pytest.fixture()
@@ -105,11 +106,29 @@ class TestKeywordExtraction:
         assert result["indexed_token_count"] == 0
 
 
+class TestTenantScopedTokens:
+    def test_same_keyword_is_stored_as_different_tokens_per_tenant(self, engine, service):
+        service.ingest_document("tenant-a", "doc", "Quarterly fraud review")
+        service.ingest_document("tenant-b", "doc", "Quarterly fraud review")
+
+        with engine.connect() as conn:
+            rows = conn.execute(
+                select(document_tokens_table.c.tenant_id, document_tokens_table.c.token)
+            ).all()
+        tokens = {
+            tenant: {row.token for row in rows if row.tenant_id == tenant}
+            for tenant in ("tenant-a", "tenant-b")
+        }
+        assert tokens["tenant-a"] and tokens["tenant-b"]
+        assert tokens["tenant-a"].isdisjoint(tokens["tenant-b"])
+        assert [c.doc_id for c in service.search_documents("tenant-b", "fraud")] == ["doc"]
+
+
 class TestSearchAcrossKeys:
     def test_and_search_matches_documents_under_two_search_keys(self, service):
         service.ingest_document(TENANT, "doc-old-key", "fraud risk report for quarter one")
         old_search_key = _search_key_id(service)
-        new_search_key = service._key_manager(TENANT).rotate_key(old_search_key)
+        new_search_key = service._key_manager(TENANT).begin_rotation([SEARCH])[SEARCH]
         service.ingest_document(TENANT, "doc-new-key", "fraud risk report for quarter two")
 
         with service._engine.connect() as conn:
@@ -135,7 +154,7 @@ class TestSearchAcrossKeys:
     def test_score_is_number_of_distinct_keywords_matched(self, service):
         service.ingest_document(TENANT, "both", "fraud and risk")
         service.ingest_document(TENANT, "one", "fraud only")
-        service._key_manager(TENANT).rotate_key(_search_key_id(service))
+        service._key_manager(TENANT).begin_rotation([SEARCH])
 
         scores = {c.doc_id: c.score for c in service.search_documents(TENANT, "fraud risk")}
 
@@ -145,7 +164,7 @@ class TestSearchAcrossKeys:
         service.ingest_document(TENANT, "doc", "fraud report")
         manager = service._key_manager(TENANT)
         old_key = _search_key_id(service)
-        manager.rotate_key(old_key)
+        manager.begin_rotation([SEARCH])
         manager.get_metadata(old_key).lifecycle_state = "destroyed"
         manager._persist_key(old_key)
 
@@ -187,9 +206,8 @@ class TestSharedDatabase:
         assert len(manager.list_keys(DocumentService.DOC_ENCRYPTION_KEY_TYPE)) == 1
         assert len(manager.list_keys(DocumentService.DOC_SEARCH_KEY_TYPE)) == 1
 
-        new_encryption_key = manager.rotate_key(
-            manager.get_or_create_active_key(DocumentService.DOC_ENCRYPTION_KEY_TYPE)
-        )
+        encryption = DocumentService.DOC_ENCRYPTION_KEY_TYPE
+        new_encryption_key = manager.begin_rotation([encryption])[encryption]
         result = service_b.ingest_document(TENANT, "after-rotation", "fraud after rotation")
 
         assert result["key_id"] == new_encryption_key

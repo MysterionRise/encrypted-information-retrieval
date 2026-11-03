@@ -1,0 +1,61 @@
+# OIDC path, locally: Keycloak as the identity provider and the API in ENCRYPTED_IR_ENV=prod
+# (issue #48). Prod refuses to start without AWS KMS, so this file is layered on the KMS one:
+#
+#     cp .env.example .env
+#     ./scripts/oidc_smoke.sh
+#
+# which uses COMPOSE_FILE=docker-compose.yml:docker-compose.kms.yml:docker-compose.oidc.yml.
+#
+# The realm (deploy/keycloak/encrypted-ir-realm.json) holds PUBLIC DEMO VALUES: the client secret
+# and the user passwords are committed to the repository. Never use it for real users.
+# Keycloak puts KC_HOSTNAME in every token's `iss`, so tokens fetched through localhost:8080 carry
+# the same issuer the API is configured with.
+
+services:
+  keycloak:
+    image: keycloak/keycloak:26.8.1@sha256:a78d6b79572168cb25886b80a8b5b8d4ed4390743e3eecb810538683e209dd6b
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_HOSTNAME: http://keycloak:8080
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ./deploy/keycloak/encrypted-ir-realm.json:/opt/keycloak/data/import/encrypted-ir-realm.json:ro
+    # Published on loopback only, so the smoke script and a reviewer can request tokens.
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      # The image has no curl: speak HTTP to the management port through bash's /dev/tcp.
+      test:
+        - "CMD-SHELL"
+        - "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q 'HTTP/1.0 200' <&3"
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+
+  api:
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    # The API's whole environment in prod mode, replacing what the other files set: no raw
+    # master key (prod refuses one) and no dev-auth settings. (`!override` rather than per-key
+    # `!reset`, which Compose drops when the KMS file also sets the environment.)
+    environment: !override
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}"
+      ENCRYPTED_IR_ENV: prod
+      ENCRYPTED_IR_AUTO_CREATE_TABLES: "false"
+      ENCRYPTED_IR_CORS_ORIGINS: http://localhost:3000,http://localhost:8000,http://127.0.0.1:8000
+      ENCRYPTED_IR_DEV_AUTH_ENABLED: "false"
+      ENCRYPTED_IR_ENABLE_DOCS: "false"
+      ENCRYPTED_IR_OIDC_ISSUER: http://keycloak:8080/realms/encrypted-ir
+      ENCRYPTED_IR_OIDC_AUDIENCE: encrypted-ir
+      ENCRYPTED_IR_OIDC_JWKS_URL: http://keycloak:8080/realms/encrypted-ir/protocol/openid-connect/certs
+      # The KMS path, as in docker-compose.kms.yml.
+      ENCRYPTED_IR_KMS_PROVIDER: aws
+      ENCRYPTED_IR_AWS_KMS_KEY_ID: alias/encrypted-ir-master
+      ENCRYPTED_IR_ENCRYPTED_MASTER_KEY_B64: ${ENCRYPTED_IR_ENCRYPTED_MASTER_KEY_B64:-}
+      AWS_ENDPOINT_URL_KMS: http://moto:5000
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: moto-demo-access-key
+      AWS_SECRET_ACCESS_KEY: moto-demo-secret-key
+      AWS_EC2_METADATA_DISABLED: "true"

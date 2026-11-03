@@ -20,7 +20,7 @@ the current code.
 graph LR
     CLIENT["Client"] -->|"X-API-Key or bearer token"| API["FastAPI app (single process)"]
     API --> AUTH["Auth: OIDC via JWKS (RS256, PS256 or ES256); dev API key and HS256 dev JWT (dev only)"]
-    API --> RL["In-memory rate limiter (per process)"]
+    API --> RL["In-memory rate limiter (per process, per tenant and per client address)"]
     API --> DS["DocumentService"]
     DS --> KM["KeyManager per tenant (AES-GCM-wrapped keys)"]
     KM --> MK["App master key: env var, or AWS KMS Decrypt at startup"]
@@ -31,8 +31,9 @@ graph LR
 There is no Redis, HSM, blob storage, TEE, SIEM or TLS termination in this repository. The
 application runs as one process. The per-tenant key cache is safe across processes: it reloads keys
 from the database before every ingest and search and loads unknown key IDs on demand ([#39]). Rate
-limiting is in memory and per process, so a multi-replica deployment still needs an external
-limiter ([#47]).
+limiting is in memory and per process (bounded GCRA buckets per tenant and operation, plus a
+per-client-address limit), so a multi-replica deployment still needs an external limiter
+([#47]).
 
 ### Durable document and RAG workflow
 
@@ -45,7 +46,7 @@ limiter ([#47]).
    - Request limits: `doc_id` is 1 to 128 of `A-Z a-z 0-9 . _ -` and cannot start with `.`;
      at most 256 explicit keywords of up to 128 characters; at most 32 metadata keys and 16 KB of
      metadata JSON.
-   - It writes a sanitized audit row. A duplicate `doc_id` returns 409.
+   - It writes a sanitized audit row in the same transaction. A duplicate `doc_id` returns 409.
 2. `POST /v1/documents/search` recomputes the query tokens under every non-destroyed search key of
    the tenant and returns the matching document IDs, their metadata and a score: the number of
    distinct query keywords matched. `AND` requires every keyword.
@@ -68,19 +69,25 @@ These are the only routes besides the five above. The in-memory demo routes (`/v
 | Route | Backing | Note |
 | --- | --- | --- |
 | `GET /health`, `GET /ready` | Process state; database, migration, auth and key-provider checks | `/ready` is unauthenticated and returns pass/fail booleans; failure details go to the log ([#41]). |
-| `GET /metrics` | Process-global JSON counters | Unauthenticated and keyed by raw path ([#43]). |
+| `GET /metrics` | Per-process Prometheus registry | Labels are route templates, methods and status codes, never document IDs. Optional bearer token ([#43]). |
 
 ### Storage
 
-Three Alembic migrations create the four tables (the second drops a soft-delete flag that was never
-set, because documents are hard-deleted; the third adds the sealed-metadata column):
+Five Alembic migrations create the six tables:
+1. The first creates the base schema.
+2. The second drops a soft-delete flag that was never set, because documents are hard-deleted.
+3. The third adds the sealed-metadata column.
+4. The fourth adds the audit chain.
+5. The fifth adds the sealed keyword list, key-ID indexes and the rotation lock.
 
 | Table | Contents |
 | --- | --- |
-| `encrypted_ir_documents` | Sealed content and sealed metadata (ADR-007), format, key IDs, token count. Legacy rows keep plaintext `metadata_json`. |
+| `encrypted_ir_documents` | Sealed content, metadata and keyword list (ADR-007), format, key IDs, token count. Legacy rows keep plaintext `metadata_json` until the rotation tool re-encrypts them. |
 | `encrypted_ir_document_tokens` | `(tenant_id, token, doc_id)` keyword-token rows |
 | `encrypted_ir_keys` | Per-tenant keys wrapped under the app master key, plus metadata |
-| `encrypted_ir_audit_log` | Sanitized audit entries (API events and key events) |
+| `encrypted_ir_audit_log` | Audit entries in one schema (API events, rejections and key events), chained per tenant by `seq`, `prev_hash` and `entry_hash` (ADR-017). Rows from before migration 0004 stay unchained. |
+| `encrypted_ir_audit_chain_heads` | Each tenant's last `seq` and hash. Its row lock serializes a tenant's appends. |
+| `encrypted_ir_key_rotations` | One row per tenant while a rotation runs, holding its target keys. The primary key prevents two rotations of one tenant at once. |
 
 Tenant isolation is enforced in application code: every query filters on `tenant_id`. There is
 no row-level security in the database.
@@ -95,8 +102,18 @@ no row-level security in the database.
 - **Tenant keys.** Each tenant has a document-encryption key and a search key. Both are created
   on first use and stored wrapped under the master key, bound to the tenant, key ID, type and
   version ([#40]).
-- **Rotation.** The library can create new key versions and keep retired keys decryptable.
-  Stored documents are not re-encrypted ([#42]).
+- **Rotation.** `python -m encrypted_ir.tools.rotate_tenant_keys --tenant T` rotates a tenant's
+  document and search keys while the API keeps serving (ADR-018, [#42]):
+  - It creates successor keys, then re-encrypts every document under them in resumable batches.
+  - Each document also gets new search tokens, rebuilt from its sealed keyword list.
+  - At the end it retires the old document key, which is kept so backups stay readable, and
+    destroys the old search key.
+  - Documents ingested before the keyword list existed are re-tokenized only when their stored
+    tokens confirm the re-extracted keywords. The others keep the old search key until they are
+    ingested again, and the tool reports how many there are.
+- **Master key rotation** happens in AWS KMS (automatic rotation of the customer master key).
+  KMS keeps the old key material to decrypt the existing wrapped master key, so nothing here has
+  to re-wrap it.
 
 ### Where the primitives are used
 
@@ -458,7 +475,7 @@ graph TB
         ROT[Key Rotation Event]
         ROT -->|Generate new DEK| DEK1_NEW[New DEK 1]
         KEK -->|Re-wrap| DEK1_NEW
-        ROT -.->|"Re-encrypt data<br/>(lazy or eager)"| DATA1
+        ROT -.->|"Re-encrypt data<br/>(batched tool, ADR-018)"| DATA1
     end
 
     style KEK fill:#fce4ec
@@ -551,33 +568,10 @@ graph TB
 
 #### Key Rotation Process
 
-```mermaid
-sequenceDiagram
-    participant Scheduler
-    participant KMS
-    participant App
-    participant Database
-
-    Note over Scheduler: Every 90 days
-    Scheduler->>KMS: RotateDEK(tenant_id)
-    KMS->>KMS: Generate new DEK_v2
-    KMS->>KMS: Encrypt DEK_v2 with KEK
-    KMS->>App: Notify rotation event
-
-    rect rgb(255, 240, 200)
-    Note over App,Database: Lazy Re-encryption
-    App->>Database: Read old record
-    Database->>App: encrypted_data_v1 + encrypted_DEK_v1
-    App->>KMS: Decrypt DEK_v1
-    KMS->>App: plaintext DEK_v1
-    App->>App: Decrypt data with DEK_v1
-    App->>KMS: Encrypt with DEK_v2
-    KMS->>App: encrypted_data_v2 + encrypted_DEK_v2
-    App->>Database: Update record with v2
-    end
-
-    Note over KMS,Database: Old DEK archived<br/>for 90 days
-```
+The 2025 design here had a scheduler rotate keys every 90 days and re-encrypt records lazily on
+read. What was built instead is an operator-run tool: rotation is eager, batched and resumable, and
+it runs while the API keeps serving. The master key is rotated in KMS. See "Keys" under
+[As built](#as-built) and ADR-018.
 
 ---
 
@@ -769,54 +763,16 @@ mindmap
 
 ### Scaling Considerations
 
-#### Horizontal Scaling
+The API holds two kinds of per-process state: the rate-limit buckets and the Prometheus
+registry. The key cache is safe across processes ([#39]). Running more than one process (uvicorn
+workers or replicas) therefore needs:
 
-```mermaid
-graph TB
-    LB[Load Balancer]
+- an external rate limiter in front of the API, because each process enforces the configured
+  limits on its own, so N processes allow N times the limit ([#47]);
+- a Prometheus scrape per process (or one worker per container, as the Docker image runs).
 
-    subgraph "API Tier (Stateless)"
-        API1[API Server 1]
-        API2[API Server 2]
-        API3[API Server N]
-    end
-
-    subgraph "Cache Layer"
-        REDIS[Redis Cluster<br/>DEK Cache]
-    end
-
-    subgraph "Data Layer (Sharded)"
-        DB1[(Shard 1<br/>Tenants A-F)]
-        DB2[(Shard 2<br/>Tenants G-M)]
-        DB3[(Shard 3<br/>Tenants N-Z)]
-    end
-
-    subgraph "KMS (Highly Available)"
-        KMS_PRIMARY[KMS Primary Region]
-        KMS_REPLICA[KMS Replica Region]
-    end
-
-    LB --> API1
-    LB --> API2
-    LB --> API3
-
-    API1 --> REDIS
-    API2 --> REDIS
-    API3 --> REDIS
-
-    API1 --> DB1
-    API2 --> DB2
-    API3 --> DB3
-
-    API1 --> KMS_PRIMARY
-    API2 --> KMS_PRIMARY
-    KMS_PRIMARY -.->|Replication| KMS_REPLICA
-
-    style REDIS fill:#fff3e0
-    style KMS_PRIMARY fill:#fce4ec
-```
-
----
+The database is a single PostgreSQL instance. Sharding, a shared cache and multi-region KMS are
+not designed here.
 
 ---
 

@@ -1,13 +1,13 @@
 """Tests for storage backend module."""
 
 import os
-import shutil
-import tempfile
 from datetime import datetime
 
 import pytest
 from sqlalchemy import event
 
+from encrypted_ir import audit
+from encrypted_ir.audit import AuditEvent, AuditWrite
 from encrypted_ir.database import create_database_engine, create_database_schema
 from encrypted_ir.key_manager import KeyManager
 from encrypted_ir.storage_backend import DatabaseStorageBackend, FileStorageBackend, StorageBackend
@@ -36,11 +36,9 @@ class TestFileStorageBackend:
     """Test file-based storage backend."""
 
     @pytest.fixture
-    def storage_dir(self):
-        """Create a temporary directory for storage tests."""
-        d = tempfile.mkdtemp()
-        yield d
-        shutil.rmtree(d)
+    def storage_dir(self, tmp_path):
+        """A temporary directory for storage tests."""
+        return str(tmp_path / "keys")
 
     @pytest.fixture
     def encryption_key(self):
@@ -57,16 +55,11 @@ class TestFileStorageBackend:
         with pytest.raises(ValueError):
             FileStorageBackend(storage_dir, b"too_short")
 
-    def test_creates_storage_directory(self):
+    def test_creates_storage_directory(self, tmp_path):
         """Storage directory is created if it doesn't exist."""
-        d = tempfile.mkdtemp()
-        shutil.rmtree(d)
-        subdir = os.path.join(d, "nested", "path")
-        try:
-            FileStorageBackend(subdir, os.urandom(32))
-            assert os.path.isdir(subdir)
-        finally:
-            shutil.rmtree(d)
+        subdir = os.path.join(tmp_path, "nested", "path")
+        FileStorageBackend(subdir, os.urandom(32))
+        assert os.path.isdir(subdir)
 
     def test_save_and_load_key(self, backend):
         """Keys can be saved and loaded back."""
@@ -127,45 +120,14 @@ class TestFileStorageBackend:
         assert keys == {}
         assert metadata == {}
 
-    def test_save_and_load_audit_entry(self, backend):
-        """Audit entries can be saved and loaded."""
-        entry = {
-            "timestamp": datetime.now().isoformat(),
-            "key_id": "test_key",
-            "operation": "create",
-            "success": True,
-            "details": "test",
-        }
-        backend.save_audit_entry(entry)
+    def test_file_backend_has_no_audit_store(self, backend, storage_dir):
+        """Audit writes are accepted and ignored; nothing but the keystore is written."""
+        write = AuditWrite(AuditEvent("key.create", "key-manager", True, "k1"), b"k" * 32)
+        backend.save_key("k1", b"encrypted", {"key_id": "k1"}, audit=write)
+        backend.append_audit(write)
 
-        logs = backend.load_audit_log()
-        assert len(logs) == 1
-        assert logs[0]["key_id"] == "test_key"
-
-    def test_audit_log_filtering(self, backend):
-        """Audit log can be filtered by key_id."""
-        for i in range(5):
-            backend.save_audit_entry(
-                {"key_id": f"key_{i % 2}", "operation": "get", "timestamp": str(i)}
-            )
-
-        all_logs = backend.load_audit_log()
-        assert len(all_logs) == 5
-
-        key0_logs = backend.load_audit_log(key_id="key_0")
-        assert len(key0_logs) == 3
-
-    def test_audit_log_limit(self, backend):
-        """Audit log respects the limit parameter."""
-        for i in range(20):
-            backend.save_audit_entry({"key_id": "k", "timestamp": str(i)})
-
-        logs = backend.load_audit_log(limit=5)
-        assert len(logs) == 5
-
-    def test_audit_log_empty(self, backend):
-        """Loading audit log when no entries exist returns empty list."""
-        assert backend.load_audit_log() == []
+        assert sorted(os.listdir(storage_dir)) == [FileStorageBackend.KEYSTORE_FILENAME]
+        assert backend.load_key("k1") == (b"encrypted", {"key_id": "k1"})
 
     def test_persistence_across_instances(self, storage_dir, encryption_key):
         """Data persists when a new backend instance is created for the same dir."""
@@ -203,10 +165,8 @@ class TestKeyManagerWithFileBackend:
     """Test KeyManager integration with FileStorageBackend."""
 
     @pytest.fixture
-    def storage_dir(self):
-        d = tempfile.mkdtemp()
-        yield d
-        shutil.rmtree(d)
+    def storage_dir(self, tmp_path):
+        return str(tmp_path / "keys")
 
     @pytest.fixture
     def master_key(self):
@@ -271,7 +231,7 @@ class TestKeyManagerWithFileBackend:
         mgr1 = KeyManager(master_key=master_key, storage_backend=backend1)
 
         old_key_id = mgr1.create_key("deterministic")
-        new_key_id = mgr1.rotate_key(old_key_id)
+        new_key_id = mgr1.begin_rotation(["deterministic"])["deterministic"]
 
         # Restart
         backend2 = FileStorageBackend(storage_dir, master_key)
@@ -302,21 +262,6 @@ class TestKeyManagerWithFileBackend:
         for key_id in ids:
             assert mgr2.get_key(key_id) is not None
 
-    def test_audit_log_persists(self, storage_dir, master_key):
-        """Audit log entries persist across restarts when read auditing is on."""
-        backend1 = FileStorageBackend(storage_dir, master_key)
-        mgr1 = KeyManager(master_key=master_key, storage_backend=backend1, audit_reads=True)
-
-        key_id = mgr1.create_key("deterministic")
-        mgr1.get_key(key_id)
-
-        # Restart
-        backend2 = FileStorageBackend(storage_dir, master_key)
-        mgr2 = KeyManager(master_key=master_key, storage_backend=backend2)
-
-        logs = mgr2.get_audit_log()
-        assert len(logs) >= 2  # create + get
-
     def test_existing_tests_still_pass_without_backend(self):
         """KeyManager without a backend works exactly as before."""
         manager = KeyManager()
@@ -327,7 +272,7 @@ class TestKeyManagerWithFileBackend:
         assert len(key) == 32
 
         # Rotation
-        new_key_id = manager.rotate_key(key_id)
+        new_key_id = manager.begin_rotation(["deterministic"])["deterministic"]
         assert manager.get_metadata(key_id).active is False
         assert manager.get_metadata(new_key_id).active is True
 
@@ -401,14 +346,25 @@ class TestDatabaseStorageBackend:
         assert tenant_a.load_key("shared-key-id")[0] == b"a-key"
         assert tenant_b.load_key("shared-key-id")[0] == b"b-key"
 
-    def test_audit_log_filtering(self, backend):
-        backend.save_audit_entry({"key_id": "k1", "operation": "create"})
-        backend.save_audit_entry({"key_id": "k2", "operation": "get"})
+    def test_save_key_and_audit_commit_together(self, engine, backend):
+        audit_key = b"a" * 32
+        event = AuditEvent("key.create", "key-manager", True, "key-1", key_id="key-1")
+        backend.save_key(
+            "key-1", b"encrypted", {"key_id": "key-1"}, audit=AuditWrite(event, audit_key)
+        )
 
-        logs = backend.load_audit_log(key_id="k1")
+        with engine.connect() as conn:
+            rows, head = audit.load_chain(conn, "tenant-a")
+        assert [(r.event_type, r.key_id) for r in rows] == [("key.create", "key-1")]
+        assert audit.verify_chain(rows, head, "tenant-a", audit_key).ok
 
-        assert len(logs) == 1
-        assert logs[0]["key_id"] == "k1"
+    def test_failed_audit_rolls_back_the_key_write(self, engine, backend):
+        # A details value that cannot be serialized makes the audit append fail.
+        event = AuditEvent("key.create", "key-manager", True, "key-1", {"bad": object()})
+        with pytest.raises(TypeError):
+            backend.save_key("key-1", b"encrypted", {}, audit=AuditWrite(event, b"a" * 32))
+
+        assert backend.load_key("key-1") is None
 
     def test_key_manager_persists_with_database_backend(self, engine):
         master_key = os.urandom(32)
@@ -469,8 +425,9 @@ class TestReadsDoNotWrite:
 
         writes = self._count_writes(engine, lambda: manager.get_key(key_id))
 
-        assert len(writes) == 2  # key row update and audit insert
-        assert writes[0].lstrip().upper().startswith("UPDATE")
+        # The key row update, then the audit chain append (head row, entry, head hash).
+        assert writes[0].lstrip().startswith("UPDATE encrypted_ir_keys")
+        assert any("INTO encrypted_ir_audit_log" in w for w in writes)
 
     def test_save_key_updates_in_place(self, engine):
         backend = DatabaseStorageBackend(engine, "tenant-a")
@@ -500,7 +457,7 @@ class TestReadsDoNotWrite:
         key_id = first.get_or_create_active_key("document_search")
         assert second.get_or_create_active_key("document_search") == key_id
 
-        new_key_id = first.rotate_key(key_id)
+        new_key_id = first.begin_rotation(["document_search"])["document_search"]
         second.refresh()
 
         assert second.get_metadata(key_id).active is False

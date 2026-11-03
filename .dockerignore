@@ -1,0 +1,10 @@
+# Only requirements-docker.txt, the packaging files and src/ are copied into the image.
+*
+!requirements-docker.txt
+!pyproject.toml
+!setup.py
+!README.md
+!LICENSE
+!src/
+**/__pycache__
+**/*.pyc

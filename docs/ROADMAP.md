@@ -51,6 +51,9 @@ Docs, CI, metadata and docstrings only. No behavioural code change. Cheapest wor
 Exit: CI on `master` green with real gates; every doc current, labelled target-state, or archived; `SECURITY.md`
 usable; `v0.9.0` tagged by the release workflow.
 
+**Status:** the exit criteria are met except the tag: `v0.9.0` was never tagged, and Phase 0 ships in `v0.10.0`
+together with Phase 1 (see `CHANGELOG.md`). #30 stays open for one box, pinning actions by commit SHA.
+
 ## Phase 1: Durable path correctness and honest scope (epic #27, tag `v0.10.0`)
 
 | Issue | Title | Area |
@@ -75,16 +78,34 @@ Exit: API is `/v1/documents*`, `/v1/rag/retrieve`, `/health`, `/ready`, `/metric
 modules warn on import and their tests run in CI; the full API suite passes on PostgreSQL in CI; a real rotation
 tool is proven by a Postgres-backed test; `v0.10.0` tagged.
 
+**Status:** done in `v0.10.0`, except #38 (the research-module fixes), which ships in `v1.0.0`. Each exit criterion
+and its proof:
+
+- [x] The API is `/v1/documents*`, `/v1/rag/retrieve`, `/health`, `/ready` and `/metrics`:
+  `tests/test_api.py::TestOpenAPI::test_openapi_lists_exactly_the_durable_routes`,
+  `tests/test_api.py::TestOpenAPI::test_removed_demo_routes_return_404` and
+  `tests/test_route_matrix.py::test_every_durable_route_is_covered`.
+- [x] Each route is on the leakage map: one row per route in
+  [LEAKAGE_AND_ENDPOINTS.md](LEAKAGE_AND_ENDPOINTS.md).
+- [x] Research modules warn on import and their tests run in CI:
+  `tests/research/test_research_package.py::test_importing_research_warns`, run with the research extras by the
+  CI `research` and `coverage` jobs.
+- [x] The full API suite passes on PostgreSQL in CI: the CI `test` and `coverage` jobs set
+  `POSTGRES_TEST_DATABASE_URL`, which makes `tests/conftest.py` run every database-backed test on PostgreSQL.
+- [x] A real rotation tool is proven by a Postgres-backed test:
+  `tests/test_rotation.py::TestPostgres::test_rotation_on_postgres`.
+- [ ] `v0.10.0` tagged by the release workflow.
+
 ## Phase 2: Evidence and reviewed release (epic #28, tag `v1.0.0`)
 
 | Issue | Title | Area |
 | --- | --- | --- |
 | [#48](https://github.com/MysterionRise/encrypted-information-retrieval/issues/48) | End-to-end OIDC evidence without a cloud account (Keycloak or dex in Compose, CI job in prod mode) | api, ops |
-| [#49](https://github.com/MysterionRise/encrypted-information-retrieval/issues/49) | End-to-end KMS evidence without a cloud account (LocalStack KMS profile, prod-mode startup in CI, documented IAM policy) | kms, ops |
+| [#49](https://github.com/MysterionRise/encrypted-information-retrieval/issues/49) | End-to-end KMS evidence without a cloud account (KMS emulator profile, prod-mode startup in CI, documented IAM policy). The emulator is moto server: LocalStack now needs an account auth token | kms, ops |
 | [#50](https://github.com/MysterionRise/encrypted-information-retrieval/issues/50) | Benchmarks with provenance: percentiles, commit/date/hardware metadata, SQLite and Postgres, regenerate reports | tests |
 | [#51](https://github.com/MysterionRise/encrypted-information-retrieval/issues/51) | Reviewer guide (claim to proof), refreshed evidence and demo script, cut `v1.0.0` | docs |
 
-Exit: CI runs the API in `ENCRYPTED_IR_ENV=prod` against a local IdP and LocalStack KMS and the run is recorded in
+Exit: CI runs the API in `ENCRYPTED_IR_ENV=prod` against a local IdP and a local KMS emulator (moto) and the run is recorded in
 `PORTFOLIO_EVIDENCE.md`; `REVIEW_GUIDE.md` maps every README claim to its proof; `v1.0.0` tagged.
 
 ## Not planned
@@ -98,14 +119,16 @@ These stay out of scope so that no document implies they exist. Each would be a 
 | IaC, TLS termination, WAF, SLO dashboards, runbooks | Deployment concerns for a pilot, not for a reviewable prototype. |
 | Real Lewi-Wu ORE, client/server forward-private DSSE, true encrypted aggregates | Multi-week cryptography work that would still be unaudited; #34 and #38 make the current code honest instead. |
 | PIR, ORAM, TEE/Nitro, vector retrieval, MPC | Listed in older docs as mitigations; they are research directions, not roadmap items. |
-| External cryptographic or application-security audit | Only meaningful after Phase 2; a request-for-review template is part of #51. |
+| External cryptographic or application-security audit | Only meaningful after Phase 2. The request for one is ready in [REVIEW_REQUEST_TEMPLATE.md](REVIEW_REQUEST_TEMPLATE.md). |
 
 ## How to verify progress
 
 - Each issue has acceptance checkboxes; an issue is closed only when every box is ticked by a merged change.
 - Each phase ends with a tag cut by the release workflow (#31) and a CHANGELOG entry.
-- `docs/PORTFOLIO_EVIDENCE.md` is regenerated from a fresh run at the end of Phase 2; until then its date tells a
-  reader how old the evidence is.
+- `docs/PORTFOLIO_EVIDENCE.md` is rendered by the CI `evidence` job from one run on the release commit, and the
+  release workflow refuses a tag whose code changed after that run.
+- [REVIEW_GUIDE.md](REVIEW_GUIDE.md) maps every README claim to its proof, and a test fails when a proof it cites
+  stops existing.
 
 ## Appendix: findings behind this roadmap
 

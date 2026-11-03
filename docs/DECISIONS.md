@@ -65,7 +65,7 @@ We need deterministic encryption for equality searches on account numbers, custo
 
 **Cons**:
 - ⚠️ **Deterministic leakage**: Equality patterns visible (acceptable trade-off for use case)
-- ⚠️ **Slightly slower**: ~20% overhead vs. AES-GCM (negligible for our latency requirements)
+- ⚠️ **Slightly slower**: ~20% overhead vs. AES-GCM (published estimate; not measured here)
 
 **Alternatives Considered**:
 - **AES-GCM with fixed nonce**: Rejected (catastrophic if nonce reused accidentally)
@@ -75,7 +75,7 @@ We need deterministic encryption for equality searches on account numbers, custo
 ### Consequences
 
 - **Security**: Strong confidentiality and authenticity; controlled equality leakage documented in THREAT_MODEL.md
-- **Performance**: 2-5x slower than plaintext lookups (acceptable for <10ms latency requirement)
+- **Performance**: not measured for this ADR. Measured retrieval numbers, with provenance, are in `benchmarks/reports/`.
 - **Leakage Mitigation**: Complement with blind indexes (ADR-002) for reduced leakage
 
 ### Compliance Mapping
@@ -146,7 +146,7 @@ def create_blind_index(value: str, tenant_id: str, field_type: str) -> str:
 ### Consequences
 
 - **Security**: Equality leakage scoped to tenant; frequency analysis limited to tenant dataset
-- **Performance**: HMAC computation ~1-2ms; minimal overhead
+- **Performance**: not measured on its own. Token computation is part of the per-document ingest time in `benchmarks/reports/`.
 - **Storage**: Index stored alongside encrypted ciphertext
 - **Rotation**: Index keys rotate with DEKs (90-day cycle)
 
@@ -184,7 +184,7 @@ Searchable Symmetric Encryption (SSE) enables keyword search on encrypted docume
 **Pros**:
 - ✅ **Forward privacy**: New document additions unlinkable to past queries
 - ✅ **Replay protection**: Nonce-based freshness
-- ✅ **Practical performance**: 20-50ms search latency @ 10k documents
+- ✅ **Practical performance**: the design-time figure was never measured. Measured search latency at 10,000 documents is in `benchmarks/reports/`.
 - ✅ **Well-studied**: Σoφoς-style constructions analyzed in literature
 
 **Cons**:
@@ -194,7 +194,7 @@ Searchable Symmetric Encryption (SSE) enables keyword search on encrypted docume
 
 **Alternatives Considered**:
 - **Static SSE**: Rejected (no forward privacy; vulnerable to LEAP-style attacks)
-- **ORAM**: Rejected (100-1000x overhead; impractical for FS latency requirements)
+- **ORAM**: Rejected (100-1000x overhead (published estimate; not measured here); impractical for FS latency requirements)
 - **PIR only**: Use as optional mode; too slow for default
 
 ### Leakage Profile
@@ -274,7 +274,7 @@ Searchable Symmetric Encryption (SSE) enables keyword search on encrypted docume
 ### Consequences
 
 - **Security**: Order leakage acceptable for dates/timestamps; avoid for amounts if possible
-- **Performance**: ORE comparison ~30ms (vs. 10ms for OPE)
+- **Performance**: not measured. The ORE prototype's micro-benchmarks are in `benchmarks/test_research.py`.
 - **Migration**: Lazy re-encryption on read; complete migration in 90 days
 
 ### Compliance Mapping
@@ -315,7 +315,7 @@ We need encrypted computation for credit scoring and analytics. Options:
 - ✅ **Production-ready**: Microsoft SEAL used in real-world deployments
 
 **Cons**:
-- ⚠️ **Performance**: 100-1000x slower than plaintext
+- ⚠️ **Performance**: 100-1000x slower than plaintext (published estimate; not measured here)
 - ⚠️ **Ciphertext size**: 100KB+ per encrypted vector
 - ⚠️ **Complexity**: Requires crypto expertise for parameter tuning
 
@@ -351,7 +351,11 @@ We need encrypted computation for credit scoring and analytics. Options:
 ## ADR-006: Envelope Encryption with KMS
 
 **Date**: 2025-01-11
-**Status**: Partially implemented. A single app master key can be unwrapped through AWS KMS at startup (`master_key.py`, tested with mocks only), and per-tenant keys are wrapped locally under it. No HSM, CloudHSM or CloudTrail integration exists in this repository.
+**Status**: Partially implemented.
+- A single app master key is unwrapped through AWS KMS at startup (`master_key.py`; run end to end in CI against the moto KMS emulator, not against AWS), and per-tenant keys are wrapped locally under it.
+- The master key is created by KMS `GenerateDataKey` and rotated by KMS-side rotation of the customer master key.
+- Tenant keys are rotated by an operator tool, not on a schedule (ADR-018).
+- No HSM, CloudHSM or CloudTrail integration exists in this repository.
 **Decision Makers**: Security Architecture Team
 
 ### Context
@@ -371,14 +375,14 @@ Key management complexity is a top operational challenge (59% of IT professional
 **Pros**:
 - ✅ **KEK never leaves HSM**: Keys protected by hardware
 - ✅ **FIPS 140-3 Level 3**: Compliance-ready
-- ✅ **Audit logging**: CloudTrail integration
+- ✅ **Audit logging**: CloudTrail records KMS calls, if the operator configures a trail; nothing in this repository does (see [KMS_DEPLOYMENT.md](KMS_DEPLOYMENT.md))
 - ✅ **Per-tenant isolation**: Separate DEKs per tenant
 - ✅ **Rotation**: Re-wrap DEKs without KEK change
 
 **Cons**:
 - ⚠️ **Cloud dependency**: Requires AWS/Azure/GCP KMS
 - ⚠️ **Cost**: ~$1/month per CMK + API call charges
-- ⚠️ **Latency**: KMS API call adds ~50ms (mitigated by DEK caching)
+- ⚠️ **Latency**: a KMS call costs a network round trip. The built system calls KMS once, at startup (ADR-014); that call was not timed.
 
 **Alternatives Considered**:
 - **Local HSM (Thales Luna)**: For on-premises deployments
@@ -408,7 +412,7 @@ Key management complexity is a top operational challenge (59% of IT professional
 ### Consequences
 
 - **Security**: KEK isolation, HSM-backed, audit trail
-- **Performance**: DEK cache (5-minute TTL) → 2ms decrypt (cached), 50ms (cache miss)
+- **Performance**: no DEK cache with a TTL was built. The API unwraps the master key once at startup and keeps tenant keys in memory (ADR-014); single-document decrypt times are in `benchmarks/reports/`.
 - **Operational**: Automated rotation; 90-day DEK rotation, annual KEK rotation
 
 ### Compliance Mapping
@@ -442,12 +446,12 @@ version (u8 = 1) || algorithm (u8 = 1, AES-256-GCM) || key_id_len (u8, 1..255) |
 
 AES-GCM associated data = header || lp("encrypted-ir/document/v1") || lp(purpose)
                           || lp(tenant_id) || lp(doc_id)          lp = 4-byte big-endian length prefix
-purpose = "content" | "metadata"
+purpose = "content" | "metadata" | "keywords"
 ```
 
 - The row's `algorithm` column is `aes-256-gcm/v1` for this format. Rows written before it keep
-  `aes-gcm` (`iv || tag || ciphertext`, no associated data) and stay readable; the rotation tool in
-  [#42] will re-encrypt them. Changing a new row's `algorithm` to `aes-gcm` cannot downgrade it,
+  `aes-gcm` (`iv || tag || ciphertext`, no associated data) and stay readable; the rotation tool
+  (ADR-018, [#42]) re-encrypts them into this format. Changing a new row's `algorithm` to `aes-gcm` cannot downgrade it,
   because the legacy path then fails the GCM tag check.
 - Decryption checks that the header's version, algorithm and key ID match the row, and that the
   associated data matches the tenant, document and purpose. Swapping ciphertexts between rows,
@@ -481,7 +485,7 @@ Cryptographic algorithms have finite lifespans. We must prepare for:
 
 ### Consequences
 
-- **Migration**: Decrypt with the old format, re-encrypt with the new one (the rotation tool, [#42]).
+- **Migration**: Decrypt with the old format, re-encrypt with the new one (the rotation tool, ADR-018).
 - **Backward compatibility**: Old ciphertexts remain readable until they are re-encrypted.
 
 ### References
@@ -512,12 +516,12 @@ SSE leaks access patterns. For high-sensitivity collections (e.g., sanctions lis
 - ✅ **Opt-in**: Use only for sensitive collections (performance vs. privacy trade-off)
 
 **Cons**:
-- ⚠️ **Performance**: 10-100x slower than SSE
+- ⚠️ **Performance**: 10-100x slower than SSE (published estimate; not measured here)
 - ⚠️ **Database size limit**: Practical for <1M records
 - ⚠️ **Implementation complexity**: Requires specialized library (SealPIR, SimplePIR)
 
 **Alternatives Considered**:
-- **ORAM**: Rejected (1000x+ overhead)
+- **ORAM**: Rejected (1000x+ overhead (published estimate; not measured here))
 - **TEE-only**: Complementary; PIR provides no-trust-anchor alternative
 
 ### Implementation Plan
@@ -528,8 +532,8 @@ SSE leaks access patterns. For high-sensitivity collections (e.g., sanctions lis
 
 ### Consequences
 
-- **Performance**: 100-500ms per query (vs. 20ms for SSE)
-- **Scalability**: Per-server capacity: ~10 QPS (PIR) vs. 500 QPS (SSE)
+- **Performance**: no PIR mode was built, so nothing was measured. Published PIR schemes cost far more per query than keyword-token search.
+- **Scalability**: not measured (no PIR mode exists).
 - **Operational**: Enable via feature flag; document trade-offs clearly
 
 ### References
@@ -566,7 +570,7 @@ Some operations require plaintext processing (e.g., complex predicates, ML infer
 
 **Cons**:
 - ⚠️ **AWS-specific**: Vendor lock-in (Azure Confidential VMs, GCP Confidential Computing as alternatives)
-- ⚠️ **Performance**: ~10% overhead vs. non-enclave
+- ⚠️ **Performance**: ~10% overhead vs. non-enclave (published estimate; not measured here)
 - ⚠️ **Operational complexity**: Attestation flow, enclave management
 
 **Alternatives Considered**:
@@ -583,7 +587,7 @@ Some operations require plaintext processing (e.g., complex predicates, ML infer
 ### Consequences
 
 - **Security**: Zero server-side leakage (outside enclave); rely on enclave integrity
-- **Performance**: 10% overhead; acceptable for high-sensitivity operations
+- **Performance**: 10% overhead (published estimate; not measured here); acceptable for high-sensitivity operations
 - **Operational**: Require attestation flow; document in runbooks
 
 ### References
@@ -615,7 +619,7 @@ NIST finalized PQC standards (FIPS 203/204/205) in August 2024. Large-scale quan
 - ✅ **Standards-based**: NIST-approved algorithms (Kyber, Dilithium, Falcon)
 
 **Cons**:
-- ⚠️ **Performance**: PQC key operations ~2-10x slower
+- ⚠️ **Performance**: PQC key operations ~2-10x slower (published estimate; not measured here)
 - ⚠️ **Key/signature sizes**: Kyber public key ~1.6KB (vs. 32 bytes for X25519)
 - ⚠️ **Implementation maturity**: Libraries stabilizing (liboqs, PQClean)
 
@@ -634,7 +638,7 @@ NIST finalized PQC standards (FIPS 203/204/205) in August 2024. Large-scale quan
 
 ### Consequences
 
-- **Performance**: 5-10% overhead (hybrid mode)
+- **Performance**: 5-10% overhead (hybrid mode) (published estimate; not measured here)
 - **Storage**: ~2KB per key (vs. 32 bytes classical)
 - **Compliance**: Meet PQC migration mandates (expected 2026-2028)
 
@@ -667,7 +671,7 @@ supported for tests and local runs.
 - Docker Compose runs PostgreSQL plus the API. The persistence smoke test in `docs/CTO_DEMO_SCRIPT.md`
   exercises it.
 - The per-tenant key cache reloads from the database, so several workers can share one database
-  ([#39]). The rate limiter is still in memory and per process ([#47]).
+  ([#39]). The rate limiter is in memory and per process by design ([#47]).
 
 ---
 
@@ -701,7 +705,7 @@ keyword)` tokens stored one row per keyword per document.
 ## ADR-013: OIDC/JWKS in Production, Explicit Dev Auth Otherwise
 
 **Date**: 2026-07-06 (recorded 2026-10-20)
-**Status**: Accepted. Implemented, and hardened in [#41]. Live IdP evidence is [#48].
+**Status**: Accepted. Implemented, and hardened in [#41]. Runs end to end in CI against Keycloak with the API in `prod` (`scripts/oidc_smoke.sh`, [#48]).
 
 ### Decision
 
@@ -733,7 +737,7 @@ keyword)` tokens stored one row per keyword per document.
 ## ADR-014: One KMS-Wrapped App Master Key, Locally Wrapped Tenant Keys
 
 **Date**: 2026-07-06 (recorded 2026-10-20)
-**Status**: Accepted. Implemented. KMS is tested with mocks only; live evidence is [#49].
+**Status**: Accepted. Implemented. The KMS path runs end to end in CI against the moto KMS emulator (`scripts/kms_smoke.sh`, [#49]); it has not run against AWS.
 
 ### Decision
 
@@ -745,7 +749,10 @@ locally and stored AES-GCM-wrapped under that master key.
 
 - One KMS call per process start instead of one per request.
 - The master key stays in process memory, so a host compromise exposes every tenant (THREAT_MODEL A3).
-- Re-encrypting documents on rotation is not implemented ([#42]).
+- Tenant keys are rotated, and documents re-encrypted, by `rotate_tenant_keys` (ADR-018). The master
+  key is rotated in KMS: automatic rotation of the customer master key keeps the old key material to
+  decrypt the existing wrapped master key, so it needs no re-wrapping. The library's earlier `rotate_kek`,
+  which never persisted the re-wrapped key, is removed.
 
 ---
 
@@ -789,12 +796,143 @@ The API surface and the leakage map then describe only durable, tested code.
 
 ---
 
+## ADR-017: One Audit Schema in a Per-Tenant HMAC Chain
+
+**Date**: 2026-10-28
+**Status**: Accepted and implemented ([#44]).
+
+### Context
+
+Audit entries had two shapes (API events and key events), five sinks (the database table, an in-memory
+deque on `KeyManager`, `audit.jsonl` from the file backend, an `AuditLogger` that wrote to the log, and
+the storage-backend API), no export, and nothing to show that a row had not been edited or deleted.
+Success rows were written after the operation, in a separate transaction.
+
+### Decision
+
+- One entry schema (version 1) for every row, with `details` redacted by the logging policy.
+- One sink: `encrypted_ir_audit_log`. Each tenant's rows form a chain:
+  `entry_hash = HMAC-SHA256(audit_key, prev_hash || canonical_json(entry))`, with `prev_hash` of the first
+  row all zeros. `audit_key` is HKDF-SHA256 of the app master key with the tenant ID in `info`.
+- `encrypted_ir_audit_chain_heads` keeps each tenant's last `seq` and hash. An append updates that row
+  first, which locks it until the transaction ends, so appends for one tenant are serialized on both
+  PostgreSQL and SQLite without retries.
+- Writes that change state (ingest, delete, key changes) append in their own transaction, so the
+  operation and its audit row commit together. Reads append before the response and fail the request
+  if they cannot. Failure and rejection audits are best effort.
+- `python -m encrypted_ir.tools.export_audit` writes a tenant's chain as JSON lines, verifies it from the
+  first row and prints the head; `--check-head` checks a head from an earlier export.
+
+### Rationale
+
+**Pros**:
+- Editing, deleting, reordering or moving rows between tenants breaks verification.
+- No extra secret to manage: the key follows the master key, including KMS unwrapping.
+- The head row catches a truncated tail and is the serialization point.
+
+**Cons**:
+- Anyone holding the master key can rebuild a consistent chain. The API process holds it, and so does
+  whoever runs the export; both can already decrypt every document.
+- A database writer can drop the newest rows and rewrite the head row to match.
+- Appends for one tenant are serialized, which bounds that tenant's write throughput.
+
+**Alternatives considered**:
+- Plain SHA-256 chain: anyone with database write access could rebuild it.
+- A separate audit signing key: another secret to provision and rotate, with no gain while the API
+  process holds both keys.
+- An external append-only sink (WORM storage, SIEM): out of scope for this repository; exported heads
+  are the local step toward it (see the roadmap's "Not planned" list).
+
+### Consequences
+
+Migration 0004 adds the chain columns and the heads table; rows written before it keep NULL chain
+columns, are not verified and are counted separately by the export tool. `KeyManager.get_audit_log`,
+`AuditLogger` and the file backend's audit file are removed. Operators should store exported head
+hashes where database writers cannot change them.
+
+---
+
+## ADR-018: Tenant Key Rotation Re-encrypts Documents; the Master Key Rotates in KMS
+
+**Date**: 2026-10-28
+**Status**: Accepted and implemented ([#42]).
+
+### Context
+
+Rotating a key created a new version but left every stored document and search token under the old
+key, so retiring a compromised key was not possible. There were three rotation paths that did not
+connect: `KeyManager.rotate_key`, `KeyRotationManager` (re-encryption by callback, with nothing calling
+it), and `rotate_kek`, whose re-wrapped master key was never persisted. Search tokens are HMACs of the
+keywords, which the database did not store, so tokens could not be rebuilt under a new key.
+
+### Decision
+
+- **Keyword list.** Ingest seals each document's sorted keyword list with the document key
+  (purpose `keywords`, ADR-007), so rotation can rebuild its tokens.
+- **One rotation path:** `encrypted_ir.rotation.rotate_tenant_keys`, run as
+  `python -m encrypted_ir.tools.rotate_tenant_keys`.
+  - **Start.** A row in `encrypted_ir_key_rotations` claims the tenant. Then
+    `KeyManager.begin_rotation` creates the successor keys and marks the old ones ROTATING, in one
+    transaction.
+  - **Re-encrypt.** Documents move to the successors in `doc_id` order, one transaction per batch.
+    Each row is written back with a compare-and-swap on its ciphertext, with one audit event per
+    batch. Passes repeat until one makes no progress.
+  - **Finish.** Old keys that nothing references are retired: the document key becomes RETIRED and
+    is kept, and the search key becomes DESTROYED and its bytes are cleared. The key row is locked
+    before the references are counted.
+  - **Interruptions.** A run that stops for any reason leaves every document readable and
+    searchable, and `--resume` continues it.
+- **Concurrent writes.** Ingest locks its two key rows `FOR SHARE` and accepts only ACTIVE or
+  ROTATING keys. If the rotation retired one first, the ingest retries with fresh keys. If the
+  ingest committed first, the rotation counts its row.
+- **Concurrent searches.** A search re-reads the tenant's key IDs after the query and runs again
+  if one appeared. A new key is always stored before any document moves to it, so nothing is
+  missed.
+- **Legacy rows.**
+  - Rows without a keyword list are re-tokenized only if keywords re-extracted from the content
+    reproduce the stored tokens exactly.
+  - Other rows keep their old search key, which stays searchable and is reported, until they are
+    ingested again.
+  - Pre-ADR-007 rows are upgraded to the sealed format.
+- **Master key.** KMS `GenerateDataKey` creates the master key, and rotation of the customer master
+  key happens in KMS. KMS keeps the old key material to decrypt the existing wrapped master key.
+  `rotate_kek`, `KeyRotationManager` and `KeyManager.rotate_key` are removed.
+
+### Rationale
+
+**Pros**:
+- Retiring or destroying a key is now meaningful: no document references it any more.
+- The API keeps serving during a rotation, and a crash at any point is safe to resume.
+- No new secret store: the keyword list is sealed like the content.
+
+**Cons**:
+- The sealed keyword list makes each row larger. It reveals nothing new to a database reader:
+  the token count is already visible.
+- Documents ingested with explicit keywords before this change cannot be re-tokenized.
+- Each search runs one extra key-ID query.
+- One rotation per tenant at a time.
+
+**Alternatives considered**:
+- Lazy re-encryption on read: reads would write, which ADR-012 and #39 removed, and the old key could
+  never be retired with confidence.
+- A scheduler inside the API: key rotation is an operator decision, and a tool is easier to audit.
+- Re-wrapping the master key in this code: KMS-side rotation already does it without a migration.
+
+### Consequences
+
+Migration 0005 adds `encrypted_keywords`, indexes on the key-ID columns and `encrypted_ir_key_rotations`.
+Operators rotate a tenant with the tool and archive its JSON report. Searches during a rotation compute
+tokens under both search keys.
+
+---
+
 ## Revision History
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2025-01-11 | Architecture Team | Initial ADR log |
 | 2.0 | 2026-10-20 | Maintainer | Statuses corrected to match the code; compliance entries marked as targets; FIPS 205 corrected; ADR-011 to ADR-016 added |
+| 2.1 | 2026-10-28 | Maintainer | ADR-017 and ADR-018 added; ADR-006, ADR-007 and ADR-014 updated for rotation |
 
 ---
 
@@ -845,6 +983,7 @@ The API surface and the leakage map then describe only durable, tested code.
 [#40]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/40
 [#41]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/41
 [#42]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/42
+[#44]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/44
 [#47]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/47
 [#48]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/48
 [#49]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/49

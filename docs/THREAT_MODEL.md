@@ -36,11 +36,11 @@ This is the code behind `POST /v1/documents`, `POST /v1/documents/search`,
 | Document content | AES-256-GCM with a random 96-bit nonce under a per-tenant key, in a versioned header that names the key. The associated data binds it to the tenant, the document ID and its purpose, so a swapped or edited ciphertext fails to decrypt ([#40], ADR-007). Rows written before that format stay readable without the binding. | `src/encrypted_ir/document_crypto.py`, `DocumentService` |
 | Keyword index | `HMAC-SHA256(per-tenant search key, lowercased keyword)`, one row per keyword per document. Deterministic. | `search_token` in `src/encrypted_ir/searchable.py`, `DocumentService` |
 | Document metadata | Sealed like the content, with its own purpose label so content and metadata cannot be swapped ([#40]). Legacy rows keep plaintext `metadata_json`. | `encrypted_ir_documents.encrypted_metadata` |
-| Tenant keys | AES-GCM wrapped under the app master key, bound by associated data to the tenant, key ID, key type and version, so a wrapped key copied to another tenant or relabelled does not unwrap ([#40]). | `src/encrypted_ir/key_manager.py` |
-| App master key | Environment variable, or AWS KMS `Decrypt` at startup with an encryption context (application, environment, purpose) and a pinned key ID. The KMS path is tested with mocks only; live validation is [#49]. | `src/encrypted_ir/master_key.py`, `src/encrypted_ir/kms_provider.py` |
+| Tenant keys | AES-GCM wrapped under the app master key, bound by associated data to the tenant, key ID, key type and version, so a wrapped key copied to another tenant or relabelled does not unwrap ([#40]). Rotated by `rotate_tenant_keys`, which re-encrypts and re-tokenizes every document, then retires the old document key and destroys the old search key (ADR-018, [#42]). | `src/encrypted_ir/key_manager.py`, `src/encrypted_ir/rotation.py` |
+| App master key | Environment variable, or AWS KMS `Decrypt` at startup with an encryption context (application, environment, purpose) and a pinned key ID. The KMS path runs end to end in CI against moto server, a KMS emulator (`scripts/kms_smoke.sh`), including a key wrapped for one environment failing to unwrap in another. It has not run against AWS itself, and the IAM policies are not exercised ([#49]). | `src/encrypted_ir/master_key.py`, `src/encrypted_ir/kms_provider.py` |
 | Authentication | Production mode requires OIDC: tokens verified against a JWKS, with RS256, PS256 or ES256 only, and `exp`, `iat`, `aud` and `iss` required. Every token needs a tenant claim matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` (so not `_system`) and a non-empty roles claim. A dev API key and dev HS256 JWTs exist for local demos; they are off by default, refused unless `ENCRYPTED_IR_ENV=dev`, and need a secret of at least 32 bytes. Failures return a generic 401 ([#41]). | `src/encrypted_ir/api/dependencies/auth.py`, `src/encrypted_ir/settings.py` |
-| Audit | Database rows. Plaintext, queries, tokens and key material are dropped before writing. The rows are not tamper-evident and cannot be exported ([#44]). | `DocumentService.record_audit_event` |
-| Rate limiting | In-memory and per process, so it is not shared across workers or replicas ([#47]). | `src/encrypted_ir/api/dependencies/rate_limiter.py` |
+| Audit | One entry schema in a per-tenant HMAC chain keyed from the master key (ADR-017), with a head row per tenant. Plaintext, queries, tokens and key material are redacted before writing. Ingest, delete and key changes commit together with their audit row; a read whose audit row fails returns 500. `python -m encrypted_ir.tools.export_audit` exports and verifies a chain ([#44]). | `src/encrypted_ir/audit.py`, `DocumentService`, `DatabaseStorageBackend` |
+| Rate limiting | In memory and per process, so it is not shared across workers or replicas ([#47]). Each tenant has a limit per operation, checked after authentication; every request except `/health` also counts against a per-client-address limit, checked before authentication. Client addresses come from `X-Forwarded-For` only when the peer is in `ENCRYPTED_IR_TRUSTED_PROXIES`. State is bounded: refilled buckets are dropped and each operation keeps at most `ENCRYPTED_IR_RATE_LIMIT_MAX_KEYS` buckets. | `src/encrypted_ir/api/dependencies/rate_limiter.py`, `src/encrypted_ir/api/request_context.py` |
 
 ### Leakage on the durable path
 
@@ -50,7 +50,8 @@ Leakage to A1, the database reader:
   every document of a tenant, so token counts mirror keyword frequencies.
 - **Document and metadata length**, approximately, from ciphertext length.
 - **Which key encrypted each document**, from the key ID in the row and in the ciphertext header.
-- **Metadata of legacy rows**, written before [#40], which stays plaintext until re-encrypted.
+- **Metadata of legacy rows**, written before [#40], which stays plaintext until the rotation tool
+  re-encrypts the row.
 
 Leakage to anyone who observes queries (A1 with query logs, or a host operator):
 
@@ -87,12 +88,12 @@ without the key.
 | Risk | Effect | Tracking |
 | --- | --- | --- |
 | Concurrent first ingest in two processes | Two processes ingesting for a new tenant at the same moment can each create a key. Both keys stay valid and every process converges on the newest one, so this costs an extra key, not correctness. | [#39] (documented) |
-| Rotation does not re-encrypt documents | Retiring a compromised key leaves its documents under that key. | [#42] |
-| Rejected-request audit is rate-bounded | Beyond 60 rows per minute per process, 401, 403 and 429 responses are counted in `/metrics` but not audited one by one. | [#41] (documented), [#44] |
-| OIDC not validated against a live identity provider | Verification is tested with a fake JWKS; issuer-specific claim shapes may differ. | [#48] |
-| `/metrics` unauthenticated and keyed by raw path | Document IDs are visible to anyone who can reach the endpoint. | [#43] |
-| Audit rows not tamper-evident | A database writer can alter or remove audit history. | [#44] |
-| Docker image lacks boto3 | The KMS production path cannot start from the shipped image. | [#45] |
+| Rotation is operator-run, and some legacy rows keep an old search key | A compromised key stays in use until someone runs the rotation tool. Documents ingested with explicit keywords before ADR-018 keep their old search key (still searchable, reported by the tool) until they are ingested again. Retired document keys are kept, so a backup taken before the rotation stays decryptable by whoever holds the master key. | [#42] (documented) |
+| Rejected-request audit is rate-bounded | Beyond 20 rows per minute per tenant or client address, or 120 per process, 401, 403 and 429 responses are counted in `/metrics` but not audited one by one. | [#41], [#44] (documented) |
+| Token replay within its lifetime | Bearer tokens are stateless: the API checks signature, issuer, audience, `iat` and `exp`, but keeps no record of tokens it has seen, so a captured token works for anyone until it expires. This is by design for stateless JWTs; keep lifetimes short at the identity provider and use TLS. | (documented; `tests/test_auth.py::TestDevTokens::test_replay_of_a_valid_token_is_accepted_until_it_expires`) |
+| OIDC not validated against a commercial identity provider | The production auth path runs end to end in CI against Keycloak, with the API in `ENCRYPTED_IR_ENV=prod` (`scripts/oidc_smoke.sh`). The claim mappings for Cognito, Auth0, Okta and Entra ID in `docs/OIDC_DEPLOYMENT.md` come from vendor documentation and have not been run against those services. | [#48] |
+| `/metrics` open by default | Anyone who can reach the port sees per-route request volumes and the number of cached tenants (no document IDs). Set `ENCRYPTED_IR_METRICS_TOKEN` or restrict the port. | [#43] (documented) |
+| Audit chain trusts the master key | Anyone holding the app master key (the API process, or an operator running the export) can rewrite a tenant's chain consistently. A database writer without the key can drop the newest rows and rewrite the head row to match. Exported head hashes, kept where database writers cannot change them and checked with `--check-head`, detect both. Failure and rejection audits are best effort. | [#44] (documented) |
 
 ## Explicitly not provided
 
@@ -123,7 +124,6 @@ roadmap's "Not planned" section explains why each is out of scope for now.
 [#42]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/42
 [#43]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/43
 [#44]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/44
-[#45]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/45
 [#47]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/47
 [#48]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/48
 [#49]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/49

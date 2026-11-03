@@ -9,7 +9,7 @@ Regulated AI systems need retrieval pipelines that can find relevant customer, r
 - Encrypted document storage with deterministic keyword-token retrieval.
 - Tenant-scoped blind indexes for equality lookup without global cross-tenant correlation.
 - A research ORE prototype for range comparisons. Its comparison needs no key, so it leaks total order like OPE ([#34](https://github.com/MysterionRise/encrypted-information-retrieval/issues/34)).
-- Key creation, access, rotation and retired-key decryption in the library `KeyManager`, plus audit trails. Stored documents are not yet re-encrypted on rotation ([#42](https://github.com/MysterionRise/encrypted-information-retrieval/issues/42)).
+- Key creation, access and retired-key decryption in `KeyManager`, a tamper-evident audit chain, and a resumable rotation tool that re-encrypts and re-tokenizes stored documents while the API serves ([#42](https://github.com/MysterionRise/encrypted-information-retrieval/issues/42)).
 - FastAPI, PostgreSQL, Alembic, readiness checks, Docker Compose evidence, and CI quality gates.
 - A RAG boundary where search can return candidates without plaintext until an authorized retrieval step decrypts context.
 

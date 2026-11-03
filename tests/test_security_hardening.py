@@ -12,7 +12,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from encrypted_ir.api.dependencies.auth import AuthConfig, OIDCVerifier, _extract_tenant_from_jwt
-from encrypted_ir.api.main import create_app
 from encrypted_ir.database import audit_log_table
 from encrypted_ir.master_key import resolve_master_key
 from encrypted_ir.settings import EncryptedIRSettings
@@ -140,6 +139,21 @@ def test_settings_prod_requires_oidc_and_kms():
         settings.validate()
 
 
+def test_settings_prod_requires_kms_once_oidc_is_configured():
+    settings = EncryptedIRSettings(
+        environment="prod",
+        master_key=None,
+        dev_auth_enabled=False,
+        auto_create_tables=False,
+        oidc_issuer="https://issuer.example",
+        oidc_audience="encrypted-ir",
+        oidc_jwks_url="https://issuer.example/jwks",
+    )
+
+    with pytest.raises(ValueError, match="ENCRYPTED_IR_KMS_PROVIDER=aws is required in prod"):
+        settings.validate()
+
+
 def test_kms_master_key_resolution_with_fake_provider():
     plaintext = os.urandom(32)
     settings = EncryptedIRSettings(
@@ -166,13 +180,14 @@ def test_ready_endpoint_reports_ready_in_local_mode(client):
     }
 
 
-def test_ready_endpoint_returns_503_when_not_ready():
+def test_ready_endpoint_returns_503_when_not_ready(app_factory):
+    # The default in-memory database has no tables, so the migration check fails.
     settings = EncryptedIRSettings(
         environment="test",
         master_key=os.urandom(32),
         auto_create_tables=False,
     )
-    app = create_app(settings)
+    app = app_factory(settings)
     client = TestClient(app, raise_server_exceptions=False)
 
     resp = client.get("/ready")
@@ -193,10 +208,13 @@ def test_ready_endpoint_returns_503_when_not_ready():
         ({"overrides": {"roles": ["owner"]}}, 403),
     ],
 )
-def test_oidc_document_flow_rejects_missing_or_unknown_claims(token_kwargs, expected_status):
+def test_oidc_document_flow_rejects_missing_or_unknown_claims(
+    app_factory, db_url, token_kwargs, expected_status
+):
     private_key, public_key = _rsa_keys()
     settings = EncryptedIRSettings(
         environment="test",
+        database_url=db_url,
         master_key=os.urandom(32),
         dev_auth_enabled=False,
         auto_create_tables=True,
@@ -204,7 +222,7 @@ def test_oidc_document_flow_rejects_missing_or_unknown_claims(token_kwargs, expe
         oidc_audience="encrypted-ir",
         oidc_jwks_url="https://issuer.example/jwks",
     )
-    app = create_app(settings)
+    app = app_factory(settings)
     app.state.oidc_verifier = OIDCVerifier(
         app.state.auth_config,
         jwks_client=_FakeJWKSClient(public_key),
@@ -253,6 +271,7 @@ def test_document_operations_write_sanitized_audit_rows(app, client):
     assert "secret fraud risk content" not in serialized
 
 
+@pytest.mark.allow_500
 def test_document_operation_failures_write_sanitized_audit_rows(app, client):
     headers = {"X-API-Key": app.state.auth_config.dev_api_key}
 
@@ -309,9 +328,10 @@ def test_document_operation_failures_write_sanitized_audit_rows(app, client):
     assert "raw query and plaintext must not be logged" not in serialized
 
 
-def test_dev_api_key_auth_is_rejected_when_dev_auth_disabled():
+def test_dev_api_key_auth_is_rejected_when_dev_auth_disabled(app_factory, db_url):
     settings = EncryptedIRSettings(
         environment="test",
+        database_url=db_url,
         master_key=os.urandom(32),
         dev_auth_enabled=False,
         dev_api_key="local-demo-key",
@@ -320,7 +340,7 @@ def test_dev_api_key_auth_is_rejected_when_dev_auth_disabled():
         oidc_audience="encrypted-ir",
         oidc_jwks_url="https://issuer.example/jwks",
     )
-    app = create_app(settings)
+    app = app_factory(settings)
     client = TestClient(app, raise_server_exceptions=False)
 
     resp = client.post(
@@ -332,10 +352,11 @@ def test_dev_api_key_auth_is_rejected_when_dev_auth_disabled():
     assert resp.status_code == 401
 
 
-def test_oidc_authenticated_document_flow():
+def test_oidc_authenticated_document_flow(app_factory, db_url):
     private_key, public_key = _rsa_keys()
     settings = EncryptedIRSettings(
         environment="test",
+        database_url=db_url,
         master_key=os.urandom(32),
         dev_auth_enabled=False,
         auto_create_tables=True,
@@ -343,7 +364,7 @@ def test_oidc_authenticated_document_flow():
         oidc_audience="encrypted-ir",
         oidc_jwks_url="https://issuer.example/jwks",
     )
-    app = create_app(settings)
+    app = app_factory(settings)
     app.state.oidc_verifier = OIDCVerifier(
         app.state.auth_config,
         jwks_client=_FakeJWKSClient(public_key),

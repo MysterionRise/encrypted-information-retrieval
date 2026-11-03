@@ -20,16 +20,16 @@ import json
 import jwt
 import pytest
 from fastapi.testclient import TestClient
+from prometheus_client.parser import text_string_to_metric_families
 from sqlalchemy import select, update
 
 from encrypted_ir import __version__
 from encrypted_ir.api.dependencies.rate_limiter import (
     RateLimitConfig,
     RateLimiter,
-    set_rate_limiter,
 )
-from encrypted_ir.api.main import create_app
 from encrypted_ir.database import audit_log_table, documents_table
+from tests.conftest import metric
 
 REMOVED_DEMO_PATHS = (
     "/v1/encrypt",
@@ -92,20 +92,44 @@ class TestHealthCheck:
 
 
 class TestMetrics:
-    def test_metrics_returns_200(self, client):
+    def test_metrics_are_prometheus_text(self, client):
         resp = client.get("/metrics")
         assert resp.status_code == 200
-        data = resp.json()
-        assert "request_count" in data
-        assert "error_count" in data
-        assert "active_tenants" in data
+        assert resp.headers["content-type"].startswith("text/plain")
+        families = {f.name for f in text_string_to_metric_families(resp.text)}
+        assert {
+            "encrypted_ir_http_requests",
+            "encrypted_ir_http_request_duration_seconds",
+            "encrypted_ir_auth_rejections",
+            "encrypted_ir_key_cache_tenants",
+        } <= families
 
-    def test_metrics_counts_requests(self, client):
+    def test_metrics_count_requests_by_route_template(self, app, client, auth_headers):
         client.get("/health")
         client.get("/health")
-        resp = client.get("/metrics")
-        data = resp.json()
-        assert data["request_count"] >= 2
+        client.get("/v1/documents/secret-doc-id-123", headers=auth_headers)
+
+        assert (
+            metric(
+                app,
+                "encrypted_ir_http_requests_total",
+                route="/health",
+                method="GET",
+                status="200",
+            )
+            == 2
+        )
+        assert (
+            metric(
+                app,
+                "encrypted_ir_http_requests_total",
+                route="/v1/documents/{doc_id}",
+                method="GET",
+                status="404",
+            )
+            == 1
+        )
+        assert "secret-doc-id-123" not in client.get("/metrics").text
 
 
 # =============================================================================
@@ -370,6 +394,7 @@ class TestDocumentDelete:
 
 
 class TestIntegrityFailures:
+    @pytest.mark.allow_500
     def test_tampered_ciphertext_returns_generic_500_and_audits(self, client, auth_headers, app):
         _ingest(client, auth_headers, "doc-1", "first secret")
         _ingest(client, auth_headers, "doc-2", "second secret")
@@ -442,11 +467,9 @@ class TestTenantIsolation:
 
 
 class TestRateLimiting:
-    def test_rate_limit_exceeded(self, client, auth_headers):
-        set_rate_limiter(
-            RateLimiter(
-                limits={"document_search": RateLimitConfig(max_requests=2, window_seconds=60)}
-            )
+    def test_rate_limit_exceeded(self, app, client, auth_headers):
+        app.state.rate_limiter = RateLimiter(
+            limits={"document_search": RateLimitConfig(max_requests=2, window_seconds=60)}
         )
 
         for _ in range(2):
@@ -457,11 +480,9 @@ class TestRateLimiting:
         assert resp.status_code == 429
         assert "Retry-After" in resp.headers
 
-    def test_rate_limit_different_tenants_independent(self, client, make_token):
-        set_rate_limiter(
-            RateLimiter(
-                limits={"document_search": RateLimitConfig(max_requests=1, window_seconds=60)}
-            )
+    def test_rate_limit_different_tenants_independent(self, app, client, make_token):
+        app.state.rate_limiter = RateLimiter(
+            limits={"document_search": RateLimitConfig(max_requests=1, window_seconds=60)}
         )
         tenant_1 = _bearer(make_token("tenant-1", ["read"]))
         tenant_2 = _bearer(make_token("tenant-2", ["read"]))
@@ -552,8 +573,8 @@ class TestRequestTracing:
 
 
 @pytest.fixture()
-def docs_client(settings_factory):
-    return TestClient(create_app(settings_factory(enable_docs=True)), raise_server_exceptions=False)
+def docs_client(app_factory):
+    return TestClient(app_factory(enable_docs=True), raise_server_exceptions=False)
 
 
 class TestOpenAPI:

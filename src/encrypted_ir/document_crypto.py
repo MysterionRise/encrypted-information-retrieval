@@ -7,8 +7,8 @@ Sealed format, version 1::
 
 The header is authenticated: the AES-GCM associated data is the header followed by the
 length-prefixed label ``encrypted-ir/document/v1``, the purpose, the tenant ID and the document
-ID. A ciphertext therefore only opens for the row (tenant, document), the purpose ("content" or
-"metadata") and the key it was sealed for. Swapping ciphertexts between rows, tenants or purposes,
+ID. A ciphertext therefore only opens for the row (tenant, document), the purpose ("content",
+"metadata" or "keywords") and the key it was sealed for. Swapping ciphertexts between rows, tenants or purposes,
 editing the header, or pointing the row at another key all fail authentication.
 
 Rows written before version 1 store ``iv (12) || tag (16) || ciphertext`` with no associated data.
@@ -29,6 +29,7 @@ __all__ = [
     "ALGORITHM",
     "LEGACY_ALGORITHM",
     "PURPOSE_CONTENT",
+    "PURPOSE_KEYWORDS",
     "PURPOSE_METADATA",
     "length_prefixed",
     "open_legacy",
@@ -47,7 +48,8 @@ ALGORITHM = "aes-256-gcm/v1"  # value stored in documents.algorithm for sealed r
 LEGACY_ALGORITHM = "aes-gcm"  # rows written before the versioned header existed
 PURPOSE_CONTENT = "content"
 PURPOSE_METADATA = "metadata"
-_PURPOSES = frozenset({PURPOSE_CONTENT, PURPOSE_METADATA})
+PURPOSE_KEYWORDS = "keywords"  # the sorted keyword list, kept so rotation can re-tokenize
+_PURPOSES = frozenset({PURPOSE_CONTENT, PURPOSE_METADATA, PURPOSE_KEYWORDS})
 _AAD_LABEL = b"encrypted-ir/document/v1"
 
 
