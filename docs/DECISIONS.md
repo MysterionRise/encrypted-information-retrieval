@@ -789,12 +789,69 @@ The API surface and the leakage map then describe only durable, tested code.
 
 ---
 
+## ADR-017: One Audit Schema in a Per-Tenant HMAC Chain
+
+**Date**: 2026-10-28
+**Status**: Accepted and implemented ([#44]).
+
+### Context
+
+Audit entries had two shapes (API events and key events), five sinks (the database table, an in-memory
+deque on `KeyManager`, `audit.jsonl` from the file backend, an `AuditLogger` that wrote to the log, and
+the storage-backend API), no export, and nothing to show that a row had not been edited or deleted.
+Success rows were written after the operation, in a separate transaction.
+
+### Decision
+
+- One entry schema (version 1) for every row, with `details` redacted by the logging policy.
+- One sink: `encrypted_ir_audit_log`. Each tenant's rows form a chain:
+  `entry_hash = HMAC-SHA256(audit_key, prev_hash || canonical_json(entry))`, with `prev_hash` of the first
+  row all zeros. `audit_key` is HKDF-SHA256 of the app master key with the tenant ID in `info`.
+- `encrypted_ir_audit_chain_heads` keeps each tenant's last `seq` and hash. An append updates that row
+  first, which locks it until the transaction ends, so appends for one tenant are serialized on both
+  PostgreSQL and SQLite without retries.
+- Writes that change state (ingest, delete, key changes) append in their own transaction, so the
+  operation and its audit row commit together. Reads append before the response and fail the request
+  if they cannot. Failure and rejection audits are best effort.
+- `python -m encrypted_ir.tools.export_audit` writes a tenant's chain as JSON lines, verifies it from the
+  first row and prints the head; `--check-head` checks a head from an earlier export.
+
+### Rationale
+
+**Pros**:
+- Editing, deleting, reordering or moving rows between tenants breaks verification.
+- No extra secret to manage: the key follows the master key, including KMS unwrapping.
+- The head row catches a truncated tail and is the serialization point.
+
+**Cons**:
+- Anyone holding the master key can rebuild a consistent chain. The API process holds it, and so does
+  whoever runs the export; both can already decrypt every document.
+- A database writer can drop the newest rows and rewrite the head row to match.
+- Appends for one tenant are serialized, which bounds that tenant's write throughput.
+
+**Alternatives considered**:
+- Plain SHA-256 chain: anyone with database write access could rebuild it.
+- A separate audit signing key: another secret to provision and rotate, with no gain while the API
+  process holds both keys.
+- An external append-only sink (WORM storage, SIEM): out of scope for this repository; exported heads
+  are the local step toward it (see the roadmap's "Not planned" list).
+
+### Consequences
+
+Migration 0004 adds the chain columns and the heads table; rows written before it keep NULL chain
+columns, are not verified and are counted separately by the export tool. `KeyManager.get_audit_log`,
+`AuditLogger` and the file backend's audit file are removed. Operators should store exported head
+hashes where database writers cannot change them.
+
+---
+
 ## Revision History
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2025-01-11 | Architecture Team | Initial ADR log |
 | 2.0 | 2026-10-20 | Maintainer | Statuses corrected to match the code; compliance entries marked as targets; FIPS 205 corrected; ADR-011 to ADR-016 added |
+| 2.1 | 2026-10-28 | Maintainer | ADR-017 added |
 
 ---
 
@@ -845,6 +902,7 @@ The API surface and the leakage map then describe only durable, tested code.
 [#40]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/40
 [#41]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/41
 [#42]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/42
+[#44]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/44
 [#47]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/47
 [#48]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/48
 [#49]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/49

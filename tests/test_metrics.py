@@ -113,8 +113,10 @@ class TestSecurityMetrics:
 
     def test_security_audit_dropped(self):
         metrics = EncryptionMetrics()
-        metrics.record_security_audit_dropped()
-        assert _sample(metrics, "encrypted_ir_security_audit_dropped_total") == 1
+        metrics.record_security_audit_dropped("per_source")
+        metrics.record_security_audit_dropped("total")
+        metrics.record_security_audit_dropped("total")
+        assert _sample(metrics, "encrypted_ir_security_audit_dropped_total", limit="total") == 2
 
 
 class TestKeyCacheGauge:

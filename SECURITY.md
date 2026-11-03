@@ -80,7 +80,7 @@ These are tracked publicly. They are not secrets, and you do not need to report 
 | Authentication | OIDC verification is tested against a fake JWKS only; it has not been run against a live identity provider. Dev auth (an API key and HS256 tokens) is off by default and refused outside `ENCRYPTED_IR_ENV=dev`. | [#48](https://github.com/MysterionRise/encrypted-information-retrieval/issues/48) |
 | Key rotation | Rotation does not re-encrypt stored documents. | [#42](https://github.com/MysterionRise/encrypted-information-retrieval/issues/42) |
 | Observability | `/metrics` is unauthenticated unless `ENCRYPTED_IR_METRICS_TOKEN` is set. It reveals request volumes per route and the number of cached tenants, not document IDs. Metrics are per process. | [`docs/LEAKAGE_AND_ENDPOINTS.md`](docs/LEAKAGE_AND_ENDPOINTS.md) |
-| Audit | Audit rows are ordinary database rows, not tamper-evident, and have no export. | [#44](https://github.com/MysterionRise/encrypted-information-retrieval/issues/44) |
+| Audit | Audit rows form a per-tenant HMAC chain keyed from the app master key, so whoever holds that key can rewrite it, and dropping the newest rows together with the head row is caught only against an exported head (`export_audit --check-head`). Failure and rejection audits are best effort. | [#44](https://github.com/MysterionRise/encrypted-information-retrieval/issues/44) |
 
 The roadmap epics order this work: [#26](https://github.com/MysterionRise/encrypted-information-retrieval/issues/26) (Phase 0), [#27](https://github.com/MysterionRise/encrypted-information-retrieval/issues/27) (Phase 1) and [#28](https://github.com/MysterionRise/encrypted-information-retrieval/issues/28) (Phase 2).
 
@@ -111,6 +111,7 @@ pre-commit install       # optional local hooks; CI does not run pre-commit
 - **Audit rows contain no plaintext, queries, tokens or key material:**
   - `tests/test_security_hardening.py::test_document_operations_write_sanitized_audit_rows`
   - `tests/test_security_hardening.py::test_document_operation_failures_write_sanitized_audit_rows`
+- **The audit chain detects edited, deleted, reordered and moved rows:** `tests/test_audit.py::TestVerify`
 - **Production settings validation:**
   - `tests/test_security_hardening.py::test_settings_prod_rejects_dev_auth_and_raw_master_key`
   - `tests/test_security_hardening.py::test_settings_prod_requires_oidc_and_kms`

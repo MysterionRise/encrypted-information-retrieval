@@ -9,9 +9,9 @@ import pytest
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import inspect
+from sqlalchemy import insert, inspect, select, text
 
-from encrypted_ir.database import create_database_engine, metadata
+from encrypted_ir.database import audit_log_table, create_database_engine, metadata
 from encrypted_ir.migrations import alembic_config, migration_head, migration_status
 from encrypted_ir.tools import benchmark_retrieval
 
@@ -48,6 +48,32 @@ def test_migration_0002_round_trip_on_sqlite(tmp_path):
 
     command.upgrade(config, "head")
     assert "deleted" not in _document_columns(database_url)
+
+
+def test_migration_0004_keeps_legacy_audit_rows(tmp_path):
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'audit.db'}"
+    config = alembic_config(database_url)
+    command.upgrade(config, "20261021_0003")
+    engine = create_database_engine(database_url)
+    legacy = {"timestamp": "2026-10-01T00:00:00", "operation": "create", "key_id": "k1"}
+    with engine.begin() as conn:
+        conn.execute(insert(audit_log_table).values(tenant_id="t", key_id="k1", entry_json=legacy))
+
+    try:
+        command.upgrade(config, "head")
+        with engine.connect() as conn:
+            row = conn.execute(select(audit_log_table)).one()
+        assert (row.entry_json, row.seq, row.entry_hash) == (legacy, None, None)
+        assert "encrypted_ir_audit_chain_heads" in inspect(engine).get_table_names()
+
+        command.downgrade(config, "20261021_0003")
+        assert "encrypted_ir_audit_chain_heads" not in inspect(engine).get_table_names()
+        columns = {c["name"] for c in inspect(engine).get_columns("encrypted_ir_audit_log")}
+        assert "seq" not in columns
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT entry_json FROM encrypted_ir_audit_log")).all()
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.parametrize("database_kind", ["sqlite", "postgres"])

@@ -46,7 +46,7 @@ per-client-address limit), so a multi-replica deployment still needs an external
    - Request limits: `doc_id` is 1 to 128 of `A-Z a-z 0-9 . _ -` and cannot start with `.`;
      at most 256 explicit keywords of up to 128 characters; at most 32 metadata keys and 16 KB of
      metadata JSON.
-   - It writes a sanitized audit row. A duplicate `doc_id` returns 409.
+   - It writes a sanitized audit row in the same transaction. A duplicate `doc_id` returns 409.
 2. `POST /v1/documents/search` recomputes the query tokens under every non-destroyed search key of
    the tenant and returns the matching document IDs, their metadata and a score: the number of
    distinct query keywords matched. `AND` requires every keyword.
@@ -73,15 +73,17 @@ These are the only routes besides the five above. The in-memory demo routes (`/v
 
 ### Storage
 
-Three Alembic migrations create the four tables (the second drops a soft-delete flag that was never
-set, because documents are hard-deleted; the third adds the sealed-metadata column):
+Four Alembic migrations create the five tables (the second drops a soft-delete flag that was never
+set, because documents are hard-deleted; the third adds the sealed-metadata column; the fourth adds
+the audit chain):
 
 | Table | Contents |
 | --- | --- |
 | `encrypted_ir_documents` | Sealed content and sealed metadata (ADR-007), format, key IDs, token count. Legacy rows keep plaintext `metadata_json`. |
 | `encrypted_ir_document_tokens` | `(tenant_id, token, doc_id)` keyword-token rows |
 | `encrypted_ir_keys` | Per-tenant keys wrapped under the app master key, plus metadata |
-| `encrypted_ir_audit_log` | Sanitized audit entries (API events and key events) |
+| `encrypted_ir_audit_log` | Audit entries in one schema (API events, rejections and key events), chained per tenant by `seq`, `prev_hash` and `entry_hash` (ADR-017). Rows from before migration 0004 stay unchained. |
+| `encrypted_ir_audit_chain_heads` | Each tenant's last `seq` and hash. Its row lock serializes a tenant's appends. |
 
 Tenant isolation is enforced in application code: every query filters on `tenant_id`. There is
 no row-level security in the database.

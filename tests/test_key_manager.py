@@ -4,7 +4,10 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from encrypted_ir import audit
+from encrypted_ir.database import create_database_engine, create_database_schema
 from encrypted_ir.key_manager import KeyManager, KeyMetadata
+from encrypted_ir.storage_backend import DatabaseStorageBackend
 
 
 class TestKeyMetadata:
@@ -282,33 +285,39 @@ class TestKeyManager:
         assert key1 == manager1.get_key(key_id1)
         assert key2 == manager1.get_key(key_id2)
 
-    def test_audit_log(self):
-        """Test audit logging."""
-        manager = KeyManager()
+    def test_key_events_go_to_the_backend_audit_chain(self):
+        engine = create_database_engine("sqlite+pysqlite:///:memory:")
+        create_database_schema(engine)
+        manager = KeyManager(storage_backend=DatabaseStorageBackend(engine, "tenant-a"))
 
         key_id = manager.create_key("deterministic")
-        manager.get_key(key_id)
-        manager.rotate_key(key_id)
+        manager.get_key(key_id)  # reads are not audited by default
+        new_key_id = manager.rotate_key(key_id)
+        manager.delete_key(new_key_id)
+        with pytest.raises(KeyError):
+            manager.get_key("deterministic_missing")
 
-        # Check audit log
-        logs = manager.get_audit_log()
-        assert len(logs) >= 3  # create, get, rotate
+        with engine.connect() as conn:
+            rows, head = audit.load_chain(conn, "tenant-a")
+        assert [(r.event_type, r.success, r.key_id) for r in rows] == [
+            ("key.create", True, key_id),
+            ("key.create", True, new_key_id),
+            ("key.rotate", True, key_id),
+            ("key.deactivate", True, new_key_id),
+            ("key.read", False, "deterministic_missing"),
+        ]
+        assert rows[2].entry_json["details"] == {"successor_key_id": new_key_id}
+        assert rows[4].entry_json["details"] == {"reason": "not_found"}
+        assert all(r.actor == "key-manager" for r in rows)
+        assert audit.verify_chain(
+            rows, head, "tenant-a", audit.derive_audit_key(manager.master_key, "tenant-a")
+        ).ok
 
-        # Check specific key log
-        key_logs = manager.get_audit_log(key_id=key_id)
-        assert len(key_logs) >= 2  # create, get
-
-    def test_audit_log_limit(self):
-        """Test audit log limit."""
+    def test_without_a_backend_nothing_is_audited(self):
         manager = KeyManager()
-
-        # Create many keys
-        for _i in range(20):
-            manager.create_key("deterministic")
-
-        # Get limited log
-        logs = manager.get_audit_log(limit=10)
-        assert len(logs) == 10
+        manager.create_key("deterministic")
+        assert not hasattr(manager, "get_audit_log")
+        assert not hasattr(manager, "_audit_log")
 
     def test_invalid_master_key_size(self):
         """Test that invalid master key size raises error."""

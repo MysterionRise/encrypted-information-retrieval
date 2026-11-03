@@ -20,8 +20,9 @@ Error responses never carry exception text. Every 401 has the same body
 (`{"detail": "Not authenticated"}`), whether the token is missing, expired, wrongly signed or names
 an invalid tenant, and every 403 says only `Insufficient permissions`. The specific reason, the
 route template and the caller's tenant (or `_system` when unauthenticated) go to an audit row
-(`auth.failure`, `authz.failure` or `rate_limit.exceeded`). Those rows are limited to 60 per
-minute per process; `/metrics` counts every rejection and how many were not audited.
+(`auth.failure`, `authz.failure` or `rate_limit.exceeded`). Each tenant, or each client address
+when the caller is unauthenticated, gets at most 20 of those rows per minute, and the process at
+most 120; `/metrics` counts every rejection and, by bound, how many were not audited.
 
 Rate limits are per process. Each tenant has a limit per document operation, and every request
 except `/health` also counts against a limit per client address, so unauthenticated floods,
@@ -55,6 +56,30 @@ retrieval construction.
 
 ## Audit Rules
 
-Endpoint audit records must not include plaintext, raw queries, search tokens,
-or key material. They may include tenant, actor, operation, request ID, result
-count and document ID. They do not include metadata keys or values.
+Every audit row, for API events, rejected requests and key events alike, has one schema
+(version 1): `schema_version`, `seq`, `tenant_id`, `timestamp`, `event_type`, `actor`,
+`success`, `resource`, `details` and `request_id`. `details` passes through the same redaction
+as logs, so rows never include plaintext, raw queries, search tokens, key material, or metadata
+keys and values. They may include the tenant, actor, operation, request ID, result count and
+document ID.
+
+Each tenant's rows form an HMAC chain (ADR-017): a row stores the previous row's hash, and its
+own hash is `HMAC-SHA256(audit key, prev_hash || canonical JSON of the entry)` under a key derived
+from the app master key and the tenant ID.
+`python -m encrypted_ir.tools.export_audit --tenant T` writes a tenant's chain as JSON lines,
+verifies it from the first entry and prints the head hash.
+
+When a row is written:
+
+| Event | Audit row |
+| --- | --- |
+| Ingest, delete | Same transaction as the write. If the row cannot be written, the operation rolls back. |
+| Search, get, RAG retrieve | Own transaction, after the read and before the response. If the row cannot be written, the request returns 500 without data. |
+| Key create, rotate, deactivate, import | Same transaction as the key row, with the database backend. The file backend records no audit. |
+| Failed operations, failed key reads, 401/403/429 | Own transaction, best effort: a failed write is logged, not retried. Rejections are rate-bounded as above. |
+
+Audit rows are themselves visible to a database reader: they show which tenants and actors were
+active and when, which document IDs were read or written, and how many results each search
+returned. Anyone holding the master key can rewrite a chain consistently, and a database writer
+can drop the newest rows and rewrite the head row; store exported head hashes where database
+writers cannot change them and check them with `--check-head` ([#44](https://github.com/MysterionRise/encrypted-information-retrieval/issues/44)).

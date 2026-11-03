@@ -6,8 +6,11 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
+    Boolean,
     Column,
     DateTime,
+    Index,
     Integer,
     LargeBinary,
     MetaData,
@@ -40,6 +43,8 @@ key_store_table = Table(
     ),
 )
 
+# Audit rows. Rows written before the hash chain (Alembic 20261027_0004) have NULL chain columns
+# and are not part of any chain; see encrypted_ir.audit.
 audit_log_table = Table(
     "encrypted_ir_audit_log",
     metadata,
@@ -48,6 +53,25 @@ audit_log_table = Table(
     Column("key_id", String(255), nullable=True, index=True),
     Column("entry_json", JSON, nullable=False),
     Column("created_at", DateTime(timezone=True), server_default=func.now(), nullable=False),
+    Column("schema_version", Integer, nullable=True),
+    Column("event_type", String(64), nullable=True),
+    Column("actor", String(255), nullable=True),
+    Column("request_id", String(64), nullable=True),
+    Column("success", Boolean, nullable=True),
+    Column("seq", BigInteger, nullable=True),
+    Column("prev_hash", String(64), nullable=True),
+    Column("entry_hash", String(64), nullable=True),
+    Index("uq_encrypted_ir_audit_log_tenant_seq", "tenant_id", "seq", unique=True),
+    Index("ix_encrypted_ir_audit_log_created_at", "created_at"),
+)
+
+# One row per tenant: the last appended seq and its hash. Appends lock this row.
+audit_chain_heads_table = Table(
+    "encrypted_ir_audit_chain_heads",
+    metadata,
+    Column("tenant_id", String(255), primary_key=True),
+    Column("seq", BigInteger, nullable=False),
+    Column("entry_hash", String(64), nullable=False),
 )
 
 documents_table = Table(

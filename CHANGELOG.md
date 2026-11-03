@@ -13,6 +13,22 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Security
 
+- **Audit rows form a tamper-evident chain** (#44, ADR-017). Every row has one schema and an
+  `entry_hash = HMAC-SHA256(audit_key, prev_hash || canonical_json(entry))`, where `audit_key` is
+  derived from the app master key per tenant; a head row per tenant records the last `seq` and
+  hash. Editing, deleting, reordering or moving rows between tenants is detected.
+  `python -m encrypted_ir.tools.export_audit --tenant T` exports a chain as JSON lines, verifies
+  it from the first row, prints the head and exits 2 if it is broken; `--check-head SEQ:HASH`
+  checks a head saved from an earlier export. Whoever holds the master key can still rewrite a
+  chain, so keep exported heads where database writers cannot change them.
+- **Writes and their audit rows commit together** (#44). Ingest, delete and key changes append
+  their audit row in the same transaction, so an operation whose audit row fails is rolled back.
+  Search, get and RAG retrieve append before the response and return 500 if they cannot. Failed
+  key reads are audited too. `delete_document` deletes the document row before its tokens.
+- Rejected-request audits are bounded per tenant or client address (20 per minute) with a process
+  cap (120 per minute), instead of 60 per minute per process, so one noisy client can no longer
+  use up the whole allowance (#44). `encrypted_ir_security_audit_dropped_total` has a `limit`
+  label (`per_source` or `total`).
 - **Rate limiting covers unauthenticated requests and has bounded state** (#47). Every request
   except `/health` counts against a per-client-address limit (600 per minute by default), checked
   before authentication, so floods of bad tokens, `/ready` and `/metrics` are throttled. Buckets
@@ -72,6 +88,10 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Removed
 
+- `encrypted_ir.audit.AuditLogger` and its helpers, `KeyManager.get_audit_log()` and the
+  in-memory key audit log, `StorageBackend.save_audit_entry`/`load_audit_log`, and the file
+  backend's `audit.jsonl` (#44). Key events are written by `DatabaseStorageBackend.save_key(...,
+  audit=...)` and `append_audit`; the file backend records no audit.
 - `VersionedBlob` and `KeyRotationManager.resolve_key_for_blob` (#40). Nothing used them, and the
   32-bit key hash could not tell versioned blobs from legacy ones reliably. The document header
   in `encrypted_ir.document_crypto` replaces them.
@@ -114,6 +134,13 @@ The roadmap that drives these versions is in [docs/ROADMAP.md](docs/ROADMAP.md):
 
 ### Changed
 
+- **Breaking: migration 0004 and one audit schema** (#44). Run `alembic upgrade head`. Audit rows
+  gain `schema_version`, `event_type`, `actor`, `request_id`, `success`, `seq`, `prev_hash` and
+  `entry_hash`, and `encrypted_ir_audit_chain_heads` is new. Rows written before the migration
+  keep NULL chain columns and are reported as unchained by the export tool. Key events now use
+  the same schema as API events, with event types `key.create`, `key.read`, `key.rotate`,
+  `key.deactivate`, `key.import` and `key.unwrap`; `AuditEventType` lists only the event types
+  that are written (`SEARCH_KEYWORD`, `DECRYPT` and others are gone).
 - **Breaking: the rate limiter lives on `app.state.rate_limiter`** (#47). The module-level
   limiter and `set_rate_limiter` are removed; `get_rate_limiter` reads the app's limiter. The
   limiter uses GCRA (one timestamp per key, exact `Retry-After`) instead of lists of

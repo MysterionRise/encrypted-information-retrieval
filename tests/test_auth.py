@@ -847,7 +847,7 @@ class TestSecurityEvents:
         )
 
     def test_audit_rows_are_rate_bounded_but_all_rejections_are_counted(self, app, client):
-        app.state.security_audit_limiter = SecurityAuditLimiter(max_events=3)
+        app.state.security_audit_limiter = SecurityAuditLimiter(per_source=(3, 60))
         for _ in range(10):
             client.post(SEARCH, json=SEARCH_BODY)
 
@@ -861,7 +861,26 @@ class TestSecurityEvents:
             )
             == 10
         )
-        assert metric(app, "encrypted_ir_security_audit_dropped_total") == 7
+        assert metric(app, "encrypted_ir_security_audit_dropped_total", limit="per_source") == 7
+
+    def test_audit_bound_is_per_source(self, app, settings_factory):
+        app.state.security_audit_limiter = SecurityAuditLimiter(per_source=(2, 60))
+        first = TestClient(app, client=("198.51.100.1", 1))
+        second = TestClient(app, client=("198.51.100.2", 1))
+        for _ in range(5):
+            first.post(SEARCH, json=SEARCH_BODY)
+        second.post(SEARCH, json=SEARCH_BODY)
+
+        # The first client's flood did not use up the second client's audit allowance.
+        assert len(_security_rows(app)) == 3
+
+    def test_audit_bound_has_a_global_cap(self, app):
+        app.state.security_audit_limiter = SecurityAuditLimiter(per_source=(5, 60), total=(4, 60))
+        for i in range(6):
+            TestClient(app, client=(f"198.51.100.{i}", 1)).post(SEARCH, json=SEARCH_BODY)
+
+        assert len(_security_rows(app)) == 4
+        assert metric(app, "encrypted_ir_security_audit_dropped_total", limit="total") == 2
 
     def test_forbidden_counter(self, app, client, read_only_headers):
         client.delete("/v1/documents/doc-1", headers=read_only_headers)
@@ -887,11 +906,11 @@ class TestSecurityEvents:
 
     def test_limiter_window_slides(self):
         now = [1000.0]
-        limiter = SecurityAuditLimiter(max_events=2, window_seconds=60, clock=lambda: now[0])
+        limiter = SecurityAuditLimiter(per_source=(2, 60), clock=lambda: now[0])
 
-        assert [limiter.allow() for _ in range(3)] == [True, True, False]
+        assert [limiter.allow("t") for _ in range(3)] == [None, None, "per_source"]
         now[0] += 61
-        assert limiter.allow() is True
+        assert limiter.allow("t") is None
 
 
 # =============================================================================
