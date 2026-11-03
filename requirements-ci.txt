@@ -99,7 +99,7 @@ pytest-xdist==3.8.0
     # via -r requirements-ci.in
 sortedcontainers==2.4.0
     # via hypothesis
-sqlalchemy==2.1.5
+sqlalchemy==2.1.6
     # via
     #   -r requirements.txt
     #   alembic
