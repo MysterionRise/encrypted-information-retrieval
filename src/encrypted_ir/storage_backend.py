@@ -16,12 +16,13 @@ import base64
 import fcntl
 import json
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from sqlalchemy import delete, insert, select, update
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 
 from . import audit as audit_chain
 from .audit import AuditWrite
@@ -58,6 +59,16 @@ class StorageBackend(abc.ABC):
             encrypted_key: Key material encrypted with the master key.
             metadata: Key metadata as a dictionary.
             audit: Audit event to append in the same transaction, if the backend audits.
+        """
+
+    @abc.abstractmethod
+    def save_keys(
+        self, keys: Sequence[tuple[str, bytes, dict]], audits: Sequence[AuditWrite] = ()
+    ) -> None:
+        """Persist several ``(key_id, encrypted_key, metadata)`` entries atomically.
+
+        Either every key is saved, with every audit event, or none is. Used to start a
+        rotation, which creates successor keys and marks the old ones in one step.
         """
 
     def append_audit(self, write: AuditWrite) -> None:  # noqa: B027
@@ -201,10 +212,16 @@ class FileStorageBackend(StorageBackend):
         metadata: dict,
         audit: AuditWrite | None = None,
     ) -> None:
+        self.save_keys([(key_id, encrypted_key, metadata)])
+
+    def save_keys(
+        self, keys: Sequence[tuple[str, bytes, dict]], audits: Sequence[AuditWrite] = ()
+    ) -> None:
         store = self._read_store()
-        store["keys"][key_id] = base64.b64encode(encrypted_key).decode("ascii")
-        store["metadata"][key_id] = metadata
-        self._write_store(store)
+        for key_id, encrypted_key, metadata in keys:
+            store["keys"][key_id] = base64.b64encode(encrypted_key).decode("ascii")
+            store["metadata"][key_id] = metadata
+        self._write_store(store)  # one atomic file replace
 
     def load_key(self, key_id: str) -> tuple[bytes, dict] | None:
         store = self._read_store()
@@ -260,26 +277,39 @@ class DatabaseStorageBackend(StorageBackend):
         audit: AuditWrite | None = None,
     ) -> None:
         """Insert or update a key row, and append ``audit`` in the same transaction."""
+        self.save_keys([(key_id, encrypted_key, metadata)], () if audit is None else (audit,))
+
+    def save_keys(
+        self, keys: Sequence[tuple[str, bytes, dict]], audits: Sequence[AuditWrite] = ()
+    ) -> None:
+        """Upsert key rows in ``key_id`` order, then append ``audits``, in one transaction.
+
+        A consistent row order means two writers that lock several key rows cannot deadlock.
+        """
         with self._engine.begin() as conn:
-            result = conn.execute(
-                update(key_store_table)
-                .where(
-                    key_store_table.c.tenant_id == self._tenant_id,
-                    key_store_table.c.key_id == key_id,
-                )
-                .values(encrypted_key=encrypted_key, metadata_json=metadata)
+            for key_id, encrypted_key, metadata in sorted(keys, key=lambda entry: entry[0]):
+                self._upsert(conn, key_id, encrypted_key, metadata)
+            for write in audits:
+                audit_chain.append(conn, self._tenant_id, write.event, write.audit_key)
+
+    def _upsert(self, conn: Connection, key_id: str, encrypted_key: bytes, metadata: dict) -> None:
+        result = conn.execute(
+            update(key_store_table)
+            .where(
+                key_store_table.c.tenant_id == self._tenant_id,
+                key_store_table.c.key_id == key_id,
             )
-            if result.rowcount == 0:
-                conn.execute(
-                    insert(key_store_table).values(
-                        tenant_id=self._tenant_id,
-                        key_id=key_id,
-                        encrypted_key=encrypted_key,
-                        metadata_json=metadata,
-                    )
+            .values(encrypted_key=encrypted_key, metadata_json=metadata)
+        )
+        if result.rowcount == 0:
+            conn.execute(
+                insert(key_store_table).values(
+                    tenant_id=self._tenant_id,
+                    key_id=key_id,
+                    encrypted_key=encrypted_key,
+                    metadata_json=metadata,
                 )
-            if audit is not None:
-                audit_chain.append(conn, self._tenant_id, audit.event, audit.audit_key)
+            )
 
     def load_key(self, key_id: str) -> tuple[bytes, dict] | None:
         stmt = select(key_store_table.c.encrypted_key, key_store_table.c.metadata_json).where(

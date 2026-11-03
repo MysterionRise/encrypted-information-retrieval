@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import threading
+from collections.abc import Iterable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -227,6 +228,7 @@ class KeyManager:
         self._lock = threading.RLock()
         self._keys: dict[str, bytes] = {}
         self._metadata: dict[str, KeyMetadata] = {}
+        self._stored_key_ids: set[str] = set()
 
         if self._storage_backend is not None:
             self._load_from_backend()
@@ -372,19 +374,6 @@ class KeyManager:
         if self._storage_backend is not None:
             self._storage_backend.append_audit(self._audit_write(event))
 
-    def _log_access(self, key_id: str, operation: str, success: bool, details: str = "") -> None:
-        """Audit an operation recorded by ``KeyRotationManager`` (to be removed with it)."""
-        self._audit(
-            AuditEvent(
-                event_type=f"key.{operation}",
-                actor="key-manager",
-                success=success,
-                resource=key_id,
-                details={"note": details},
-                key_id=None if key_id in ("*", "kek") else key_id,
-            )
-        )
-
     def _load_from_backend(self):
         """Load all keys and metadata from the storage backend into memory."""
         self.refresh()
@@ -394,15 +383,20 @@ class KeyManager:
 
         Unwraps keys that are not in memory yet and replaces the metadata of every stored
         key with the stored version, so lifecycle changes made by another process (for
-        example a rotation) become visible. Reads only; it never writes to the backend.
+        example a rotation) become visible. Destroyed keys have no key material left: only
+        their metadata is loaded, and any copy in memory is dropped. Reads only; it never
+        writes to the backend.
         """
         if self._storage_backend is None:
             return
         encrypted_keys, metadata_dicts = self._storage_backend.load_all()
         with self._lock:
+            self._stored_key_ids = set(encrypted_keys)
             for key_id, encrypted_key in encrypted_keys.items():
                 meta_dict = metadata_dicts.get(key_id, {})
-                if key_id not in self._keys:
+                if meta_dict.get("lifecycle_state") == KeyLifecycleState.DESTROYED:
+                    self._keys.pop(key_id, None)
+                elif key_id not in self._keys:
                     try:
                         self._keys[key_id] = self._decrypt_key(key_id, encrypted_key, meta_dict)
                     except KeyIntegrityError:
@@ -411,9 +405,20 @@ class KeyManager:
                         continue
                 self._metadata[key_id] = KeyMetadata.from_dict(meta_dict)
 
+    def stored_key_ids(self) -> set[str]:
+        """IDs of every stored key as of the last :meth:`refresh`, including any that failed
+        to unwrap; keys only in memory when there is no backend."""
+        with self._lock:
+            if self._storage_backend is None:
+                return set(self._keys)
+            return set(self._stored_key_ids)
+
     def _ensure_loaded(self, key_id: str) -> bool:
-        """Load ``key_id`` from the backend if it is not in memory. Returns True if present."""
-        if key_id in self._keys:
+        """Load ``key_id`` from the backend if it is not in memory. Returns True if present.
+
+        A destroyed key is present with metadata only; callers check its state.
+        """
+        if key_id in self._keys or self._is_destroyed(key_id):
             return True
         if self._storage_backend is None:
             return False
@@ -421,11 +426,20 @@ class KeyManager:
         if stored is None:
             return False
         encrypted_key, meta_dict = stored
+        metadata = KeyMetadata.from_dict(meta_dict)
+        if metadata.lifecycle_state == KeyLifecycleState.DESTROYED:
+            with self._lock:
+                self._metadata[key_id] = metadata
+            return True
         key = self._decrypt_key(key_id, encrypted_key, meta_dict)
         with self._lock:
             self._keys[key_id] = key
-            self._metadata[key_id] = KeyMetadata.from_dict(meta_dict)
+            self._metadata[key_id] = metadata
         return True
+
+    def _is_destroyed(self, key_id: str) -> bool:
+        metadata = self._metadata.get(key_id)
+        return metadata is not None and metadata.lifecycle_state == KeyLifecycleState.DESTROYED
 
     def _record_read(self, key_id: str, operation: str) -> None:
         """Count a successful read; persist and audit it only when ``audit_reads`` is on."""
@@ -510,6 +524,10 @@ class KeyManager:
 
         metadata = self._metadata[key_id]
 
+        if metadata.lifecycle_state == KeyLifecycleState.DESTROYED:
+            self._audit(self._event(AuditEventType.KEY_READ, key_id, False, reason="destroyed"))
+            raise ValueError(f"Key {key_id} is destroyed and cannot be used")
+
         if not metadata.active:
             self._audit(self._event(AuditEventType.KEY_READ, key_id, False, reason="inactive"))
             raise ValueError(f"Key {key_id} is inactive")
@@ -581,48 +599,77 @@ class KeyManager:
             return None
         return max(candidates, key=lambda key_id: (self._metadata[key_id].created_at, key_id))
 
-    def rotate_key(self, key_id: str) -> str:
-        """
-        Rotate a key (create new version).
+    def begin_rotation(self, key_types: Iterable[str]) -> dict[str, str]:
+        """Start rotating ``key_types``: create one successor per type and mark the old keys.
 
-        Args:
-            key_id: Key to rotate
+        For each type, a new ACTIVE key is created, one version above every existing key of
+        that type, and each ACTIVE key of the type becomes ROTATING and inactive: it still
+        decrypts and still serves searches, but new writes use the successor. The keys and
+        their audit events are saved in one storage transaction, so a crash leaves either the
+        old state or the new one. Re-encrypting stored documents is the job of
+        :func:`encrypted_ir.rotation.rotate_tenant_keys`.
 
         Returns:
-            New key ID
-
-        Raises:
-            KeyError: If key not found
+            The successor key ID for each key type.
         """
-        if key_id not in self._metadata:
-            raise KeyError(f"Key {key_id} not found")
+        with self._lock:
+            self.refresh()
+            successors: dict[str, str] = {}
+            changed: dict[str, KeyMetadata] = {}
+            new_keys: dict[str, bytes] = {}
+            events: list[AuditEvent] = []
+            for key_type in dict.fromkeys(key_types):
+                same_type = [m for m in self._metadata.values() if m.key_type == key_type]
+                current = self._newest_active_key(key_type)
+                new_id = self._generate_key_id(key_type)
+                successor = KeyMetadata(
+                    key_id=new_id,
+                    key_type=key_type,
+                    created_at=datetime.now(),
+                    rotation_period_days=(
+                        self._metadata[current].rotation_period_days if current else 90
+                    ),
+                    description=f"Rotation successor for {key_type}",
+                )
+                successor.version = max((m.version for m in same_type), default=0) + 1
+                successor.predecessor_key_id = current
+                new_keys[new_id] = os.urandom(len(self._keys[current]) if current else 32)
+                changed[new_id] = successor
+                successors[key_type] = new_id
+                events.append(
+                    self._event(AuditEventType.KEY_CREATE, new_id, True, key_type=key_type)
+                )
+                for metadata in same_type:
+                    if metadata.lifecycle_state != KeyLifecycleState.ACTIVE:
+                        continue
+                    old = KeyMetadata.from_dict(metadata.to_dict())
+                    old.lifecycle_state = KeyLifecycleState.ROTATING
+                    old.active = False
+                    old.successor_key_id = new_id
+                    changed[old.key_id] = old
+                    events.append(
+                        self._event(
+                            AuditEventType.KEY_ROTATE, old.key_id, True, successor_key_id=new_id
+                        )
+                    )
 
-        old_metadata = self._metadata[key_id]
-
-        # Create new key with same parameters
-        new_key_id = self.create_key(
-            key_type=old_metadata.key_type,
-            key_size=len(self._keys[key_id]),
-            rotation_period_days=old_metadata.rotation_period_days,
-            description=f"Rotated from {key_id}",
-        )
-
-        # Link versions
-        new_metadata = self._metadata[new_key_id]
-        new_metadata.version = old_metadata.version + 1
-        new_metadata.predecessor_key_id = key_id
-        old_metadata.successor_key_id = new_key_id
-
-        # Mark old key as inactive
-        old_metadata.active = False
-        old_metadata.lifecycle_state = KeyLifecycleState.RETIRED
-        self._persist_key(new_key_id)
-        self._persist_key(
-            key_id,
-            audit=self._event(AuditEventType.KEY_ROTATE, key_id, True, successor_key_id=new_key_id),
-        )
-
-        return new_key_id
+            if self._storage_backend is not None:
+                entries = [
+                    (
+                        key_id,
+                        self._encrypt_key(
+                            key_id, new_keys.get(key_id) or self._keys[key_id], metadata
+                        ),
+                        {**metadata.to_dict(), "wrap_format": WRAP_FORMAT},
+                    )
+                    for key_id, metadata in changed.items()
+                ]
+                self._storage_backend.save_keys(
+                    entries, [self._audit_write(event) for event in events]
+                )
+            self._keys.update(new_keys)
+            self._metadata.update(changed)
+            return successors
 
     def delete_key(self, key_id: str):
         """

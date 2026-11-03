@@ -203,7 +203,7 @@ class TestKeyManagerFromKMS:
         assert meta.key_type == "deterministic"
 
         # Rotate
-        new_key_id = manager.rotate_key(key_id)
+        new_key_id = manager.begin_rotation(["deterministic"])["deterministic"]
         assert manager.get_metadata(key_id).active is False
         assert manager.get_metadata(new_key_id).active is True
 
@@ -534,9 +534,12 @@ class TestEncryptionContext:
             def __init__(self, key_id, region=None, encryption_context=None):
                 created.update(key_id=key_id, region=region, context=encryption_context)
 
-            def encrypt(self, plaintext):
-                created["plaintext_length"] = len(plaintext)
-                return b"wrapped-master-key"
+            def generate_data_key(self, key_spec="AES_256"):
+                created["key_spec"] = key_spec
+                return b"k" * 32, b"wrapped-master-key"
+
+            def encrypt(self, plaintext):  # pragma: no cover - must not be called
+                raise AssertionError("the tool must let KMS generate the key")
 
         monkeypatch.setattr(generate_kms_master_key, "AWSKMSProvider", FakeProvider)
 
@@ -556,5 +559,35 @@ class TestEncryptionContext:
                 "environment": "dev",
                 "purpose": "app-master-key",
             },
-            "plaintext_length": 32,
+            "key_spec": "AES_256",
         }
+
+    def test_generate_tool_calls_generate_data_key_with_the_context(self, capsys):
+        """End to end against a stub KMS client: KMS generates the key; nothing else is sent."""
+        from encrypted_ir.tools import generate_kms_master_key
+
+        client = MagicMock()
+        client.generate_data_key.return_value = {
+            "Plaintext": b"p" * 32,
+            "CiphertextBlob": b"blob-from-kms",
+        }
+        boto3 = MagicMock()
+        boto3.client.return_value = client
+        with patch.dict("sys.modules", {"boto3": boto3}):
+            generate_kms_master_key.main(["--kms-key-id", "alias/app", "--environment", "prod"])
+
+        client.generate_data_key.assert_called_once_with(
+            KeyId="alias/app",
+            KeySpec="AES_256",
+            EncryptionContext={
+                "application": "encrypted-information-retrieval",
+                "environment": "prod",
+                "purpose": "app-master-key",
+            },
+        )
+        client.encrypt.assert_not_called()
+        output = capsys.readouterr().out
+        assert output.strip() == (
+            "ENCRYPTED_IR_ENCRYPTED_MASTER_KEY_B64=" + base64.b64encode(b"blob-from-kms").decode()
+        )
+        assert base64.b64encode(b"p" * 32).decode() not in output

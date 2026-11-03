@@ -242,7 +242,7 @@ class TestKeyManagerWithFileBackend:
         mgr1 = KeyManager(master_key=master_key, storage_backend=backend1)
 
         old_key_id = mgr1.create_key("deterministic")
-        new_key_id = mgr1.rotate_key(old_key_id)
+        new_key_id = mgr1.begin_rotation(["deterministic"])["deterministic"]
 
         # Restart
         backend2 = FileStorageBackend(storage_dir, master_key)
@@ -283,7 +283,7 @@ class TestKeyManagerWithFileBackend:
         assert len(key) == 32
 
         # Rotation
-        new_key_id = manager.rotate_key(key_id)
+        new_key_id = manager.begin_rotation(["deterministic"])["deterministic"]
         assert manager.get_metadata(key_id).active is False
         assert manager.get_metadata(new_key_id).active is True
 
@@ -468,7 +468,7 @@ class TestReadsDoNotWrite:
         key_id = first.get_or_create_active_key("document_search")
         assert second.get_or_create_active_key("document_search") == key_id
 
-        new_key_id = first.rotate_key(key_id)
+        new_key_id = first.begin_rotation(["document_search"])["document_search"]
         second.refresh()
 
         assert second.get_metadata(key_id).active is False

@@ -59,6 +59,7 @@ class AuditEventType(StrEnum):
     DOCUMENT_SEARCH = "document.search"
     DOCUMENT_DECRYPT = "document.decrypt"
     DOCUMENT_DELETE = "document.delete"
+    DOCUMENT_REENCRYPT = "document.reencrypt"
     RAG_RETRIEVE = "rag.retrieve"
     AUTH_FAILURE = "auth.failure"
     AUTHZ_FAILURE = "authz.failure"
@@ -67,6 +68,8 @@ class AuditEventType(StrEnum):
     KEY_READ = "key.read"
     KEY_ROTATE = "key.rotate"
     KEY_DEACTIVATE = "key.deactivate"
+    KEY_RETIRE = "key.retire"
+    KEY_DESTROY = "key.destroy"
     KEY_IMPORT = "key.import"
     KEY_UNWRAP = "key.unwrap"
 

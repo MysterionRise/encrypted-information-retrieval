@@ -351,7 +351,11 @@ We need encrypted computation for credit scoring and analytics. Options:
 ## ADR-006: Envelope Encryption with KMS
 
 **Date**: 2025-01-11
-**Status**: Partially implemented. A single app master key can be unwrapped through AWS KMS at startup (`master_key.py`, tested with mocks only), and per-tenant keys are wrapped locally under it. No HSM, CloudHSM or CloudTrail integration exists in this repository.
+**Status**: Partially implemented.
+- A single app master key can be unwrapped through AWS KMS at startup (`master_key.py`, tested with mocks only), and per-tenant keys are wrapped locally under it.
+- The master key is created by KMS `GenerateDataKey` and rotated by KMS-side rotation of the customer master key.
+- Tenant keys are rotated by an operator tool, not on a schedule (ADR-018).
+- No HSM, CloudHSM or CloudTrail integration exists in this repository.
 **Decision Makers**: Security Architecture Team
 
 ### Context
@@ -442,12 +446,12 @@ version (u8 = 1) || algorithm (u8 = 1, AES-256-GCM) || key_id_len (u8, 1..255) |
 
 AES-GCM associated data = header || lp("encrypted-ir/document/v1") || lp(purpose)
                           || lp(tenant_id) || lp(doc_id)          lp = 4-byte big-endian length prefix
-purpose = "content" | "metadata"
+purpose = "content" | "metadata" | "keywords"
 ```
 
 - The row's `algorithm` column is `aes-256-gcm/v1` for this format. Rows written before it keep
-  `aes-gcm` (`iv || tag || ciphertext`, no associated data) and stay readable; the rotation tool in
-  [#42] will re-encrypt them. Changing a new row's `algorithm` to `aes-gcm` cannot downgrade it,
+  `aes-gcm` (`iv || tag || ciphertext`, no associated data) and stay readable; the rotation tool
+  (ADR-018, [#42]) re-encrypts them into this format. Changing a new row's `algorithm` to `aes-gcm` cannot downgrade it,
   because the legacy path then fails the GCM tag check.
 - Decryption checks that the header's version, algorithm and key ID match the row, and that the
   associated data matches the tenant, document and purpose. Swapping ciphertexts between rows,
@@ -481,7 +485,7 @@ Cryptographic algorithms have finite lifespans. We must prepare for:
 
 ### Consequences
 
-- **Migration**: Decrypt with the old format, re-encrypt with the new one (the rotation tool, [#42]).
+- **Migration**: Decrypt with the old format, re-encrypt with the new one (the rotation tool, ADR-018).
 - **Backward compatibility**: Old ciphertexts remain readable until they are re-encrypted.
 
 ### References
@@ -745,7 +749,10 @@ locally and stored AES-GCM-wrapped under that master key.
 
 - One KMS call per process start instead of one per request.
 - The master key stays in process memory, so a host compromise exposes every tenant (THREAT_MODEL A3).
-- Re-encrypting documents on rotation is not implemented ([#42]).
+- Tenant keys are rotated, and documents re-encrypted, by `rotate_tenant_keys` (ADR-018). The master
+  key is rotated in KMS: automatic rotation of the customer master key keeps the old key material to
+  decrypt the existing wrapped master key, so it needs no re-wrapping. The library's earlier `rotate_kek`,
+  which never persisted the re-wrapped key, is removed.
 
 ---
 
@@ -845,13 +852,87 @@ hashes where database writers cannot change them.
 
 ---
 
+## ADR-018: Tenant Key Rotation Re-encrypts Documents; the Master Key Rotates in KMS
+
+**Date**: 2026-10-28
+**Status**: Accepted and implemented ([#42]).
+
+### Context
+
+Rotating a key created a new version but left every stored document and search token under the old
+key, so retiring a compromised key was not possible. There were three rotation paths that did not
+connect: `KeyManager.rotate_key`, `KeyRotationManager` (re-encryption by callback, with nothing calling
+it), and `rotate_kek`, whose re-wrapped master key was never persisted. Search tokens are HMACs of the
+keywords, which the database did not store, so tokens could not be rebuilt under a new key.
+
+### Decision
+
+- **Keyword list.** Ingest seals each document's sorted keyword list with the document key
+  (purpose `keywords`, ADR-007), so rotation can rebuild its tokens.
+- **One rotation path:** `encrypted_ir.rotation.rotate_tenant_keys`, run as
+  `python -m encrypted_ir.tools.rotate_tenant_keys`.
+  - **Start.** A row in `encrypted_ir_key_rotations` claims the tenant. Then
+    `KeyManager.begin_rotation` creates the successor keys and marks the old ones ROTATING, in one
+    transaction.
+  - **Re-encrypt.** Documents move to the successors in `doc_id` order, one transaction per batch.
+    Each row is written back with a compare-and-swap on its ciphertext, with one audit event per
+    batch. Passes repeat until one makes no progress.
+  - **Finish.** Old keys that nothing references are retired: the document key becomes RETIRED and
+    is kept, and the search key becomes DESTROYED and its bytes are cleared. The key row is locked
+    before the references are counted.
+  - **Interruptions.** A run that stops for any reason leaves every document readable and
+    searchable, and `--resume` continues it.
+- **Concurrent writes.** Ingest locks its two key rows `FOR SHARE` and accepts only ACTIVE or
+  ROTATING keys. If the rotation retired one first, the ingest retries with fresh keys. If the
+  ingest committed first, the rotation counts its row.
+- **Concurrent searches.** A search re-reads the tenant's key IDs after the query and runs again
+  if one appeared. A new key is always stored before any document moves to it, so nothing is
+  missed.
+- **Legacy rows.**
+  - Rows without a keyword list are re-tokenized only if keywords re-extracted from the content
+    reproduce the stored tokens exactly.
+  - Other rows keep their old search key, which stays searchable and is reported, until they are
+    ingested again.
+  - Pre-ADR-007 rows are upgraded to the sealed format.
+- **Master key.** KMS `GenerateDataKey` creates the master key, and rotation of the customer master
+  key happens in KMS. KMS keeps the old key material to decrypt the existing wrapped master key.
+  `rotate_kek`, `KeyRotationManager` and `KeyManager.rotate_key` are removed.
+
+### Rationale
+
+**Pros**:
+- Retiring or destroying a key is now meaningful: no document references it any more.
+- The API keeps serving during a rotation, and a crash at any point is safe to resume.
+- No new secret store: the keyword list is sealed like the content.
+
+**Cons**:
+- The sealed keyword list makes each row larger. It reveals nothing new to a database reader:
+  the token count is already visible.
+- Documents ingested with explicit keywords before this change cannot be re-tokenized.
+- Each search runs one extra key-ID query.
+- One rotation per tenant at a time.
+
+**Alternatives considered**:
+- Lazy re-encryption on read: reads would write, which ADR-012 and #39 removed, and the old key could
+  never be retired with confidence.
+- A scheduler inside the API: key rotation is an operator decision, and a tool is easier to audit.
+- Re-wrapping the master key in this code: KMS-side rotation already does it without a migration.
+
+### Consequences
+
+Migration 0005 adds `encrypted_keywords`, indexes on the key-ID columns and `encrypted_ir_key_rotations`.
+Operators rotate a tenant with the tool and archive its JSON report. Searches during a rotation compute
+tokens under both search keys.
+
+---
+
 ## Revision History
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2025-01-11 | Architecture Team | Initial ADR log |
 | 2.0 | 2026-10-20 | Maintainer | Statuses corrected to match the code; compliance entries marked as targets; FIPS 205 corrected; ADR-011 to ADR-016 added |
-| 2.1 | 2026-10-28 | Maintainer | ADR-017 added |
+| 2.1 | 2026-10-28 | Maintainer | ADR-017 and ADR-018 added; ADR-006, ADR-007 and ADR-014 updated for rotation |
 
 ---
 

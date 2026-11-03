@@ -76,6 +76,25 @@ def test_migration_0004_keeps_legacy_audit_rows(tmp_path):
         engine.dispose()
 
 
+def test_migration_0005_round_trip(tmp_path):
+    database_url = f"sqlite+pysqlite:///{tmp_path / 'rotation.db'}"
+    config = alembic_config(database_url)
+    command.upgrade(config, "head")
+    engine = create_database_engine(database_url)
+    try:
+        assert "encrypted_keywords" in _document_columns(database_url)
+        assert "encrypted_ir_key_rotations" in inspect(engine).get_table_names()
+
+        command.downgrade(config, "20261027_0004")
+        assert "encrypted_keywords" not in _document_columns(database_url)
+        assert "encrypted_ir_key_rotations" not in inspect(engine).get_table_names()
+
+        command.upgrade(config, "head")
+        assert "encrypted_keywords" in _document_columns(database_url)
+    finally:
+        engine.dispose()
+
+
 @pytest.mark.parametrize("database_kind", ["sqlite", "postgres"])
 def test_migrated_schema_matches_models(tmp_path, database_kind):
     """The Alembic head must produce exactly the tables the application code declares."""

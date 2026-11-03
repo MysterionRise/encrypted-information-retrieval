@@ -170,7 +170,9 @@ python -m encrypted_ir.tools.generate_kms_master_key \
   --environment prod
 ```
 
-The key is wrapped with the KMS encryption context `application=encrypted-information-retrieval`,
+KMS creates the key with `GenerateDataKey`, so the operator running the tool needs
+`kms:GenerateDataKey` on that key, and only the wrapped copy is printed. The key is bound to the
+KMS encryption context `application=encrypted-information-retrieval`,
 `environment=<--environment>` and `purpose=app-master-key`, and the API unwraps it with the same
 context, so set `--environment` to the `ENCRYPTED_IR_ENV` it will run under. A key generated before
 this context existed must be regenerated. To make the context mandatory, add a condition to the
@@ -185,6 +187,29 @@ API role's `kms:Decrypt` permission:
   }
 }
 ```
+
+Rotate a tenant's document and search keys while the API keeps serving. Use the same
+`DATABASE_URL` and master-key settings as the API:
+
+```bash
+python -m encrypted_ir.tools.rotate_tenant_keys --tenant local-demo --batch-size 100
+```
+
+The tool:
+- re-encrypts every document under new keys and rebuilds its search tokens;
+- retires the old document key and destroys the old search key;
+- prints a JSON report.
+
+Exit codes:
+- 0: complete.
+- 1: configuration error, or a rotation already in progress.
+- 2: some documents did not decrypt; nothing was retired.
+- 3: not finished; continue with `--resume`. Use `--max-batches N` to stop after N batches on
+  purpose.
+
+The master key is rotated in AWS KMS by automatic rotation of the customer master key. KMS keeps
+the old key material, so the wrapped master key in `ENCRYPTED_IR_ENCRYPTED_MASTER_KEY_B64` keeps
+working unchanged.
 
 Export and verify a tenant's audit chain, using the same `DATABASE_URL` and master-key settings as
 the API:
