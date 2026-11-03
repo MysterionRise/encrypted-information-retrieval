@@ -82,7 +82,7 @@ pyjwt==2.15.1
     # via
     #   -r requirements.txt
     #   pyjwt
-pytest==9.1.1
+pytest==9.2.0
     # via
     #   -r requirements-ci.in
     #   pytest-benchmark
