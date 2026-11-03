@@ -62,7 +62,7 @@ This is a single-maintainer project, so responses are best effort:
 - The CI and release workflows.
 
 **Out of scope:**
-- Demo credentials in `docker-compose.yml`. They are documented demo values.
+- Demo credentials in `.env.example`. They are documented, public demo values.
 - Leakage that [`docs/LEAKAGE_AND_ENDPOINTS.md`](docs/LEAKAGE_AND_ENDPOINTS.md) already documents,
   unless the actual leakage is larger than documented.
 - Vulnerabilities in third-party dependencies. Please report those upstream; `pip-audit` runs in
@@ -89,7 +89,7 @@ The roadmap epics order this work: [#26](https://github.com/MysterionRise/encryp
 **CI** (`.github/workflows/ci.yml`) runs on every push and pull request:
 - **bandit** static analysis of `src/`.
 - **ruff**, including the flake8-bandit `S` rules.
-- **pip-audit** over `requirements.txt`, `requirements-api.txt` and `requirements-research.txt`.
+- **pip-audit** over `requirements-ci.txt`, `requirements-docker.txt` and `requirements-research.txt`.
   This step is blocking.
 - The full test suite on Python 3.11 and 3.12, with a PostgreSQL service.
 - A research job that runs the tests needing the optional TenSEAL and pqcrypto extras.

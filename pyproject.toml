@@ -37,7 +37,8 @@ dependencies = [
 
 [project.optional-dependencies]
 aws = [
-    "boto3>=1.28.0",
+    # 1.28.57 is the first release that reads service endpoints such as AWS_ENDPOINT_URL_KMS.
+    "boto3>=1.28.57",
 ]
 research = [
     "numpy>=1.24.0",

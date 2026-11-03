@@ -1,9 +1,22 @@
-"""Helpers for checking Alembic migration state."""
+"""Alembic migration helpers and a small CLI.
+
+Run migrations without ``alembic.ini`` (for example from the Docker image)::
+
+    python -m encrypted_ir.migrations upgrade head
+    python -m encrypted_ir.migrations current
+
+The database is ``--database-url`` or the ``DATABASE_URL`` environment variable.
+"""
 
 from __future__ import annotations
 
+import argparse
+import logging
+import os
+import sys
 from typing import cast
 
+from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
@@ -17,7 +30,7 @@ SCRIPT_LOCATION = "encrypted_ir:alembic_migrations"
 
 def alembic_config(database_url: str | None = None) -> Config:
     """Build Alembic config for this project."""
-    config = Config()
+    config = Config(stdout=sys.stdout)  # the current stdout, not the one at import time
     config.set_main_option("script_location", SCRIPT_LOCATION)
     if database_url:
         config.set_main_option("sqlalchemy.url", database_url)
@@ -58,3 +71,36 @@ def migration_status(
         "head": head,
         "at_head": current == head,
     }
+
+
+def main(argv: list[str] | None = None) -> int:
+    """``upgrade``, ``downgrade`` or ``current`` against ``--database-url`` or DATABASE_URL."""
+    parser = argparse.ArgumentParser(
+        prog="python -m encrypted_ir.migrations", description="Run Encrypted IR migrations."
+    )
+    parser.add_argument("--database-url", help="Database URL (default: $DATABASE_URL)")
+    commands = parser.add_subparsers(dest="command", required=True)
+    upgrade = commands.add_parser("upgrade", help="Upgrade to a revision (default: head)")
+    upgrade.add_argument("revision", nargs="?", default="head")
+    downgrade = commands.add_parser("downgrade", help="Downgrade to a revision")
+    downgrade.add_argument("revision")
+    commands.add_parser("current", help="Print the database revision")
+    args = parser.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)-5.5s [%(name)s] %(message)s")
+
+    database_url = args.database_url or os.environ.get("DATABASE_URL")
+    if not database_url:
+        print("error: set --database-url or DATABASE_URL", file=sys.stderr)
+        return 2
+    config = alembic_config(database_url)
+    if args.command == "upgrade":
+        command.upgrade(config, args.revision)
+    elif args.command == "downgrade":
+        command.downgrade(config, args.revision)
+    else:
+        command.current(config)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

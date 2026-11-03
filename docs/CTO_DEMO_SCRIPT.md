@@ -12,11 +12,13 @@ This script also serves as the persistence smoke test. It absorbs the former
 ## 1. Show the Deployment Shape
 
 ```bash
+cp .env.example .env
 docker compose up --build
 ```
 
-Wait for the API to listen on `http://localhost:8000`. The API container runs
-`alembic upgrade head` before starting Uvicorn. Then call readiness:
+Wait for the API to listen on `http://localhost:8000`. Compose first runs the one-shot `migrate`
+service (`python -m encrypted_ir.migrations upgrade head`) and starts the API only after it exits
+successfully. Then call readiness:
 
 ```bash
 curl http://localhost:8000/ready
@@ -110,9 +112,10 @@ Optional live-validation path if cloud credentials are available:
 ## Notes
 
 - `local-demo-key` works only because `docker-compose.yml` sets
-  `ENCRYPTED_IR_DEV_AUTH_ENABLED=true`, a 32-byte-plus `ENCRYPTED_IR_JWT_SECRET` and
-  `ENCRYPTED_IR_DEV_API_KEY`. Dev auth is refused unless `ENCRYPTED_IR_ENV=dev`.
-- Compose sets `ENCRYPTED_IR_AUTO_CREATE_TABLES=false`, so schema changes are applied through
-  Alembic migrations.
+  `ENCRYPTED_IR_DEV_AUTH_ENABLED=true` and `.env` provides a 32-byte-plus
+  `ENCRYPTED_IR_JWT_SECRET` and `ENCRYPTED_IR_DEV_API_KEY`. Dev auth is refused unless
+  `ENCRYPTED_IR_ENV=dev`.
+- Compose sets `ENCRYPTED_IR_AUTO_CREATE_TABLES=false`, so schema changes are applied only by
+  the `migrate` service.
 - This is a local demo workflow, not production authentication or secret management. The
-  master key, database password and JWT secret in `docker-compose.yml` are demo values.
+  master key, database password and JWT secret in `.env.example` are public demo values.

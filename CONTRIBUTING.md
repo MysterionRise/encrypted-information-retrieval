@@ -58,7 +58,16 @@ CI pins exact versions of black, ruff, mypy and bandit in the `env` block of
 ## Dependencies
 
 - Runtime dependencies live in `pyproject.toml` (`[project.dependencies]`) and are mirrored in
-  `requirements.txt` and `requirements-api.txt` (the Docker image).
+  `requirements.txt`.
+- `requirements-docker.txt`, the Docker image's lock, is generated from `pyproject.toml` with the
+  `aws` extra and pins every package by hash. Regenerate it with Python 3.11 after changing the
+  dependencies:
+
+  ```bash
+  pip-compile --extra aws --generate-hashes --strip-extras --allow-unsafe \
+    --output-file requirements-docker.txt pyproject.toml
+  ```
+
 - `requirements-ci.txt` is generated. Do not edit it by hand. After changing
   `requirements-ci.in` or `requirements.txt`, regenerate it with Python 3.11:
 
@@ -67,7 +76,8 @@ CI pins exact versions of black, ruff, mypy and bandit in the `env` block of
   pip-compile --strip-extras --output-file requirements-ci.txt requirements-ci.in
   ```
 
-- Dependabot opens weekly update PRs for pip and GitHub Actions.
+- Dependabot opens weekly update PRs for pip, GitHub Actions and the Dockerfile's base image,
+  which is pinned by digest.
 
 ## Database migrations
 
@@ -78,6 +88,11 @@ wheels can run them. From a checkout:
 DATABASE_URL=sqlite+pysqlite:///local.db alembic upgrade head
 alembic revision -m "describe the change"   # then edit the new file under versions/
 ```
+
+`alembic.ini` names no database: the `alembic` CLI migrates the one in `DATABASE_URL`. Code that
+builds its own config (`encrypted_ir.migrations.alembic_config(url)`) migrates exactly that URL,
+whatever `DATABASE_URL` says. Without `alembic.ini`, for example in the Docker image, run
+`python -m encrypted_ir.migrations upgrade head` (also `downgrade REV` and `current`).
 
 ## Documentation and decisions
 

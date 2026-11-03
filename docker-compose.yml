@@ -1,35 +1,55 @@
+# Local demo stack: PostgreSQL, a one-shot migration job, then the API.
+#
+# Copy .env.example to .env first. Compose reads the secrets from .env and refuses to start
+# if one is missing; the committed values are public demo values.
+
+x-database-url: &database-url "postgresql+psycopg://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}"
+
 services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: encrypted_ir
-      POSTGRES_USER: encrypted_ir
-      POSTGRES_PASSWORD: encrypted_ir_dev_password
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    # Not published to the host: only the migrate and api services reach it.
     volumes:
       - encrypted_ir_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U encrypted_ir -d encrypted_ir"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  api:
+  migrate:
     build: .
+    image: encrypted-ir:local
+    command: ["python", "-m", "encrypted_ir.migrations", "upgrade", "head"]
+    environment:
+      DATABASE_URL: *database-url
     depends_on:
       postgres:
         condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    image: encrypted-ir:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
-      DATABASE_URL: postgresql+psycopg://encrypted_ir:encrypted_ir_dev_password@postgres:5432/encrypted_ir
-      ENCRYPTED_IR_MASTER_KEY_B64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      DATABASE_URL: *database-url
+      ENCRYPTED_IR_MASTER_KEY_B64: ${ENCRYPTED_IR_MASTER_KEY_B64:?set ENCRYPTED_IR_MASTER_KEY_B64 in .env}
       ENCRYPTED_IR_ENV: dev
       ENCRYPTED_IR_AUTO_CREATE_TABLES: "false"
       ENCRYPTED_IR_CORS_ORIGINS: http://localhost:3000,http://localhost:8000,http://127.0.0.1:8000
       ENCRYPTED_IR_DEV_AUTH_ENABLED: "true"
-      ENCRYPTED_IR_DEV_API_KEY: local-demo-key
+      ENCRYPTED_IR_DEV_API_KEY: ${ENCRYPTED_IR_DEV_API_KEY:?set ENCRYPTED_IR_DEV_API_KEY in .env}
       ENCRYPTED_IR_DEV_TENANT_ID: local-demo
-      ENCRYPTED_IR_JWT_SECRET: local-docker-demo-secret-change-me
+      ENCRYPTED_IR_JWT_SECRET: ${ENCRYPTED_IR_JWT_SECRET:?set ENCRYPTED_IR_JWT_SECRET in .env}
       ENCRYPTED_IR_ENABLE_DOCS: "true"
     ports:
       - "8000:8000"

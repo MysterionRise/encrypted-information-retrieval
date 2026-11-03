@@ -5,7 +5,7 @@
 # wait for /ready, ingest an encrypted document, retrieve it through /v1/rag/retrieve,
 # restart the API container, and retrieve it again from PostgreSQL.
 #
-# Usage: docker compose up -d --build && ./scripts/compose_smoke.sh
+# Usage: cp .env.example .env && docker compose up -d --build && ./scripts/compose_smoke.sh
 # Env:   API_URL (default http://localhost:8000), API_KEY (default local-demo-key)
 set -euo pipefail
 

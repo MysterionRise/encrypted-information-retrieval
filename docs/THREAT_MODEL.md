@@ -93,7 +93,6 @@ without the key.
 | OIDC not validated against a live identity provider | Verification is tested with a fake JWKS; issuer-specific claim shapes may differ. | [#48] |
 | `/metrics` open by default | Anyone who can reach the port sees per-route request volumes and the number of cached tenants (no document IDs). Set `ENCRYPTED_IR_METRICS_TOKEN` or restrict the port. | [#43] (documented) |
 | Audit chain trusts the master key | Anyone holding the app master key (the API process, or an operator running the export) can rewrite a tenant's chain consistently. A database writer without the key can drop the newest rows and rewrite the head row to match. Exported head hashes, kept where database writers cannot change them and checked with `--check-head`, detect both. Failure and rejection audits are best effort. | [#44] (documented) |
-| Docker image lacks boto3 | The KMS production path cannot start from the shipped image. | [#45] |
 
 ## Explicitly not provided
 
@@ -124,7 +123,6 @@ roadmap's "Not planned" section explains why each is out of scope for now.
 [#42]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/42
 [#43]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/43
 [#44]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/44
-[#45]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/45
 [#47]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/47
 [#48]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/48
 [#49]: https://github.com/MysterionRise/encrypted-information-retrieval/issues/49

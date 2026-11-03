@@ -105,7 +105,8 @@ security: ## Run security checks (bandit + pip-audit), same as CI
 	@echo "$(BLUE)1. Scanning code for security issues (bandit)...$(NC)"
 	$(PYTHON) -m bandit -r src -ll -f screen
 	@echo "$(BLUE)2. Auditing dependencies for known vulnerabilities (pip-audit)...$(NC)"
-	$(PYTHON) -m pip_audit -r requirements-ci.txt -r requirements-api.txt -r requirements-research.txt
+	$(PYTHON) -m pip_audit -r requirements-ci.txt -r requirements-research.txt
+	$(PYTHON) -m pip_audit -r requirements-docker.txt
 	@echo "$(GREEN)✓ Security checks complete$(NC)"
 
 clean: ## Clean build artifacts and cache
