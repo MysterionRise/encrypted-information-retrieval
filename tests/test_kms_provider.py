@@ -2,8 +2,6 @@
 
 import base64
 import os
-import shutil
-import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -146,29 +144,26 @@ class TestKeyManagerFromKMS:
         manager2 = KeyManager.from_kms(provider, encrypted_master_key=enc_mk)
         assert manager2.master_key == manager1.master_key
 
-    def test_from_kms_with_storage_backend(self):
+    def test_from_kms_with_storage_backend(self, tmp_path):
         """from_kms works with a storage backend for full persistence."""
-        storage_dir = tempfile.mkdtemp()
-        try:
-            provider = MockKMSProvider()
+        storage_dir = str(tmp_path / "keys")
+        provider = MockKMSProvider()
 
-            # Create manager with KMS + file backend
-            master_key_for_backend = os.urandom(32)
-            backend1 = FileStorageBackend(storage_dir, master_key_for_backend)
-            manager1 = KeyManager.from_kms(provider, storage_backend=backend1)
-            key_id = manager1.create_key("searchable", description="kms test key")
-            original_key = manager1.get_key(key_id)
-            enc_mk = manager1.get_encrypted_master_key()
+        # Create manager with KMS + file backend
+        master_key_for_backend = os.urandom(32)
+        backend1 = FileStorageBackend(storage_dir, master_key_for_backend)
+        manager1 = KeyManager.from_kms(provider, storage_backend=backend1)
+        key_id = manager1.create_key("searchable", description="kms test key")
+        original_key = manager1.get_key(key_id)
+        enc_mk = manager1.get_encrypted_master_key()
 
-            # Simulate restart: recover master key from KMS, reload from backend
-            recovered_mk = provider.decrypt(enc_mk)
-            backend2 = FileStorageBackend(storage_dir, master_key_for_backend)
-            manager2 = KeyManager(master_key=recovered_mk, storage_backend=backend2)
+        # Simulate restart: recover master key from KMS, reload from backend
+        recovered_mk = provider.decrypt(enc_mk)
+        backend2 = FileStorageBackend(storage_dir, master_key_for_backend)
+        manager2 = KeyManager(master_key=recovered_mk, storage_backend=backend2)
 
-            restored_key = manager2.get_key(key_id)
-            assert restored_key == original_key
-        finally:
-            shutil.rmtree(storage_dir)
+        restored_key = manager2.get_key(key_id)
+        assert restored_key == original_key
 
     def test_from_kms_different_providers_different_keys(self):
         """Different KMS providers produce different master keys."""
@@ -437,27 +432,24 @@ class TestKeyManagerFromKMSWithAWSMock:
         recovered_mk = aws_provider.decrypt(enc_mk)
         assert recovered_mk == manager.master_key
 
-    def test_full_workflow_with_persistence(self, aws_provider):
+    def test_full_workflow_with_persistence(self, aws_provider, tmp_path):
         """End-to-end with file backend persistence."""
-        storage_dir = tempfile.mkdtemp()
-        try:
-            backend_key = os.urandom(32)
+        storage_dir = str(tmp_path / "keys")
+        backend_key = os.urandom(32)
 
-            # Create and populate
-            backend1 = FileStorageBackend(storage_dir, backend_key)
-            manager1 = KeyManager.from_kms(aws_provider, storage_backend=backend1)
-            enc_mk = manager1.get_encrypted_master_key()
-            key_id = manager1.create_key("searchable")
-            original_key = manager1.get_key(key_id)
+        # Create and populate
+        backend1 = FileStorageBackend(storage_dir, backend_key)
+        manager1 = KeyManager.from_kms(aws_provider, storage_backend=backend1)
+        enc_mk = manager1.get_encrypted_master_key()
+        key_id = manager1.create_key("searchable")
+        original_key = manager1.get_key(key_id)
 
-            # Simulate restart: unwrap master key, reload backend
-            recovered_mk = aws_provider.decrypt(enc_mk)
-            backend2 = FileStorageBackend(storage_dir, backend_key)
-            manager2 = KeyManager(master_key=recovered_mk, storage_backend=backend2)
+        # Simulate restart: unwrap master key, reload backend
+        recovered_mk = aws_provider.decrypt(enc_mk)
+        backend2 = FileStorageBackend(storage_dir, backend_key)
+        manager2 = KeyManager(master_key=recovered_mk, storage_backend=backend2)
 
-            assert manager2.get_key(key_id) == original_key
-        finally:
-            shutil.rmtree(storage_dir)
+        assert manager2.get_key(key_id) == original_key
 
 
 class TestEncryptionContext:

@@ -110,6 +110,8 @@ Auth and HTTP settings (all optional except where noted):
 | `ENCRYPTED_IR_DEV_TENANT_ID` | `local-demo` | Tenant for the dev API key. |
 | `ENCRYPTED_IR_OIDC_ISSUER`, `_AUDIENCE`, `_JWKS_URL` | none | OIDC verification; all three are required in `prod`. |
 | `ENCRYPTED_IR_OIDC_ALGORITHMS` | `RS256` | Comma-separated subset of `RS256`, `PS256`, `ES256`. |
+| `ENCRYPTED_IR_TENANT_CLAIM` | `tenant_id` | Top-level token claim holding the tenant ID. |
+| `ENCRYPTED_IR_ROLES_CLAIM` | `roles` | Top-level token claim holding the roles (`read`, `write`, `admin`; any other value means 403). |
 | `ENCRYPTED_IR_JWT_LEEWAY_SECONDS` | `30` | Clock skew allowed for `exp` and `iat` (0 to 300). |
 | `ENCRYPTED_IR_JWKS_TIMEOUT_SECONDS` | `5` | Timeout for fetching the JWKS. |
 | `ENCRYPTED_IR_ENABLE_DOCS` | `false` | Serve `/docs`, `/redoc` and `/openapi.json`. |
@@ -122,7 +124,10 @@ Auth and HTTP settings (all optional except where noted):
 | `ENCRYPTED_IR_TRUSTED_PROXIES` | none | Comma-separated proxy IPs or networks whose `X-Forwarded-For` is trusted for the client address. |
 
 Every token must carry `exp`, `iat`, a tenant claim matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`
-and a non-empty roles claim; OIDC tokens also need `aud` and `iss`.
+and a non-empty roles claim; OIDC tokens also need `aud` and `iss`. Run the production auth path
+locally, with Keycloak as the identity provider and the API in `ENCRYPTED_IR_ENV=prod`, using
+`./scripts/oidc_smoke.sh`. [OIDC_DEPLOYMENT.md](docs/OIDC_DEPLOYMENT.md) maps the claims for
+Cognito, Auth0, Okta and Entra ID.
 
 The API logs JSON lines to stdout: one access line per request (method, route template, status,
 latency, tenant) and any warnings, each carrying the request's `X-Request-ID` as
@@ -181,17 +186,15 @@ KMS creates the key with `GenerateDataKey`, so the operator running the tool nee
 KMS encryption context `application=encrypted-information-retrieval`,
 `environment=<--environment>` and `purpose=app-master-key`, and the API unwraps it with the same
 context, so set `--environment` to the `ENCRYPTED_IR_ENV` it will run under. A key generated before
-this context existed must be regenerated. To make the context mandatory, add a condition to the
-API role's `kms:Decrypt` permission:
+this context existed must be regenerated. The IAM policies for the API role (`kms:Decrypt` only,
+with that context required) and the operator role are in [`docs/iam/`](docs/iam/), with the
+production steps and the CloudTrail setup in [KMS_DEPLOYMENT.md](docs/KMS_DEPLOYMENT.md).
 
-```json
-"Condition": {
-  "StringEquals": {
-    "kms:EncryptionContext:application": "encrypted-information-retrieval",
-    "kms:EncryptionContext:environment": "prod",
-    "kms:EncryptionContext:purpose": "app-master-key"
-  }
-}
+Run the KMS path without an AWS account, with moto server standing in for AWS KMS:
+
+```bash
+cp .env.example .env
+./scripts/kms_smoke.sh
 ```
 
 Rotate a tenant's document and search keys while the API keeps serving. Use the same
@@ -228,20 +231,22 @@ It verifies the whole chain, prints the head (`head_seq`, `head_hash`) to stderr
 chain is broken. Keep the head somewhere the database's writers cannot change, and pass it back as
 `--check-head SEQ:HASH` on later exports to detect rows dropped from the end.
 
-Run the retrieval benchmark locally:
+Run the retrieval benchmark, with provenance (commit, date, hardware, Python, driver and database
+server) and p50/p95/p99, on in-memory SQLite or on the Compose PostgreSQL:
 
 ```bash
-python -m encrypted_ir.tools.benchmark_retrieval \
-  --database-url sqlite+pysqlite:///:memory: \
-  --documents 1000 \
-  --report benchmarks/reports/latest_retrieval.md
+make bench-retrieval            # benchmarks/reports/sqlite-memory/
+make bench-retrieval-postgres   # benchmarks/reports/postgresql/
 ```
+
+[benchmarks/README.md](benchmarks/README.md) explains what the numbers do and do not show.
 
 ## Documentation
 
 Read these first:
 
-- [docs/PORTFOLIO_EVIDENCE.md](docs/PORTFOLIO_EVIDENCE.md): dated evidence run, current status, limitations, and how to reproduce.
+- [docs/REVIEW_GUIDE.md](docs/REVIEW_GUIDE.md): every claim in this README next to the test, CI step or run that proves it, the leakage you are asked to accept, and what is not claimed.
+- [docs/PORTFOLIO_EVIDENCE.md](docs/PORTFOLIO_EVIDENCE.md): the CI evidence run of the release commit, benchmarks, current status, limitations, and how to reproduce.
 - [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md): what the code protects and leaks, with each known gap and its tracking issue.
 - [docs/PORTFOLIO_CASE_STUDY.md](docs/PORTFOLIO_CASE_STUDY.md): CTO-facing case study.
 - [docs/CTO_DEMO_SCRIPT.md](docs/CTO_DEMO_SCRIPT.md): five-minute review script.
@@ -266,7 +271,7 @@ Use the project to discuss architecture and controls, not to claim compliance or
 
 The roadmap lives in [docs/ROADMAP.md](docs/ROADMAP.md) and is tracked as GitHub issues grouped into three phases:
 
-1. **v0.9.0 Honest prototype**: make every claim in code, docs, and CI verifiable. No behavioural change.
+1. **v0.9.0 Honest prototype**: make every claim in code, docs, and CI verifiable. No behavioural change. Never tagged; it ships in v0.10.0.
 2. **v0.10.0 Durable path hardened**: fix the real bugs in the document/RAG path, remove demo-only routes, quarantine research modules.
 3. **v1.0.0 Reviewed portfolio release**: cloud-free OIDC and KMS end-to-end evidence, benchmarks with provenance, a reviewer guide, and a tagged release.
 

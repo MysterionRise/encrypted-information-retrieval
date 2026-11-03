@@ -23,7 +23,7 @@ from .rotation import RotationReport, rotate_tenant_keys
 from .searchable import BooleanQuery, SearchableEncryption
 from .storage_backend import DatabaseStorageBackend, FileStorageBackend, StorageBackend
 
-__version__ = "0.9.0"
+__version__ = "1.0.0"
 __all__ = [
     # Durable document path
     "DocumentService",

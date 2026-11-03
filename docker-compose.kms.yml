@@ -1,0 +1,55 @@
+# AWS KMS path, locally: moto server stands in for AWS KMS (issue #49).
+#
+# Layer it on the base file. scripts/kms_smoke.sh runs the whole flow:
+#
+#     cp .env.example .env
+#     COMPOSE_FILE=docker-compose.yml:docker-compose.kms.yml ./scripts/kms_smoke.sh
+#
+# moto keeps its keys in memory only: restarting or removing the moto container makes every
+# master key wrapped under it undecryptable, so bootstrap again after `down`. moto does not
+# enforce IAM, so docs/iam/kms-policy.json is not exercised here (see docs/KMS_DEPLOYMENT.md).
+# LocalStack is not used: since release 2026.03.0 its image needs an account auth token.
+
+x-aws-kms-env: &aws-kms-env
+  AWS_ENDPOINT_URL_KMS: http://moto:5000
+  AWS_REGION: us-east-1
+  # moto accepts any credentials; these are placeholders, not secrets.
+  AWS_ACCESS_KEY_ID: moto-demo-access-key
+  AWS_SECRET_ACCESS_KEY: moto-demo-secret-key
+  AWS_EC2_METADATA_DISABLED: "true"
+
+services:
+  moto:
+    image: motoserver/moto:5.2.5@sha256:59a1965d845249b04def37a0e2565f9cc6c44543cb89b68e90f28f344b3b0d1a
+    # Not published to the host: only kms-init and api reach it.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:5000/moto-api/"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # One-shot helper: creates the KMS key and alias, then prints a wrapped master key with
+  # encrypted_ir.tools.generate_kms_master_key. Never started by `up`; scripts/kms_smoke.sh runs
+  # it with scripts/kms_bootstrap.py on stdin.
+  kms-init:
+    image: encrypted-ir:local
+    profiles: ["tools"]
+    entrypoint: ["python", "-"]
+    environment:
+      <<: *aws-kms-env
+    depends_on:
+      moto:
+        condition: service_healthy
+
+  api:
+    depends_on:
+      moto:
+        condition: service_healthy
+    environment:
+      <<: *aws-kms-env
+      ENCRYPTED_IR_KMS_PROVIDER: aws
+      ENCRYPTED_IR_AWS_KMS_KEY_ID: alias/encrypted-ir-master
+      # Printed by kms-init. Not `:?`: Compose interpolates every service before `run`, so a
+      # required value would stop the bootstrap that produces it. The API refuses to start
+      # without it.
+      ENCRYPTED_IR_ENCRYPTED_MASTER_KEY_B64: ${ENCRYPTED_IR_ENCRYPTED_MASTER_KEY_B64:-}

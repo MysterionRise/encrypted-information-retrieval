@@ -11,7 +11,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from encrypted_ir.api.main import create_app
 from encrypted_ir.api.routes import admin
 from encrypted_ir.database import create_database_engine
 from encrypted_ir.logging import StructuredFormatter, current_correlation_id
@@ -83,6 +82,7 @@ class TestUnhandledErrors:
         app.add_api_route("/boom", boom, methods=["GET"])
         return TestClient(app, raise_server_exceptions=False)
 
+    @pytest.mark.allow_500
     def test_500_keeps_request_id_and_is_counted(self, app, boom_client, log_lines):
         resp = boom_client.get("/boom", headers={"X-Request-ID": "trace-500"})
 
@@ -157,8 +157,8 @@ class TestMetricsToken:
     TOKEN = "metrics-scrape-token-0123"
 
     @pytest.fixture()
-    def protected(self, settings_factory):
-        app = create_app(settings_factory(metrics_token=self.TOKEN))
+    def protected(self, app_factory):
+        app = app_factory(metrics_token=self.TOKEN)
         return app, TestClient(app)
 
     def test_token_required(self, protected):
@@ -191,10 +191,10 @@ class TestLoggingSettings:
         with pytest.raises(ValueError, match="ENCRYPTED_IR_LOG_LEVEL"):
             settings_factory(log_level="LOUD").validate()
 
-    def test_log_level_applied(self, settings_factory):
-        create_app(settings_factory(log_level="WARNING"))
+    def test_log_level_applied(self, app_factory):
+        app_factory(log_level="WARNING")
         assert logging.getLogger("encrypted_ir").level == logging.WARNING
-        create_app(settings_factory())
+        app_factory()
         assert logging.getLogger("encrypted_ir").level == logging.INFO
 
     def test_from_env(self, monkeypatch):

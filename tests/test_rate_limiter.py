@@ -15,7 +15,6 @@ from encrypted_ir.api.dependencies.rate_limiter import (
     RateLimiter,
     retry_after_header,
 )
-from encrypted_ir.api.main import create_app
 from encrypted_ir.database import audit_log_table
 from encrypted_ir.settings import DEFAULT_RATE_LIMITS, EncryptedIRSettings
 from tests.conftest import metric
@@ -201,8 +200,8 @@ class TestSettings:
 
 class TestClientLimit:
     @pytest.fixture()
-    def limited(self, settings_factory):
-        app = create_app(settings_factory(rate_limits={"client": (2, 60)}))
+    def limited(self, app_factory):
+        app = app_factory(rate_limits={"client": (2, 60)})
         return app, TestClient(app, client=("198.51.100.7", 40000))
 
     def test_ready_and_metrics_are_limited_but_health_is_not(self, limited):
@@ -250,8 +249,8 @@ class TestClientLimit:
         assert entry["resource"] == "/ready"
         assert entry["details"]["reason"] == "client_rate_limited"
 
-    def test_clients_are_independent(self, settings_factory):
-        app = create_app(settings_factory(rate_limits={"client": (1, 60)}))
+    def test_clients_are_independent(self, app_factory):
+        app = app_factory(rate_limits={"client": (1, 60)})
         first = TestClient(app, client=("198.51.100.7", 1))
         second = TestClient(app, client=("198.51.100.8", 1))
         assert first.get("/ready").status_code == 200
@@ -261,10 +260,8 @@ class TestClientLimit:
 
 class TestTrustedProxies:
     @pytest.fixture()
-    def app(self, settings_factory):
-        return create_app(
-            settings_factory(rate_limits={"client": (1, 60)}, trusted_proxies=("10.0.0.1",))
-        )
+    def app(self, app_factory):
+        return app_factory(rate_limits={"client": (1, 60)}, trusted_proxies=("10.0.0.1",))
 
     def test_forwarded_address_is_used_from_a_trusted_proxy(self, app):
         proxy = TestClient(app, client=("10.0.0.1", 5000))
@@ -285,8 +282,8 @@ class TestTrustedProxies:
             untrusted.get("/ready", headers={"X-Forwarded-For": "203.0.113.9"}).status_code == 429
         )
 
-    def test_no_proxy_middleware_without_trusted_proxies(self, settings_factory):
-        app = create_app(settings_factory(rate_limits={"client": (1, 60)}))
+    def test_no_proxy_middleware_without_trusted_proxies(self, app_factory):
+        app = app_factory(rate_limits={"client": (1, 60)})
         client = TestClient(app, client=("10.0.0.1", 5000))
         assert client.get("/ready", headers={"X-Forwarded-For": "203.0.113.5"}).status_code == 200
         assert client.get("/ready", headers={"X-Forwarded-For": "203.0.113.6"}).status_code == 429

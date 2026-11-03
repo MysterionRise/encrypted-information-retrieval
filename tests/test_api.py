@@ -28,7 +28,6 @@ from encrypted_ir.api.dependencies.rate_limiter import (
     RateLimitConfig,
     RateLimiter,
 )
-from encrypted_ir.api.main import create_app
 from encrypted_ir.database import audit_log_table, documents_table
 from tests.conftest import metric
 
@@ -395,6 +394,7 @@ class TestDocumentDelete:
 
 
 class TestIntegrityFailures:
+    @pytest.mark.allow_500
     def test_tampered_ciphertext_returns_generic_500_and_audits(self, client, auth_headers, app):
         _ingest(client, auth_headers, "doc-1", "first secret")
         _ingest(client, auth_headers, "doc-2", "second secret")
@@ -573,8 +573,8 @@ class TestRequestTracing:
 
 
 @pytest.fixture()
-def docs_client(settings_factory):
-    return TestClient(create_app(settings_factory(enable_docs=True)), raise_server_exceptions=False)
+def docs_client(app_factory):
+    return TestClient(app_factory(enable_docs=True), raise_server_exceptions=False)
 
 
 class TestOpenAPI:

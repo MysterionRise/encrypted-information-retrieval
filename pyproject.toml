@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["encryption", "searchable-encryption", "privacy", "rag", "regulated-ai", "postgresql", "oidc", "kms"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Financial and Insurance Industry",
     "Programming Language :: Python :: 3",
@@ -49,6 +49,7 @@ dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "pytest-benchmark>=4.0.0",
+    "pytest-xdist>=3.5.0",
     "black>=23.7.0",
     "ruff>=0.0.285",
     "mypy>=1.5.0",
@@ -177,6 +178,7 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
     "benchmark: marks tests as benchmarks",
+    "allow_500: the test expects a 500 response (otherwise any 500 fails the test)",
 ]
 
 [tool.coverage.run]

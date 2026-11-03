@@ -1,10 +1,19 @@
 # CTO Demo Script: Regulated RAG Retrieval Infrastructure
 
 This 5-minute demo shows the project as security architecture for regulated AI
-retrieval, not a toy encryption library.
+retrieval, not a toy encryption library. Every claim it makes is mapped to its proof in
+[REVIEW_GUIDE.md](REVIEW_GUIDE.md).
+
+The whole HTTP surface is:
+- `POST /v1/documents` and `POST /v1/documents/search`;
+- `GET` and `DELETE /v1/documents/{doc_id}`;
+- `POST /v1/rag/retrieve`;
+- `/health`, `/ready` and `/metrics`;
+- the docs routes, which are only served when enabled.
 
 Default path: Docker Compose only. No AWS account, KMS key, Cognito/Auth0/Okta
-tenant, or external IdP is required for the portfolio demo.
+tenant, or external IdP is required for the portfolio demo. Section 6 runs the
+production key and auth paths locally too, against a KMS emulator and Keycloak.
 
 This script also serves as the persistence smoke test. It absorbs the former
 `DOCKER_COMPOSE_SMOKE_TEST.md`, and each step lists its expected result.
@@ -29,10 +38,10 @@ Failure details go to the API log, not the response. The interactive docs are at
 `http://localhost:8000/docs` because Compose sets `ENCRYPTED_IR_ENABLE_DOCS=true`.
 
 Point out:
-- PostgreSQL is the durable store.
-- Alembic migrations run before API startup.
-- Local demo auth is explicit and disabled in production mode.
-- Production mode is designed for OIDC + AWS KMS.
+- PostgreSQL is the durable store, and it is not published to the host.
+- Alembic migrations run before API startup, in their own one-shot container.
+- Local demo auth is explicit and refused in production mode.
+- Production mode requires OIDC and AWS KMS; section 6 runs it locally.
 
 ## 2. Ingest an Encrypted Document
 
@@ -76,7 +85,31 @@ Run the RAG retrieval request again. The document should still be returned
 because Postgres stores ciphertext, keyword tokens, and encrypted key metadata,
 and Compose provides a stable `ENCRYPTED_IR_MASTER_KEY_B64`.
 
-## 5. Show Audit and Leakage Discipline
+## 5. Show Audit, Metrics and Leakage Discipline
+
+Export and verify the tenant's audit chain from inside the API container (it uses the API's own
+settings):
+
+```bash
+docker compose exec -T api python -m encrypted_ir.tools.export_audit --tenant local-demo
+```
+
+Expected: one JSON line per audited operation (`document.encrypt`, `rag.retrieve`, ...), and a
+summary on stderr with `"verified": true` and the head `seq` and hash. The exit code is 0.
+Editing any row in PostgreSQL makes the same command exit 2.
+
+Show the metrics, then delete the document:
+
+```bash
+curl -s http://localhost:8000/metrics | grep 'route="/v1'
+curl -i -X DELETE http://localhost:8000/v1/documents/risk-001 -H 'X-API-Key: local-demo-key'
+curl -i http://localhost:8000/v1/documents/risk-001 -H 'X-API-Key: local-demo-key'
+```
+
+Expected:
+- `/metrics` lines are keyed by route templates such as `/v1/documents/{doc_id}`, never by a
+  document ID.
+- The delete returns `204 No Content`, and the get that follows returns `404`.
 
 Open:
 - `docs/LEAKAGE_AND_ENDPOINTS.md`
@@ -86,7 +119,11 @@ Explain:
 - The project explicitly documents token equality, query repetition, result
   size, and access-pattern leakage.
 - Audit records include tenant, actor, operation, request ID, and result counts,
-  but never plaintext, tokens, or key material.
+  but never plaintext, tokens, or key material. They form a per-tenant HMAC chain, so an
+  edited, dropped or reordered row is detected on export.
+- Tenant keys rotate with `python -m encrypted_ir.tools.rotate_tenant_keys --tenant local-demo`,
+  which re-encrypts every document while the API keeps serving
+  ([README](../README.md)).
 
 ## 6. Production Hardening Story
 
@@ -99,15 +136,27 @@ Summarize the production path:
 - Tokens must carry `exp`, `iat`, `aud`, `iss`, a valid tenant claim and roles. Every 401 has
   the same body; the reason goes to a rate-bounded audit row.
 
-Optional live-validation path if cloud credentials are available:
-- Generate an AWS KMS-wrapped app master key with
-  `python -m encrypted_ir.tools.generate_kms_master_key --environment prod`. It is wrapped with
-  the encryption context `application`, `environment` and `purpose`; the README shows the IAM
-  condition that makes that context mandatory for `kms:Decrypt`.
-- Configure a real OIDC issuer, audience, JWKS URL, tenant claim, and roles
-  claim.
-- Start the API with `ENCRYPTED_IR_ENV=prod` and verify `/ready` only reports
-  ready after DB migrations, OIDC settings, and KMS settings are valid.
+KMS path, locally, with no AWS account: `./scripts/kms_smoke.sh`. moto server stands in for AWS
+KMS. The script wraps a master key with `generate_kms_master_key`, starts the API with
+`ENCRYPTED_IR_KMS_PROVIDER=aws`, restarts it, and shows that a key wrapped for `dev` does not
+unwrap under `ENCRYPTED_IR_ENV=test`. [KMS_DEPLOYMENT.md](KMS_DEPLOYMENT.md) has the IAM
+policies and the CloudTrail setup for a real account.
+
+### OIDC path, locally
+
+Production mode, with no cloud account: `./scripts/oidc_smoke.sh`. Keycloak is the identity
+provider and moto stands in for KMS, because `ENCRYPTED_IR_ENV=prod` refuses to start without
+both. Show:
+- The API's environment has no raw master key and no dev auth, and `/ready` reports every
+  check `true`. In prod, `key_provider` is `true` only for a key unwrapped by KMS.
+- Keycloak issues RS256 tokens whose `tenant_id` and `roles` claims the API reads.
+- alice (tenant-a, read and write) ingests and retrieves.
+- bob (tenant-b) gets 404 for alice's document and does not see it in retrieval.
+- carol (tenant-a, read only) can retrieve but gets 403 on ingest.
+- A token with a broken signature, and the dev API key, both get 401.
+- After a restart (KMS unwraps the key again), the document is still there.
+
+[OIDC_DEPLOYMENT.md](OIDC_DEPLOYMENT.md) maps the claims for Cognito, Auth0, Okta and Entra ID.
 
 ## Notes
 

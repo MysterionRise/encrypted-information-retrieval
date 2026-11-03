@@ -12,7 +12,6 @@ from base64 import b64encode
 from collections.abc import Iterator
 
 import pytest
-from alembic import command
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.engine import Engine
 
@@ -28,7 +27,6 @@ from encrypted_ir.database import (
 )
 from encrypted_ir.document_service import DocumentService
 from encrypted_ir.logging import bind_correlation_id, reset_correlation_id
-from encrypted_ir.migrations import alembic_config
 from encrypted_ir.tools import export_audit
 
 MASTER_KEY = bytes(range(32))
@@ -367,13 +365,8 @@ class TestConcurrency:
         assert result.head_seq == 200
 
     @pytest.mark.integration
-    def test_postgres(self):
-        database_url = os.environ.get("POSTGRES_TEST_DATABASE_URL")
-        if not database_url:
-            pytest.skip("POSTGRES_TEST_DATABASE_URL is not configured")
-        # Migrate rather than create_all, which cannot alter tables an older revision made.
-        command.upgrade(alembic_config(database_url), "head")
-        engine = create_database_engine(database_url)
+    def test_postgres(self, require_postgres):
+        engine = create_database_engine(require_postgres)
         tenant_id = f"tenant-{uuid.uuid4()}"
         try:
             _concurrent_appends(engine, tenant_id)
@@ -470,6 +463,7 @@ class TestApi:
         assert "fraud" not in json.dumps([row.entry_json for row in rows])
         assert app.state.document_service.verify_audit_chain(tenant).ok
 
+    @pytest.mark.allow_500
     def test_failed_read_audit_fails_the_request(self, app, client, auth_headers, monkeypatch):
         client.post(
             "/v1/documents",

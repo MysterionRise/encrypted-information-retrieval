@@ -34,13 +34,13 @@ pip install -r requirements-research.txt
 
 | Command | What it runs |
 | --- | --- |
-| `make test` | The full pytest suite. Postgres-only tests skip unless `POSTGRES_TEST_DATABASE_URL` is set. |
+| `make test` | The full pytest suite, in parallel (`pytest -n auto`). With `POSTGRES_TEST_DATABASE_URL` set it runs on PostgreSQL; otherwise on SQLite, and Postgres-only tests skip. |
 | `make test-coverage` | The suite with coverage. CI fails below the floor set in `.github/workflows/ci.yml`. |
 | `make format` | black, then `ruff check --fix`. |
 | `make lint` | ruff, bandit and mypy, with the same arguments as CI. |
 | `make security` | bandit and pip-audit, as in CI. |
 | `make pre-commit-check` | black check, ruff and a quick test run. |
-| `make bench` | pytest-benchmark timings for `tests/test_benchmarks.py` and `tests/research/test_benchmarks_research.py`. |
+| `make bench` | pytest-benchmark timings for `benchmarks/`, compared with `benchmarks/baseline.json` by `scripts/compare_benchmarks.py`. |
 | `docker compose up --build`, then `./scripts/compose_smoke.sh` | The Compose persistence smoke test that CI runs. |
 
 CI pins exact versions of black, ruff, mypy and bandit in the `env` block of
@@ -54,6 +54,21 @@ CI pins exact versions of black, ruff, mypy and bandit in the `env` block of
 - Security properties get adversarial tests: wrong key, other tenant, tampered ciphertext,
   expired or malformed credentials.
 - The coverage floor only goes up. Raise it in `ci.yml` when coverage improves.
+- Build apps with the `app_factory` fixture (or `app`), not `create_app` directly: it uses the
+  test's database and disposes the engine afterwards. `db_url` is a fresh SQLite file per test;
+  with `POSTGRES_TEST_DATABASE_URL` set, it is a PostgreSQL schema of the xdist worker's own
+  (`w_gw0`, ...), migrated once and truncated after every test. Use `require_postgres` for tests
+  that only make sense on PostgreSQL, never the environment variable directly.
+- A 500 response fails the test that receives it. Mark a test `@pytest.mark.allow_500` only when
+  the 500 is the behaviour under test.
+- `tests/test_route_matrix.py` lists every `/v1` route with its 401, 403 and cross-tenant cases,
+  and fails when a new route has none. Add the route there.
+- No wall-clock assertions: synchronize with events, inject clocks, and keep timeouts only as
+  deadlock guards.
+- Benchmarks live in `benchmarks/`, outside `testpaths`, so the suite never calibrates them. The
+  benchmarks job runs on master only and is informational; it fails on a median more than 3x the
+  committed baseline. Refresh the baseline with
+  `python scripts/compare_benchmarks.py <report.json> --update` when a slowdown is expected.
 
 ## Dependencies
 

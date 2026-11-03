@@ -4,10 +4,11 @@ Benchmarking Suite for the core constructions
 Measures encrypt/decrypt throughput, search latency and blind-index cost for the
 constructions in the core package, with plaintext baselines for comparison.
 Benchmarks for the research prototypes (ORE, CKKS and the use-case demos) are in
-tests/research/test_benchmarks_research.py.
+benchmarks/test_research.py. Both live outside ``testpaths``, so the unit suite never runs
+or calibrates them.
 
 Run with: make bench
-Or:       PYTHONPATH=src pytest tests/test_benchmarks.py --benchmark-only
+Or:       PYTHONPATH=src pytest benchmarks/ --benchmark-only
 """
 
 import hashlib

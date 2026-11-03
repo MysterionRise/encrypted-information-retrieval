@@ -7,18 +7,13 @@ import uuid
 
 import pytest
 
-from encrypted_ir.database import create_database_engine, create_database_schema
+from encrypted_ir.database import create_database_engine
 from encrypted_ir.document_service import DocumentService
 
 
 @pytest.mark.integration
-def test_document_service_roundtrip_against_postgres():
-    database_url = os.environ.get("POSTGRES_TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("POSTGRES_TEST_DATABASE_URL is not configured")
-
-    engine = create_database_engine(database_url)
-    create_database_schema(engine)
+def test_document_service_roundtrip_against_postgres(require_postgres):
+    engine = create_database_engine(require_postgres)
     service = DocumentService(engine, os.urandom(32))
 
     tenant_id = f"tenant-{uuid.uuid4()}"
@@ -40,14 +35,9 @@ def test_document_service_roundtrip_against_postgres():
 
 
 @pytest.mark.integration
-def test_and_search_across_rotated_search_keys_against_postgres():
+def test_and_search_across_rotated_search_keys_against_postgres(require_postgres):
     """The distinct-keyword AND query must compile and behave the same on PostgreSQL."""
-    database_url = os.environ.get("POSTGRES_TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("POSTGRES_TEST_DATABASE_URL is not configured")
-
-    engine = create_database_engine(database_url)
-    create_database_schema(engine)
+    engine = create_database_engine(require_postgres)
     service = DocumentService(engine, os.urandom(32))
     other_instance = DocumentService(engine, service._master_key)
     tenant_id = f"tenant-{uuid.uuid4()}"

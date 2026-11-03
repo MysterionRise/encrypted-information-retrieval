@@ -4,7 +4,7 @@ Benchmarks for the research prototypes: ORE, CKKS (TenSEAL) and the use-case dem
 CKKS benchmarks skip unless the research extra is installed.
 
 Run with: make bench
-Or:       PYTHONPATH=src pytest tests/research/test_benchmarks_research.py --benchmark-only
+Or:       PYTHONPATH=src pytest benchmarks/ --benchmark-only
 """
 
 import pytest
