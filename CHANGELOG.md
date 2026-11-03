@@ -114,6 +114,9 @@ which were not ready for 0.10.0.
   differ; re-derive them and re-encrypt. `KeyManager.derive_master_key` is unchanged here.
 - `hypothesis` is part of the locked CI environment (`requirements-ci.in`/`.txt`) and the `dev`
   extra.
+- The benchmark baseline (`benchmarks/baseline.json`) has new medians for the CKKS research
+  benchmarks `test_dot_product_10` and `test_weighted_sum_10`. Their aggregates now run on
+  ciphertexts (#38), which makes them about 2.5x and 4x slower than when they decrypted first.
 
 ### Added
 
