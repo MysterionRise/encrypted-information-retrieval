@@ -28,6 +28,17 @@ Raw ciphertext bytes do not sort in plaintext order, but that is not a
 protection because compare() needs no key. Treat this module as a research
 demo; see docs/LEAKAGE_AND_ENDPOINTS.md and issue #34.
 
+Fixed-point values (encrypt_float, encrypt_amount): the value is converted
+through its decimal string (``Decimal(str(x))`` for floats), scaled by
+10^precision and rounded half-to-even, so 0.29 encrypts as 29 and 1.15 as 115.
+NaN, infinities, negative values and values above the 32-bit plaintext space
+are rejected. Rounding is lossy: with precision=2, 1.005 and 1.00 both become
+100 and compare as equal.
+
+Cache: encrypt_int keeps an LRU cache of at most ``cache_size`` (default
+1024) plaintext -> ciphertext entries. The cache holds plaintexts in process
+memory; pass ``cache_size=0`` to disable it, and call clear_cache() to drop it.
+
 Lewi-Wu, for comparison (not implemented here): https://eprint.iacr.org/2016/612
 """
 
@@ -38,6 +49,8 @@ import hashlib
 import hmac
 import os
 import struct
+from collections import OrderedDict
+from decimal import ROUND_HALF_EVEN, Decimal
 
 
 class ORE:
@@ -66,27 +79,38 @@ class ORE:
     LEFT_SIZE = 8  # bytes per left component (truncated HMAC-SHA256)
     MODULUS = 1 << 16  # 65536 — large enough that block diffs [−255,255] are unambiguous
     VERSION_TAG = 0x01
+    DEFAULT_CACHE_SIZE = 1024
 
-    def __init__(self, key: bytes = None):
+    def __init__(self, key: bytes = None, cache_size: int = DEFAULT_CACHE_SIZE):
         """
         Initialize ORE with a 256-bit key.
 
         Args:
             key: 32-byte encryption key. If None, generates a new key.
+            cache_size: Maximum number of plaintext -> ciphertext entries kept in the
+                LRU cache (default 1024). 0 disables the cache.
 
         Raises:
-            ValueError: If key is not exactly 32 bytes.
+            ValueError: If key is not exactly 32 bytes or cache_size is negative.
         """
         if key is None:
             key = os.urandom(self.KEY_SIZE)
         elif len(key) != self.KEY_SIZE:
             raise ValueError(f"Key must be {self.KEY_SIZE} bytes ({self.KEY_SIZE * 8} bits)")
+        if isinstance(cache_size, bool) or not isinstance(cache_size, int) or cache_size < 0:
+            raise ValueError("cache_size must be a non-negative integer")
 
         self.key = key
         # The labels keep their historical "ore-lewi-wu" names: they define the ciphertexts.
         self._k_left = hmac.new(key, b"ore-lewi-wu-left", hashlib.sha256).digest()
         self._k_right = hmac.new(key, b"ore-lewi-wu-right", hashlib.sha256).digest()
-        self._cache: dict[int, bytes] = {}
+        self._cache_size = cache_size
+        self._cache: OrderedDict[int, bytes] = OrderedDict()
+
+    @property
+    def cache_size(self) -> int:
+        """Maximum number of entries in the plaintext -> ciphertext LRU cache."""
+        return self._cache_size
 
     @staticmethod
     def generate_key() -> bytes:
@@ -133,8 +157,10 @@ class ORE:
         if plaintext < 0 or plaintext > self.PLAINTEXT_MAX:
             raise ValueError(f"Plaintext must be between 0 and {self.PLAINTEXT_MAX}")
 
-        if plaintext in self._cache:
-            return self._cache[plaintext]
+        cached = self._cache.get(plaintext)
+        if cached is not None:
+            self._cache.move_to_end(plaintext)
+            return cached
 
         blocks = self._get_blocks(plaintext)
         left_parts = []
@@ -161,38 +187,77 @@ class ORE:
         for rv in right_parts:
             result += struct.pack(">H", rv)
 
-        self._cache[plaintext] = result
+        if self._cache_size > 0:
+            self._cache[plaintext] = result
+            if len(self._cache) > self._cache_size:
+                self._cache.popitem(last=False)  # evict the least recently used entry
         return result
 
-    def encrypt_float(self, plaintext: float, precision: int = 2) -> bytes:
+    @classmethod
+    def to_fixed_point(cls, value: float | int | Decimal, precision: int = 2) -> int:
         """
-        Encrypt a float value with fixed-point precision.
+        Convert a non-negative number to the integer that encrypt_float encrypts.
+
+        Floats go through their shortest decimal representation (``str(value)``), so
+        0.29 becomes 29 at precision 2 instead of 28. The scaled value is rounded
+        half-to-even.
 
         Args:
-            plaintext: Non-negative float value.
+            value: Non-negative float, int or Decimal.
+            precision: Number of decimal places to keep (0 or more).
+
+        Returns:
+            round_half_even(value * 10**precision) as an int.
+
+        Raises:
+            ValueError: If precision is negative, the value is not a finite number, the
+                value is negative, or the scaled value exceeds 2^32 - 1.
+        """
+        if isinstance(precision, bool) or not isinstance(precision, int) or precision < 0:
+            raise ValueError("precision must be a non-negative integer")
+        if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+            raise ValueError(f"Value must be an int, float or Decimal, got {type(value).__name__}")
+
+        # str() of an int or float always parses ("nan" and "inf" included).
+        decimal_value = value if isinstance(value, Decimal) else Decimal(str(value))
+        if not decimal_value.is_finite():
+            raise ValueError(f"Value must be finite, got {value!r}")
+        if decimal_value < 0:
+            raise ValueError("Negative values not supported")
+
+        scaled = (decimal_value.scaleb(precision)).to_integral_value(rounding=ROUND_HALF_EVEN)
+        int_value = int(scaled)
+        if int_value > cls.PLAINTEXT_MAX:
+            max_value = Decimal(cls.PLAINTEXT_MAX).scaleb(-precision)
+            raise ValueError(f"Value too large: {value} (max: {max_value})")
+        return int_value
+
+    def encrypt_float(self, plaintext: float | int | Decimal, precision: int = 2) -> bytes:
+        """
+        Encrypt a non-negative number with fixed-point precision.
+
+        The value is scaled exactly (no binary floating-point truncation) and rounded
+        half-to-even; see :meth:`to_fixed_point`.
+
+        Args:
+            plaintext: Non-negative float, int or Decimal.
             precision: Number of decimal places to preserve (default: 2).
 
         Returns:
             ORE ciphertext as bytes.
 
         Raises:
-            ValueError: If value is negative or too large for the plaintext space.
+            ValueError: If the value is NaN, infinite, negative, or too large for the
+                plaintext space, or precision is negative.
         """
-        multiplier = 10**precision
-        int_value = int(plaintext * multiplier)
+        return self.encrypt_int(self.to_fixed_point(plaintext, precision))
 
-        if int_value < 0:
-            raise ValueError("Negative values not supported")
-        if int_value > self.PLAINTEXT_MAX:
-            raise ValueError(
-                f"Value too large: {plaintext} (max: {self.PLAINTEXT_MAX / multiplier})"
-            )
-
-        return self.encrypt_int(int_value)
-
-    def encrypt_amount(self, amount: float) -> bytes:
+    def encrypt_amount(self, amount: float | int | Decimal) -> bytes:
         """
-        Encrypt a monetary amount (2 decimal places).
+        Encrypt a monetary amount (2 decimal places, rounded half-to-even).
+
+        Pass a ``Decimal`` to avoid binary floating-point surprises; a float is
+        converted through ``str(amount)``.
 
         Args:
             amount: Non-negative monetary amount (e.g., 1234.56).
@@ -345,6 +410,6 @@ class ORE:
         key = base64.b64decode(key_b64)
         return ORE(key)
 
-    def clear_cache(self):
-        """Clear the encryption cache."""
+    def clear_cache(self) -> None:
+        """Drop every cached plaintext -> ciphertext entry."""
         self._cache.clear()

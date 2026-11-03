@@ -5,14 +5,18 @@ Import the submodules directly, for example ``from encrypted_ir.research.ore imp
 
 - ``ore``: CLWW-style order-revealing encryption. Comparison needs no key, so ciphertexts
   reveal their total order.
-- ``fpe``: NIST SP 800-38G FF1 format-preserving encryption.
+- ``fpe``: NIST SP 800-38G FF1 format-preserving encryption, checked against the nine NIST
+  sample vectors.
 - ``homomorphic``: CKKS via TenSEAL (needs the ``research`` extra).
-- ``post_quantum``: ML-KEM, ML-DSA and a hybrid KEM via pqcrypto (needs the ``research`` extra).
-- ``differential_privacy``: Laplace, Gaussian and exponential mechanisms with a budget tracker.
+- ``post_quantum``: ML-KEM, ML-DSA and a hybrid KEM with a custom (non-X-Wing) combiner via
+  pqcrypto (needs the ``research`` extra).
+- ``differential_privacy``: Laplace, Gaussian and exponential mechanisms with an ε/δ budget
+  tracker.
 - ``forward_private_sse``: a hash-chain forward-private SSE and a deletable keyword index.
 - ``use_cases``: financial-services demos built from the primitives above.
 
-Known defects are tracked in issue #38. docs/THREAT_MODEL.md lists the leakage of each one.
+Each module's docstring lists its known limitations; docs/THREAT_MODEL.md lists the leakage
+of each one.
 """
 
 from __future__ import annotations

@@ -1,5 +1,8 @@
 """Tests for the forward-private SSE and deletable-index research prototypes."""
 
+import base64
+import json
+
 import pytest
 
 from encrypted_ir.research.forward_private_sse import BackwardPrivateIndex, ForwardPrivateSSE
@@ -151,6 +154,26 @@ class TestForwardPrivateSSE:
         sse.add_document("doc2", "y", keywords={"alpha"}, auto_extract_keywords=False)
         assert sse.search("alpha") == {"doc1", "doc2"}
 
+    @pytest.mark.parametrize("mode", ForwardPrivateSSE.MODES)
+    def test_duplicate_doc_id_rejected(self, mode):
+        """Regression (#38): add_document silently overwrote an existing doc_id."""
+        sse = ForwardPrivateSSE(forward_privacy_mode=mode)
+        sse.add_document("doc1", "original", keywords={"alpha"}, auto_extract_keywords=False)
+        stats_before = sse.get_index_stats()
+
+        with pytest.raises(ValueError, match="already exists"):
+            sse.add_document("doc1", "replacement", keywords={"beta"}, auto_extract_keywords=False)
+
+        assert sse.decrypt_document("doc1") == b"original"
+        assert sse.get_index_stats() == stats_before
+        assert sse.search("beta") == set()
+
+    def test_keywords_differing_only_in_case_are_one_update(self):
+        sse = ForwardPrivateSSE(forward_privacy_mode="balanced")
+        sse.add_document("doc1", "x", keywords={"Fraud", "fraud"}, auto_extract_keywords=False)
+        assert sse.get_index_stats()["auxiliary_entries"] == 1
+        assert sse.search("FRAUD") == {"doc1"}
+
 
 class TestForwardPrivateSSEReEncryption:
     """Test periodic re-encryption of the forward-private index."""
@@ -189,16 +212,76 @@ class TestForwardPrivateSSEReEncryption:
         sse.add_document("doc2", "y", keywords={"alpha"}, auto_extract_keywords=False)
         assert sse.search("alpha") == {"doc1", "doc2"}
 
-    def test_strong_mode_auto_re_encrypt(self):
-        """Test that strong mode triggers automatic re-encryption."""
+    def test_strong_mode_auto_re_encrypt_stays_forward_private(self):
+        """Regression (#38): strong mode's automatic re_encrypt moved entries to the
+        deterministic index. It now re-randomises the chains and keeps every entry in the
+        auxiliary index."""
         sse = ForwardPrivateSSE(forward_privacy_mode="strong", re_encrypt_threshold=3)
-        # Add enough keywords to trigger threshold
-        sse.add_document("doc1", "x", keywords={"a", "b", "c"}, auto_extract_keywords=False)
+        sse.add_document("doc0", "x", keywords={"a"}, auto_extract_keywords=False)
+        tags_before = set(sse._auxiliary_index)
+        # Add enough keywords to trigger the threshold
+        sse.add_document("doc1", "x", keywords={"a", "b"}, auto_extract_keywords=False)
 
-        # Auto re-encryption should have fired
         stats = sse.get_index_stats()
-        assert stats["auxiliary_entries"] == 0
-        assert stats["update_count"] == 0
+        assert stats["update_count"] == 0  # automatic re-randomisation fired
+        assert stats["auxiliary_entries"] == 3
+        assert stats["secure_entries"] == 0
+        assert sse._secure_index == {}
+        assert tags_before.isdisjoint(sse._auxiliary_index)
+        assert sse.search("a") == {"doc0", "doc1"}
+        assert sse.search("b") == {"doc1"}
+
+    def test_strong_mode_never_uses_deterministic_index(self):
+        """Strong mode must not leak more than balanced: no add, search or re_encrypt
+        writes a deterministic HMAC(search_key, keyword) token."""
+        sse = ForwardPrivateSSE(forward_privacy_mode="strong", re_encrypt_threshold=1000)
+        sse.add_document("doc1", "x", keywords={"alpha", "beta"}, auto_extract_keywords=False)
+        sse.add_document("doc2", "y", keywords={"beta", "gamma"}, auto_extract_keywords=False)
+        deterministic = {sse._sse._generate_search_token(k) for k in ("alpha", "beta", "gamma")}
+
+        assert sse.search("beta") == {"doc1", "doc2"}
+        assert sse.re_encrypt() == 4
+        assert sse.search("beta") == {"doc1", "doc2"}
+        sse.add_document("doc3", "z", keywords={"beta"}, auto_extract_keywords=False)
+        assert sse.search("beta") == {"doc1", "doc2", "doc3"}
+        assert sse.search("alpha") == {"doc1"}
+
+        assert sse._secure_index == {}
+        assert deterministic.isdisjoint(sse._auxiliary_index)
+        assert sse.get_index_stats()["auxiliary_entries"] == 5
+
+    def test_strong_search_rekeys_matches_under_fresh_tags(self):
+        """After a strong-mode search the matches sit under tags the server has not seen."""
+        sse = ForwardPrivateSSE(forward_privacy_mode="strong")
+        sse.add_document("doc1", "x", keywords={"fraud"}, auto_extract_keywords=False)
+        tags_before = set(sse._auxiliary_index)
+
+        assert sse.search("fraud") == {"doc1"}
+
+        assert len(sse._auxiliary_index) == 1
+        assert tags_before.isdisjoint(sse._auxiliary_index)
+
+    def test_balanced_re_encrypt_moves_entries_to_secure_index(self):
+        """Balanced mode keeps the documented behaviour: re_encrypt fills the secure index."""
+        sse = ForwardPrivateSSE(forward_privacy_mode="balanced")
+        sse.add_document("doc1", "x", keywords={"alpha"}, auto_extract_keywords=False)
+        sse.re_encrypt()
+        token = sse._sse._generate_search_token("alpha")
+        assert sse._secure_index == {token: {"doc1"}}
+
+    def test_balanced_mode_never_auto_re_encrypts(self):
+        sse = ForwardPrivateSSE(forward_privacy_mode="balanced", re_encrypt_threshold=1)
+        sse.add_document("doc1", "x", keywords={"a", "b"}, auto_extract_keywords=False)
+        stats = sse.get_index_stats()
+        assert stats["update_count"] == 2
+        assert stats["secure_entries"] == 0
+        assert stats["auxiliary_entries"] == 2
+
+    def test_re_encrypt_off_mode_is_a_no_op(self):
+        sse = ForwardPrivateSSE(forward_privacy_mode="off")
+        sse.add_document("doc1", "x", keywords={"alpha"}, auto_extract_keywords=False)
+        assert sse.re_encrypt() == 0
+        assert sse.search("alpha") == {"doc1"}
 
     def test_re_encrypt_resets_counter(self):
         """Test that re_encrypt resets the update counter."""
@@ -208,6 +291,108 @@ class TestForwardPrivateSSEReEncryption:
 
         sse.re_encrypt()
         assert sse._update_count == 0
+
+
+class TestForwardPrivateSSEStatePersistence:
+    """Regression (#38): chain state could not be saved, so a restart reused old tags."""
+
+    KEYS = (bytes(range(32)), bytes(range(32, 64)), bytes(range(64, 96)))
+
+    def _instance(self, mode="balanced"):
+        enc_key, search_key, state_key = self.KEYS
+        return ForwardPrivateSSE(enc_key, search_key, state_key, forward_privacy_mode=mode)
+
+    @pytest.mark.parametrize("mode", ForwardPrivateSSE.MODES)
+    def test_restored_instance_continues_without_collisions(self, mode):
+        original = self._instance(mode)
+        original.add_document("doc1", "x", keywords={"fraud", "audit"}, auto_extract_keywords=False)
+        original.add_document("doc2", "y", keywords={"fraud"}, auto_extract_keywords=False)
+        assert original.search("audit") == {"doc1"}  # re-keys "audit" in the forward modes
+        original.add_document("doc3", "z", keywords={"audit"}, auto_extract_keywords=False)
+
+        exported = json.loads(json.dumps(original.export_state()))
+        restored = self._instance(mode)
+        restored.import_state(exported)
+        assert restored.get_index_stats() == original.get_index_stats()
+
+        tags_before = set(restored._auxiliary_index)
+        restored.add_document("doc4", "w", keywords={"fraud", "audit"}, auto_extract_keywords=False)
+        new_tags = set(restored._auxiliary_index) - tags_before
+        if mode != "off":
+            assert len(new_tags) == 2  # nothing was overwritten
+            assert restored.get_index_stats()["auxiliary_entries"] == len(tags_before) + 2
+
+        assert restored.search("fraud") == {"doc1", "doc2", "doc4"}
+        assert restored.search("audit") == {"doc1", "doc3", "doc4"}
+        assert restored.decrypt_document("doc2") == b"y"
+        assert restored.decrypt_document("doc4") == b"w"
+
+    def test_restart_without_restored_state_refuses_to_overwrite(self):
+        """A fresh instance with the same keys restarts the chains; adding must fail loudly
+        instead of overwriting the entry stored at the reused tag."""
+        original = self._instance()
+        original.add_document("doc1", "x", keywords={"fraud"}, auto_extract_keywords=False)
+
+        restarted = self._instance()
+        restarted._auxiliary_index = dict(original._auxiliary_index)  # server index survived
+        with pytest.raises(RuntimeError, match="out of sync"):
+            restarted.add_document("doc2", "y", keywords={"fraud"}, auto_extract_keywords=False)
+
+        assert restarted._auxiliary_index == original._auxiliary_index
+        assert restarted.get_index_stats()["documents_stored"] == 0
+
+    def test_exported_state_is_json_and_holds_no_keys(self):
+        sse = self._instance()
+        sse.add_document("doc1", "x", keywords={"alpha"}, auto_extract_keywords=False)
+        serialized = json.dumps(sse.export_state())
+        for key in self.KEYS:
+            assert base64.b64encode(key).decode("ascii") not in serialized
+
+    def test_import_rejects_different_keys(self):
+        sse = self._instance()
+        sse.add_document("doc1", "x", keywords={"alpha"}, auto_extract_keywords=False)
+        other = ForwardPrivateSSE(forward_privacy_mode="balanced")
+        with pytest.raises(ValueError, match="different keys"):
+            other.import_state(sse.export_state())
+
+    def test_import_rejects_different_mode(self):
+        state = self._instance("strong").export_state()
+        with pytest.raises(ValueError, match="mode"):
+            self._instance("balanced").import_state(state)
+
+    def test_import_rejects_non_empty_instance(self):
+        state = self._instance().export_state()
+        target = self._instance()
+        target.add_document("doc1", "x", keywords={"alpha"}, auto_extract_keywords=False)
+        with pytest.raises(ValueError, match="empty instance"):
+            target.import_state(state)
+
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            lambda s: s.update(version=99),
+            lambda s: s.pop("documents"),
+            lambda s: s.update(update_count="3"),
+            lambda s: s["keyword_state"]["alpha"].update(counter=-1),
+            lambda s: s["keyword_state"]["alpha"].update(initial="not base64!"),
+            lambda s: s["keyword_state"]["alpha"].update(initial=12345),
+            lambda s: s["keyword_state"]["alpha"].update(
+                current=base64.b64encode(b"short").decode()
+            ),
+            lambda s: s.update(auxiliary_index=[]),
+        ],
+    )
+    def test_import_rejects_malformed_state(self, mutate):
+        source = self._instance()
+        source.add_document("doc1", "x", keywords={"alpha"}, auto_extract_keywords=False)
+        state = source.export_state()
+        mutate(state)
+        with pytest.raises(ValueError):
+            self._instance().import_state(state)
+
+    def test_import_rejects_non_mapping(self):
+        with pytest.raises(ValueError, match="Malformed"):
+            self._instance().import_state(None)
 
 
 class TestForwardPrivacy:
@@ -678,25 +863,22 @@ class TestBackwardPrivateIndex:
         matches_after = [doc_id for doc_id, tokens in server_view.items() if old_query in tokens]
         assert matches_after == []
 
-    def test_garbage_collection_removes_orphans(self):
-        """Test garbage collection removes orphaned index entries."""
-        bp = BackwardPrivateIndex()
-        bp.add_document("doc1", {"kw1"})
+    def test_documents_stay_decryptable_after_re_encryption(self):
+        """Regression (#38): re_encrypt replaced the encryption key, so documents encrypted
+        earlier with ``sse`` could no longer be decrypted."""
+        ciphertext, _ = self.bp_index.sse.encrypt_document("quarterly financial report")
+        old_search_key = self.bp_index.sse.search_key
 
-        # Simulate an orphaned entry (index entry without keyword metadata)
-        bp._index["orphan"] = {"fake_token"}
+        self.bp_index.re_encrypt()
+        self.bp_index.re_encrypt()
 
-        assert bp.document_count == 2  # doc1 + orphan in index
+        assert self.bp_index.sse.decrypt_document(ciphertext) == b"quarterly financial report"
+        assert self.bp_index.sse.search_key != old_search_key
 
-        removed = bp.garbage_collect()
-        assert removed == 1
-        assert bp.document_count == 1
-        assert "orphan" not in bp.get_server_view()
-
-    def test_garbage_collection_no_orphans(self):
-        """Test garbage collection is a no-op when no orphans exist."""
-        removed = self.bp_index.garbage_collect()
-        assert removed == 0
+    def test_garbage_collect_removed(self):
+        """garbage_collect() could never find anything (index and keyword map change
+        together), so it was removed rather than kept as a no-op."""
+        assert not hasattr(BackwardPrivateIndex, "garbage_collect")
 
     def test_server_cannot_link_deletion_to_past_query(self):
         """Prove that a server observing queries and deletions cannot link them.

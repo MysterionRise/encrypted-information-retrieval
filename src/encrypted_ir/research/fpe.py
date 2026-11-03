@@ -1,27 +1,48 @@
 """
-Format-Preserving Encryption (FPE) Module
+Format-Preserving Encryption (FPE) Module (research prototype, not audited)
 
 Implements FF1 from NIST SP 800-38G Rev 1 for format-preserving encryption.
-Ciphertext has the same format and length as the plaintext — a 16-digit number
+Ciphertext has the same length and alphabet as the plaintext — a 16-digit number
 encrypts to a 16-digit number, a 9-digit SSN encrypts to a 9-digit string, etc.
+The FF1 class reproduces the nine NIST FF1 sample vectors (AES-128/192/256,
+radix 10 and 36); they are in tests/research/test_fpe.py.
 
 Use Case: Credit card PANs, SSNs, account numbers, phone numbers, and other
-fixed-format identifiers where ciphertext must be a drop-in replacement for
-plaintext in existing database schemas.
+fixed-format identifiers stored in columns with a fixed length and character set.
+Only length and alphabet are preserved: structure inside the value (a PAN's
+issuer prefix and Luhn check digit, an SSN's area number rules) is not, so the
+ciphertext is not a drop-in value for systems that validate that structure.
 
 Algorithm: FF1 (NIST SP 800-38G Rev 1)
 Reference: https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-38Gr1-draft.pdf
 
 Security Properties:
 - Format-preserving: ciphertext domain == plaintext domain
-- Tweakable: tweak parameter provides domain separation (e.g., per-column)
+- Tweakable: the tweak provides domain separation (e.g., per column)
 - AES-based: security reduces to AES block cipher security
-- Deterministic: same (key, tweak, plaintext) always produces same ciphertext
+- Deterministic: same (key, tweak, plaintext) always produces same ciphertext,
+  so equal values are visible as equal
+
+Tweaks:
+- FormatPreservingEncryption.encrypt() and decrypt() require an explicit tweak.
+- The helpers default to a fixed per-field tweak (TWEAK_CREDIT_CARD,
+  TWEAK_SSN, TWEAK_ACCOUNT_NUMBER), so the same digits encrypted as an SSN and
+  as an account number give unrelated ciphertexts. A tweak passed to a helper
+  replaces its default; include the field name in it (for example
+  b"ssn:" + customer_id) to keep the separation.
+- The low-level FF1 class accepts an empty tweak, as the standard does.
 
 Constraints (per NIST SP 800-38G):
 - Radix in [2, 2^16]
 - Input length n such that radix^n >= 1_000_000 (domain must be >= 10^6)
-- Tweak length in [0, maxTlen] where maxTlen is 2^32 - 1
+- Tweak length in [0, maxTlen]; this implementation sets maxTlen = 2^32 - 1,
+  the largest length the 4-byte tweak-length field of block P can encode.
+- The alphabet of FormatPreservingEncryption must not repeat a character.
+
+Small domains: the published attacks on FF1 and FF3 target small domains
+(Durak and Vaudenay 2017; Hoang, Tessaro and Trieu 2018), which is why NIST
+SP 800-38G Rev 1 requires radix^n >= 10^6. Inputs near that minimum have the
+least margin.
 """
 
 from __future__ import annotations
@@ -45,6 +66,7 @@ class FF1:
 
     NUM_ROUNDS = 10
     KEY_SIZES = {16, 24, 32}  # AES-128, AES-192, AES-256
+    MAX_TWEAK_LEN = 2**32 - 1  # maxTlen: the tweak length is encoded in 4 bytes of P
 
     def __init__(self, key: bytes, radix: int = 10):
         """
@@ -126,6 +148,13 @@ class FF1:
         digits.reverse()
         return digits
 
+    def _validate_tweak(self, tweak: bytes) -> None:
+        """Validate the tweak type and length (0 <= len <= maxTlen)."""
+        if not isinstance(tweak, (bytes, bytearray)):
+            raise ValueError(f"Tweak must be bytes, got {type(tweak).__name__}")
+        if len(tweak) > self.MAX_TWEAK_LEN:
+            raise ValueError(f"Tweak length {len(tweak)} exceeds maxTlen = {self.MAX_TWEAK_LEN}")
+
     def _validate_input(self, numerals: list[int]):
         """Validate input constraints per NIST SP 800-38G."""
         n = len(numerals)
@@ -194,12 +223,18 @@ class FF1:
         Args:
             numerals: List of integers in [0, radix). E.g., for radix=10 and
                       PAN "4111111111111111", pass [4,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1].
-            tweak: Tweak bytes for domain separation (can be empty).
+            tweak: Tweak bytes for domain separation (can be empty, at most
+                MAX_TWEAK_LEN bytes).
 
         Returns:
             Encrypted numerals (same length and radix as input).
+
+        Raises:
+            ValueError: If the numerals or the tweak violate the FF1 constraints.
         """
         self._validate_input(numerals)
+        self._validate_tweak(tweak)
+        tweak = bytes(tweak)
 
         n = len(numerals)
         t = len(tweak)
@@ -237,8 +272,13 @@ class FF1:
 
         Returns:
             Decrypted numerals (same length and radix as input).
+
+        Raises:
+            ValueError: If the numerals or the tweak violate the FF1 constraints.
         """
         self._validate_input(numerals)
+        self._validate_tweak(tweak)
+        tweak = bytes(tweak)
 
         n = len(numerals)
         t = len(tweak)
@@ -290,12 +330,20 @@ class FormatPreservingEncryption:
     High-level FPE interface for common financial data formats.
 
     Wraps FF1 with convenience methods for credit card numbers, SSNs,
-    account numbers, and other fixed-format identifiers.
+    account numbers, and other fixed-format identifiers. encrypt() and
+    decrypt() need an explicit tweak; the field helpers default to a fixed
+    per-field tweak (see the module docstring).
     """
 
     DIGITS = "0123456789"
     ALPHANUMERIC_LOWER = "0123456789abcdefghijklmnopqrstuvwxyz"
     ALPHANUMERIC = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+    # Default tweaks of the field helpers: one per field, so the same digits
+    # encrypted as different fields give unrelated ciphertexts.
+    TWEAK_CREDIT_CARD = b"encrypted-ir/fpe/credit-card"
+    TWEAK_SSN = b"encrypted-ir/fpe/ssn"
+    TWEAK_ACCOUNT_NUMBER = b"encrypted-ir/fpe/account-number"
 
     def __init__(self, key: bytes, alphabet: str = None):
         """
@@ -303,10 +351,20 @@ class FormatPreservingEncryption:
 
         Args:
             key: AES key (16, 24, or 32 bytes).
-            alphabet: Character alphabet string. Default is decimal digits.
+            alphabet: Character alphabet string, at least 2 distinct characters.
+                Default is decimal digits.
+
+        Raises:
+            ValueError: If the alphabet repeats a character (the character-to-numeral
+                mapping would not be a bijection), or the key or radix is invalid.
         """
         if alphabet is None:
             alphabet = self.DIGITS
+        if not isinstance(alphabet, str):
+            raise ValueError("Alphabet must be a string")
+        if len(set(alphabet)) != len(alphabet):
+            duplicates = sorted({c for c in alphabet if alphabet.count(c) > 1})
+            raise ValueError(f"Alphabet characters must be unique; repeated: {duplicates}")
         self.alphabet = alphabet
         self._char_to_int = {c: i for i, c in enumerate(alphabet)}
         self._ff1 = FF1(key, radix=len(alphabet))
@@ -327,13 +385,14 @@ class FormatPreservingEncryption:
         """Convert numeral list back to string."""
         return "".join(self.alphabet[n] for n in numerals)
 
-    def encrypt(self, plaintext: str, tweak: bytes = b"") -> str:
+    def encrypt(self, plaintext: str, tweak: bytes) -> str:
         """
-        Encrypt a string, preserving its format.
+        Encrypt a string, preserving its length and alphabet.
 
         Args:
             plaintext: String composed of characters from the alphabet.
-            tweak: Tweak bytes for domain separation.
+            tweak: Tweak bytes for domain separation, for example the column name.
+                Required; pass b"" only to interoperate with tweak-less data.
 
         Returns:
             Encrypted string (same length and alphabet).
@@ -342,7 +401,7 @@ class FormatPreservingEncryption:
         encrypted = self._ff1.encrypt(numerals, tweak)
         return self._from_numerals(encrypted)
 
-    def decrypt(self, ciphertext: str, tweak: bytes = b"") -> str:
+    def decrypt(self, ciphertext: str, tweak: bytes) -> str:
         """
         Decrypt a string.
 
@@ -357,88 +416,106 @@ class FormatPreservingEncryption:
         decrypted = self._ff1.decrypt(numerals, tweak)
         return self._from_numerals(decrypted)
 
-    def encrypt_credit_card(self, pan: str, tweak: bytes = b"") -> str:
+    def encrypt_credit_card(self, pan: str, tweak: bytes | None = None) -> str:
         """
-        Encrypt a credit card PAN, preserving digit format.
+        Encrypt a credit card PAN, preserving its length and separators.
 
-        Non-digit characters (spaces, dashes) are preserved in their positions.
-        Only the digit characters are encrypted.
+        Every digit is encrypted, including the issuer identification number
+        (BIN/IIN) and the last four digits. The result keeps the length and the
+        positions of spaces or dashes, but its leading digits are random and it
+        generally fails the Luhn check, so it is not a valid-looking PAN for
+        systems that check the BIN or Luhn digit.
 
         Args:
             pan: Credit card number (digits, optionally with separators).
-            tweak: Tweak bytes (e.g., cardholder ID).
+            tweak: Tweak bytes. Defaults to TWEAK_CREDIT_CARD; a value passed here
+                replaces the default.
 
         Returns:
             Encrypted PAN with same format.
         """
-        return self._encrypt_with_separators(pan, tweak)
+        return self._encrypt_with_separators(pan, self._tweak(tweak, self.TWEAK_CREDIT_CARD))
 
-    def decrypt_credit_card(self, encrypted_pan: str, tweak: bytes = b"") -> str:
+    def decrypt_credit_card(self, encrypted_pan: str, tweak: bytes | None = None) -> str:
         """
         Decrypt a credit card PAN.
 
         Args:
             encrypted_pan: Encrypted PAN.
-            tweak: Tweak bytes (must match encryption).
+            tweak: Tweak bytes (must match encryption; defaults to TWEAK_CREDIT_CARD).
 
         Returns:
             Decrypted PAN.
         """
-        return self._decrypt_with_separators(encrypted_pan, tweak)
+        return self._decrypt_with_separators(
+            encrypted_pan, self._tweak(tweak, self.TWEAK_CREDIT_CARD)
+        )
 
-    def encrypt_ssn(self, ssn: str, tweak: bytes = b"") -> str:
+    def encrypt_ssn(self, ssn: str, tweak: bytes | None = None) -> str:
         """
         Encrypt a Social Security Number, preserving format.
 
-        Handles both "123456789" and "123-45-6789" formats.
+        Handles both "123456789" and "123-45-6789" formats. The result is nine
+        digits but need not be a valid SSN (area 000, 666 or 9xx can occur).
 
         Args:
             ssn: SSN string.
-            tweak: Tweak bytes.
+            tweak: Tweak bytes. Defaults to TWEAK_SSN; a value passed here replaces
+                the default.
 
         Returns:
             Encrypted SSN with same format.
         """
-        return self._encrypt_with_separators(ssn, tweak)
+        return self._encrypt_with_separators(ssn, self._tweak(tweak, self.TWEAK_SSN))
 
-    def decrypt_ssn(self, encrypted_ssn: str, tweak: bytes = b"") -> str:
+    def decrypt_ssn(self, encrypted_ssn: str, tweak: bytes | None = None) -> str:
         """
         Decrypt a Social Security Number.
 
         Args:
             encrypted_ssn: Encrypted SSN.
-            tweak: Tweak bytes (must match encryption).
+            tweak: Tweak bytes (must match encryption; defaults to TWEAK_SSN).
 
         Returns:
             Decrypted SSN.
         """
-        return self._decrypt_with_separators(encrypted_ssn, tweak)
+        return self._decrypt_with_separators(encrypted_ssn, self._tweak(tweak, self.TWEAK_SSN))
 
-    def encrypt_account_number(self, account: str, tweak: bytes = b"") -> str:
+    def encrypt_account_number(self, account: str, tweak: bytes | None = None) -> str:
         """
         Encrypt an account number, preserving format.
 
         Args:
             account: Account number string (digits).
-            tweak: Tweak bytes (e.g., bank routing number).
+            tweak: Tweak bytes, for example b"account-number:" + routing number.
+                Defaults to TWEAK_ACCOUNT_NUMBER; a value passed here replaces the
+                default.
 
         Returns:
             Encrypted account number.
         """
-        return self._encrypt_with_separators(account, tweak)
+        return self._encrypt_with_separators(account, self._tweak(tweak, self.TWEAK_ACCOUNT_NUMBER))
 
-    def decrypt_account_number(self, encrypted_account: str, tweak: bytes = b"") -> str:
+    def decrypt_account_number(self, encrypted_account: str, tweak: bytes | None = None) -> str:
         """
         Decrypt an account number.
 
         Args:
             encrypted_account: Encrypted account number.
-            tweak: Tweak bytes (must match encryption).
+            tweak: Tweak bytes (must match encryption; defaults to
+                TWEAK_ACCOUNT_NUMBER).
 
         Returns:
             Decrypted account number.
         """
-        return self._decrypt_with_separators(encrypted_account, tweak)
+        return self._decrypt_with_separators(
+            encrypted_account, self._tweak(tweak, self.TWEAK_ACCOUNT_NUMBER)
+        )
+
+    @staticmethod
+    def _tweak(tweak: bytes | None, default: bytes) -> bytes:
+        """Return ``tweak``, or the helper's default tweak when it is None."""
+        return default if tweak is None else tweak
 
     def _encrypt_with_separators(self, text: str, tweak: bytes) -> str:
         """Encrypt only alphabet characters, preserving non-alphabet separators."""

@@ -40,6 +40,8 @@ httpcore==1.0.9
     # via httpx
 httpx==0.28.1
     # via -r requirements-ci.in
+hypothesis==6.170.12
+    # via -r requirements-ci.in
 idna==3.20
     # via
     #   anyio
@@ -95,6 +97,8 @@ pytest-timeout==2.4.0
     # via -r requirements-ci.in
 pytest-xdist==3.8.0
     # via -r requirements-ci.in
+sortedcontainers==2.4.0
+    # via hypothesis
 sqlalchemy==2.1.5
     # via
     #   -r requirements.txt

@@ -1,32 +1,47 @@
 """
-Post-Quantum Cryptography Module
+Post-Quantum Cryptography Module (research prototype, not audited)
 
-Implements NIST PQC standards for quantum-resistant key encapsulation and
-digital signatures, suitable for protecting financial data against future
-quantum computing threats.
+Wraps the pqcrypto bindings of ML-KEM (FIPS 203) and ML-DSA (FIPS 204), and
+builds a hybrid KEM and a sign-then-encrypt helper on top of them.
 
-Algorithms (NIST FIPS 203 / FIPS 204):
-- ML-KEM (Module-Lattice-Based Key Encapsulation Mechanism): Hybrid key
-  exchange combining ML-KEM with X25519 for defense-in-depth.
-- ML-DSA (Module-Lattice-Based Digital Signature Algorithm): Quantum-resistant
-  digital signatures for document integrity and non-repudiation.
+Algorithms:
+- ML-KEM (Module-Lattice-Based Key Encapsulation Mechanism), via pqcrypto.
+- ML-DSA (Module-Lattice-Based Digital Signature Algorithm), via pqcrypto.
+- HybridKEM: ML-KEM plus an ephemeral-static X25519 exchange, combined as
+  SHA-256(kem_ss || x25519_ss). This combiner is custom. It is not X-Wing,
+  not the IETF hybrid key-exchange design, and no conformance to NIST
+  SP 800-227 or SP 800-56C is claimed. It binds neither the ciphertexts nor
+  the public keys into the hash and has no domain-separation label.
 
 Security Levels:
 - ML-KEM-512  / ML-DSA-44: NIST Level 1 (~AES-128 equivalent)
-- ML-KEM-768  / ML-DSA-65: NIST Level 3 (~AES-192 equivalent) [recommended]
+- ML-KEM-768  / ML-DSA-65: NIST Level 3 (~AES-192 equivalent) [default]
 - ML-KEM-1024 / ML-DSA-87: NIST Level 5 (~AES-256 equivalent)
 
-Use Cases:
-- Hybrid key exchange for establishing shared secrets (ML-KEM + X25519)
-- Signing encrypted documents, audit records, key attestations (ML-DSA)
-- Long-term data protection against "harvest now, decrypt later" attacks
+An unsupported security level raises ValueError everywhere, including the
+static MLKEM.encapsulate, MLDSA.verify and HybridKEM.encapsulate.
+
+Signatures: PostQuantumEncryption.decrypt() verifies a signature whenever one
+is given, and refuses to decrypt without one when ``require_signature`` is
+True. ``require_signature`` defaults to True when the caller passes
+``sender_dsa_public_key`` (the caller expects a signed message, so a stripped
+signature must fail) and to False otherwise.
+
+Persistence: every secret (ML-KEM and ML-DSA secret keys, X25519 private key)
+can be exported as base64 and loaded again, so an instance can be restored
+after a restart; see HybridKEM.from_secret_keys() and
+PostQuantumEncryption.export_keys() / from_keys().
+
+Requires pqcrypto below 1.0 (1.0 renamed the API).
 """
 
 from __future__ import annotations
 
 import base64
 import os
-from typing import cast
+from collections.abc import Mapping
+from types import ModuleType
+from typing import Any, cast
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
@@ -67,6 +82,28 @@ _DSA_PARAMS = {
     87: ml_dsa_87,
 }
 
+_X25519_KEY_SIZE = 32
+
+
+def _kem_module(security_level: int) -> ModuleType:
+    """Return the pqcrypto ML-KEM module for ``security_level`` or raise ValueError."""
+    try:
+        return cast(ModuleType, _KEM_PARAMS[security_level])
+    except (KeyError, TypeError):
+        raise ValueError(
+            f"security_level must be one of {sorted(_KEM_PARAMS)}, got {security_level!r}"
+        ) from None
+
+
+def _dsa_module(security_level: int) -> ModuleType:
+    """Return the pqcrypto ML-DSA module for ``security_level`` or raise ValueError."""
+    try:
+        return cast(ModuleType, _DSA_PARAMS[security_level])
+    except (KeyError, TypeError):
+        raise ValueError(
+            f"security_level must be one of {sorted(_DSA_PARAMS)}, got {security_level!r}"
+        ) from None
+
 
 class MLKEM:
     """
@@ -94,13 +131,8 @@ class MLKEM:
         Raises:
             ValueError: If security_level is not supported.
         """
-        if security_level not in self.SECURITY_LEVELS:
-            raise ValueError(
-                f"security_level must be one of {sorted(self.SECURITY_LEVELS)}, "
-                f"got {security_level}"
-            )
+        self._mod = _kem_module(security_level)
         self.security_level = security_level
-        self._mod = _KEM_PARAMS[security_level]
         self._public_key: bytes | None = None
         self._secret_key: bytes | None = None
 
@@ -125,8 +157,11 @@ class MLKEM:
 
         Returns:
             Tuple of (shared_secret, ciphertext). Send ciphertext to the recipient.
+
+        Raises:
+            ValueError: If security_level is not supported.
         """
-        mod = _KEM_PARAMS[security_level]
+        mod = _kem_module(security_level)
         ciphertext, shared_secret = mod.encrypt(public_key)
         return cast(bytes, shared_secret), cast(bytes, ciphertext)
 
@@ -213,13 +248,8 @@ class MLDSA:
         Raises:
             ValueError: If security_level is not supported.
         """
-        if security_level not in self.SECURITY_LEVELS:
-            raise ValueError(
-                f"security_level must be one of {sorted(self.SECURITY_LEVELS)}, "
-                f"got {security_level}"
-            )
+        self._mod = _dsa_module(security_level)
         self.security_level = security_level
-        self._mod = _DSA_PARAMS[security_level]
         self._public_key: bytes | None = None
         self._secret_key: bytes | None = None
 
@@ -265,8 +295,11 @@ class MLDSA:
 
         Returns:
             True if the signature is valid, False otherwise.
+
+        Raises:
+            ValueError: If security_level is not supported.
         """
-        mod = _DSA_PARAMS[security_level]
+        mod = _dsa_module(security_level)
         return bool(mod.verify(public_key, message, signature))
 
     def get_public_key(self) -> bytes:
@@ -312,15 +345,22 @@ class MLDSA:
 
 class HybridKEM:
     """
-    Hybrid Key Encapsulation combining ML-KEM with X25519.
+    Hybrid key encapsulation: ML-KEM plus X25519, with a custom combiner.
 
-    Provides defense-in-depth: the shared secret is secure as long as
-    *either* ML-KEM or X25519 remains unbroken. This follows the
-    recommended migration strategy for transitioning to post-quantum
-    cryptography (NIST SP 800-227).
+    Research prototype, not audited. The intent is that the shared secret stays
+    secret while either ML-KEM or X25519 is unbroken.
 
-    The combined shared secret is derived by concatenating the ML-KEM
-    and X25519 shared secrets and hashing with SHA-256.
+    The combined secret is SHA-256(kem_ss || x25519_ss). This is not X-Wing,
+    not the IETF hybrid key-exchange construction, and not a combiner from
+    NIST SP 800-227 or SP 800-56C; no conformance to any of them is claimed.
+    Unlike X-Wing it does not hash the X25519 ciphertext (the ephemeral public
+    key) or the recipient's X25519 public key, and it has no domain-separation
+    label. Changing the combiner would change every shared secret, so it is
+    documented rather than replaced.
+
+    Persistence: export_kem_secret_key() and export_x25519_private_key() return
+    base64 secrets; from_secret_keys() restores an instance that can
+    decapsulate.
     """
 
     def __init__(self, kem_security_level: int = 768):
@@ -329,6 +369,9 @@ class HybridKEM:
 
         Args:
             kem_security_level: ML-KEM security level (512, 768, or 1024).
+
+        Raises:
+            ValueError: If kem_security_level is not supported.
         """
         self._mlkem = MLKEM(kem_security_level)
         self._x25519_private: X25519PrivateKey | None = None
@@ -343,8 +386,7 @@ class HybridKEM:
         """
         kem_pub = self._mlkem.generate_keypair()
         self._x25519_private = X25519PrivateKey.generate()
-        x25519_pub = self._x25519_private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
-        return kem_pub, x25519_pub
+        return kem_pub, self.get_x25519_public_key()
 
     @staticmethod
     def encapsulate(
@@ -363,6 +405,9 @@ class HybridKEM:
         Returns:
             Tuple of (combined_shared_secret, kem_ciphertext, x25519_public_key).
             Send kem_ciphertext and x25519_public_key to the recipient.
+
+        Raises:
+            ValueError: If kem_security_level is not supported.
         """
         # ML-KEM encapsulation
         kem_ss, kem_ct = MLKEM.encapsulate(kem_public_key, kem_security_level)
@@ -375,7 +420,6 @@ class HybridKEM:
         peer_public = X25519PublicKey.from_public_bytes(x25519_public_key)
         x25519_ss = ephemeral_private.exchange(peer_public)
 
-        # Combine shared secrets via SHA-256
         combined = _combine_secrets(kem_ss, x25519_ss)
         return combined, kem_ct, ephemeral_public
 
@@ -391,7 +435,7 @@ class HybridKEM:
             32-byte combined shared secret.
 
         Raises:
-            RuntimeError: If no keypair was generated.
+            RuntimeError: If no keypair was generated or loaded.
         """
         if self._x25519_private is None:
             raise RuntimeError("No keypair generated")
@@ -405,6 +449,18 @@ class HybridKEM:
 
         return _combine_secrets(kem_ss, x25519_ss)
 
+    def get_x25519_public_key(self) -> bytes:
+        """Return the raw 32-byte X25519 public key."""
+        if self._x25519_private is None:
+            raise RuntimeError("No keypair generated")
+        return cast(
+            bytes, self._x25519_private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        )
+
+    def get_kem_public_key(self) -> bytes:
+        """Return the ML-KEM public key."""
+        return self._mlkem.get_public_key()
+
     def export_x25519_private_key(self) -> str:
         """Export X25519 private key as base64."""
         if self._x25519_private is None:
@@ -416,18 +472,83 @@ class HybridKEM:
         """Export ML-KEM secret key as base64."""
         return self._mlkem.export_secret_key()
 
+    def export_kem_public_key(self) -> str:
+        """Export ML-KEM public key as base64."""
+        return self._mlkem.export_public_key()
+
+    def load_x25519_private_key(self, private_key: bytes) -> bytes:
+        """
+        Load a raw 32-byte X25519 private key (as exported, after base64 decoding).
+
+        Args:
+            private_key: Raw X25519 private key.
+
+        Returns:
+            The matching raw X25519 public key.
+
+        Raises:
+            ValueError: If the key is not 32 bytes.
+        """
+        if not isinstance(private_key, (bytes, bytearray)) or len(private_key) != _X25519_KEY_SIZE:
+            raise ValueError(f"X25519 private key must be {_X25519_KEY_SIZE} raw bytes")
+        self._x25519_private = X25519PrivateKey.from_private_bytes(bytes(private_key))
+        return self.get_x25519_public_key()
+
+    def load_kem_secret_key(self, secret_key: bytes) -> None:
+        """Load a raw ML-KEM secret key."""
+        self._mlkem.load_secret_key(secret_key)
+
+    def load_kem_public_key(self, public_key: bytes) -> None:
+        """Load a raw ML-KEM public key."""
+        self._mlkem.load_public_key(public_key)
+
+    @classmethod
+    def from_secret_keys(
+        cls,
+        kem_secret_key_b64: str,
+        x25519_private_key_b64: str,
+        kem_security_level: int = 768,
+        kem_public_key_b64: str | None = None,
+    ) -> HybridKEM:
+        """
+        Restore a HybridKEM that can decapsulate from its exported secrets.
+
+        Args:
+            kem_secret_key_b64: Output of export_kem_secret_key().
+            x25519_private_key_b64: Output of export_x25519_private_key().
+            kem_security_level: ML-KEM security level that produced the key.
+            kem_public_key_b64: Optional output of export_kem_public_key(), so that
+                get_kem_public_key() works on the restored instance.
+
+        Returns:
+            HybridKEM instance.
+
+        Raises:
+            ValueError: If a value is not valid base64, the X25519 key is not 32 bytes,
+                or the security level is not supported.
+        """
+        instance = cls(kem_security_level)
+        instance.load_kem_secret_key(_b64decode_strict(kem_secret_key_b64))
+        instance.load_x25519_private_key(_b64decode_strict(x25519_private_key_b64))
+        if kem_public_key_b64 is not None:
+            instance.load_kem_public_key(_b64decode_strict(kem_public_key_b64))
+        return instance
+
 
 class PostQuantumEncryption:
     """
-    High-level post-quantum encryption interface.
+    Post-quantum sign-then-encrypt helper (research prototype, not audited).
 
-    Combines HybridKEM (ML-KEM + X25519) for key establishment with
-    AES-256-GCM for authenticated data encryption. Optionally signs
-    ciphertexts with ML-DSA for integrity and non-repudiation.
+    Combines HybridKEM (ML-KEM + X25519, custom combiner) for key
+    establishment with AES-256-GCM for data encryption. Optionally signs the
+    ciphertext with ML-DSA.
 
-    Use Case: Encrypting sensitive financial documents with quantum-resistant
-    protection and optional digital signatures for audit compliance.
+    decrypt() verifies a signature whenever one is supplied. To make a missing
+    signature an error, pass ``sender_dsa_public_key`` (require_signature then
+    defaults to True) or ``require_signature=True``.
     """
+
+    KEY_EXPORT_VERSION = 1
 
     def __init__(
         self,
@@ -440,6 +561,9 @@ class PostQuantumEncryption:
         Args:
             kem_security_level: ML-KEM security level for key encapsulation.
             dsa_security_level: ML-DSA security level for signatures.
+
+        Raises:
+            ValueError: If either security level is not supported.
         """
         self._hybrid = HybridKEM(kem_security_level)
         self._dsa = MLDSA(dsa_security_level)
@@ -462,6 +586,71 @@ class PostQuantumEncryption:
             "kem_public_key": kem_pub,
             "x25519_public_key": x25519_pub,
             "dsa_public_key": dsa_pub,
+        }
+
+    def export_keys(self) -> dict[str, Any]:
+        """
+        Export every key of this instance, secret keys included, as a JSON-serialisable dict.
+
+        The result contains the ML-KEM, X25519 and ML-DSA secret keys in the
+        clear (base64). Protect it like the keys themselves.
+
+        Returns:
+            Dict for :meth:`from_keys`.
+
+        Raises:
+            RuntimeError: If the keys have not been generated or loaded.
+        """
+        return {
+            "version": self.KEY_EXPORT_VERSION,
+            "kem_security_level": self.kem_security_level,
+            "dsa_security_level": self.dsa_security_level,
+            "kem_secret_key": self._hybrid.export_kem_secret_key(),
+            "kem_public_key": self._hybrid.export_kem_public_key(),
+            "x25519_private_key": self._hybrid.export_x25519_private_key(),
+            "dsa_secret_key": self._dsa.export_secret_key(),
+            "dsa_public_key": self._dsa.export_public_key(),
+        }
+
+    @classmethod
+    def from_keys(cls, keys: Mapping[str, Any]) -> PostQuantumEncryption:
+        """
+        Restore an instance from :meth:`export_keys` output.
+
+        The restored instance can decrypt data encrypted to the original public
+        keys and sign with the original ML-DSA key.
+
+        Args:
+            keys: Dict returned by export_keys(), for example after a JSON round trip.
+
+        Returns:
+            PostQuantumEncryption instance.
+
+        Raises:
+            ValueError: If the dict is malformed or has an unsupported version.
+        """
+        try:
+            if keys["version"] != cls.KEY_EXPORT_VERSION:
+                raise ValueError(f"Unsupported key export version: {keys['version']!r}")
+            instance = cls(keys["kem_security_level"], keys["dsa_security_level"])
+            instance._hybrid = HybridKEM.from_secret_keys(
+                keys["kem_secret_key"],
+                keys["x25519_private_key"],
+                keys["kem_security_level"],
+                kem_public_key_b64=keys["kem_public_key"],
+            )
+            instance._dsa.load_secret_key(_b64decode_strict(keys["dsa_secret_key"]))
+            instance._dsa.load_public_key(_b64decode_strict(keys["dsa_public_key"]))
+        except (KeyError, TypeError) as exc:
+            raise ValueError(f"Malformed key export: {exc}") from exc
+        return instance
+
+    def get_public_keys(self) -> dict:
+        """Return the public keys in the same shape as generate_keypair()."""
+        return {
+            "kem_public_key": self._hybrid.get_kem_public_key(),
+            "x25519_public_key": self._hybrid.get_x25519_public_key(),
+            "dsa_public_key": self._dsa.get_public_key(),
         }
 
     def encrypt(
@@ -522,26 +711,45 @@ class PostQuantumEncryption:
         ciphertext: bytes,
         signature: bytes = None,
         sender_dsa_public_key: bytes = None,
+        require_signature: bool | None = None,
     ) -> bytes:
         """
         Decrypt data using hybrid PQ key exchange + AES-256-GCM.
+
+        A supplied signature is always verified, before anything is decrypted.
+        Whether a signature must be present is decided by ``require_signature``:
+
+        - None (default): required if and only if ``sender_dsa_public_key`` is
+          given. Passing the sender's key means a signed message is expected, so
+          a message whose signature was stripped is rejected.
+        - True: required; ``sender_dsa_public_key`` must be given too.
+        - False: an unsigned message is accepted.
 
         Args:
             kem_ciphertext: ML-KEM ciphertext.
             x25519_ephemeral: Sender's ephemeral X25519 public key.
             nonce: AES-GCM nonce.
             ciphertext: AES-256-GCM encrypted data.
-            signature: Optional ML-DSA signature to verify.
-            sender_dsa_public_key: Sender's ML-DSA public key (required if signature given).
+            signature: ML-DSA signature over the four fields above.
+            sender_dsa_public_key: Sender's ML-DSA public key (required if a signature
+                is given or required).
+            require_signature: See above.
 
         Returns:
             Decrypted plaintext bytes.
 
         Raises:
-            ValueError: If signature verification fails.
+            ValueError: If a required signature is missing, the sender's key is
+                missing, or signature verification fails.
+            cryptography.exceptions.InvalidTag: If AES-GCM authentication fails.
         """
-        # Verify signature if provided
-        if signature is not None:
+        if require_signature is None:
+            require_signature = sender_dsa_public_key is not None
+
+        if signature is None:
+            if require_signature:
+                raise ValueError("Signature required but none was supplied")
+        else:
             if sender_dsa_public_key is None:
                 raise ValueError("sender_dsa_public_key required when verifying signature")
             sig_data = kem_ciphertext + x25519_ephemeral + nonce + ciphertext
@@ -588,12 +796,25 @@ class PostQuantumEncryption:
         return self._dsa.get_public_key()
 
 
+def _b64decode_strict(value: str) -> bytes:
+    """Decode standard base64, raising ValueError on anything else."""
+    if not isinstance(value, (str, bytes)):
+        raise ValueError("Expected a base64 string")
+    try:
+        return base64.b64decode(value, validate=True)
+    except ValueError as exc:  # binascii.Error is a ValueError
+        raise ValueError("Invalid base64") from exc
+
+
 def _combine_secrets(kem_secret: bytes, x25519_secret: bytes) -> bytes:
     """
-    Combine two shared secrets into one via SHA-256.
+    Combine two shared secrets as SHA-256(kem_secret || x25519_secret).
 
-    This is the standard hybrid combiner: H(kem_ss || x25519_ss).
-    Security holds if *either* component is secure.
+    A custom combiner, kept because changing it would change every shared
+    secret. It is not X-Wing or the IETF hybrid design: it binds no
+    ciphertexts or public keys and has no domain-separation label. The
+    concatenation is unambiguous only because both inputs are fixed-length
+    (32 bytes each).
     """
     digest = hashes.Hash(hashes.SHA256())
     digest.update(kem_secret)
