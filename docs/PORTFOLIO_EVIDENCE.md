@@ -21,19 +21,41 @@ from the committed reports in `benchmarks/reports/`. Everything else is written 
 ## Evidence run
 
 <!-- generated:run:begin -->
-Filled in by the CI `evidence` job on the release commit (`scripts/render_evidence.py`).
+<!-- evidence-commit: aa2b18716b68a0a70cd21b4b91e63e5e837247ac -->
+| Run | Value |
+| --- | --- |
+| Commit | `aa2b18716b68a0a70cd21b4b91e63e5e837247ac` |
+| Branch or tag | `master` |
+| CI run | [41827977706](https://github.com/MysterionRise/encrypted-information-retrieval/actions/runs/41827977706) |
+| Rendered (UTC) | 2026-11-04T12:19:22+00:00 |
 <!-- generated:run:end -->
 
 ### CI jobs
 
 <!-- generated:jobs:begin -->
-Filled in by the CI `evidence` job on the release commit (`scripts/render_evidence.py`).
+| CI job | Result |
+| --- | --- |
+| `build` | success |
+| `coverage` | success |
+| `docker` | success |
+| `e2e` | success |
+| `lint` | success |
+| `research` | success |
+| `security` | success |
+| `test` | success |
 <!-- generated:jobs:end -->
 
 ### Tests
 
 <!-- generated:tests:begin -->
-Filled in by the CI `evidence` job on the release commit (`scripts/render_evidence.py`).
+| Job | Tests | Passed | Failed | Errors | Skipped | Time (s) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Test Coverage, research extras, on PostgreSQL 16 | 1320 | 1320 | 0 | 0 | 0 | 38 |
+| Research Modules, Python 3.11, research extras | 1320 | 1314 | 0 | 0 | 6 | 15 |
+| Test Suite, Python 3.11, on PostgreSQL 16 | 1202 | 1195 | 0 | 0 | 7 | 20 |
+| Test Suite, Python 3.12, on PostgreSQL 16 | 1202 | 1195 | 0 | 0 | 7 | 16 |
+
+Total coverage (lines and branches, `src/encrypted_ir`): 97.06%; the job fails under 86%.
 <!-- generated:tests:end -->
 
 ### End-to-end runs
@@ -42,7 +64,11 @@ The Compose, KMS and production-mode OIDC flows, each run by its script against 
 (PostgreSQL 16, moto server for AWS KMS, Keycloak 26 as the identity provider):
 
 <!-- generated:e2e:begin -->
-Filled in by the CI `evidence` job on the release commit (`scripts/render_evidence.py`).
+| Check | Result | Date (UTC) | What ran |
+| --- | --- | --- | --- |
+| Docker Compose: ingest, restart, retrieve (`scripts/compose_smoke.sh`) | passed | 2026-11-04T12:18:10+00:00 | /ready (dev mode, PostgreSQL 16, one-shot migrate service); ingest with the dev API key; retrieve with plaintext; docker compose restart api; retrieve again from PostgreSQL |
+| AWS KMS path against moto server (`scripts/kms_smoke.sh`) | passed | 2026-11-04T12:18:22+00:00 | GenerateDataKey via encrypted_ir.tools.generate_kms_master_key (environment=dev); API start with ENCRYPTED_IR_KMS_PROVIDER=aws; ingest; retrieve; API restart; retrieve; _system audit chain verified; 2 key.unwrap rows; ENCRYPTED_IR_ENV=test startup fails with InvalidCiphertextException |
+| Production mode with Keycloak and moto (`scripts/oidc_smoke.sh`) | passed | 2026-11-04T12:19:10+00:00 | API in ENCRYPTED_IR_ENV=prod: no raw master key, no dev auth; /ready all true; RS256 password-grant tokens with iss, aud, tenant_id and roles checked; alice (tenant-a, read+write): ingest 200, retrieve finds the document; bob (tenant-b): GET 404, DELETE 404, retrieve without the document; carol (tenant-a, read): ingest 403, retrieve finds the document; broken signature 401; dev API key 401; API restart (KMS unwrap again); alice retrieves; tenant-a audit chain verified |
 <!-- generated:e2e:end -->
 
 ## Benchmark Results
