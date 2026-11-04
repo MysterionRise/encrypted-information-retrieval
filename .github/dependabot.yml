@@ -10,6 +10,11 @@ updates:
       - "dependencies"
     commit-message:
       prefix: "deps"
+    ignore:
+      # pqcrypto 1.0 renamed the API that encrypted_ir.research.post_quantum uses (0.4). Moving
+      # to 1.x is a port of that module, not a version bump.
+      - dependency-name: "pqcrypto"
+        update-types: ["version-update:semver-major"]
 
   # The Dockerfile's base image is pinned by digest.
   - package-ecosystem: "docker"
@@ -37,6 +42,12 @@ updates:
       - "docker"
     commit-message:
       prefix: "docker"
+    ignore:
+      # A PostgreSQL major upgrade needs a data migration (pg_upgrade or dump and restore), and
+      # from 18 the image expects the volume at /var/lib/postgresql. CI's service containers
+      # and the recorded evidence use 16 too, so the upgrade is a deliberate change.
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"

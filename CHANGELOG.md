@@ -20,6 +20,19 @@ its changes ship in `0.10.0`.
 
 ## [Unreleased]
 
+### Changed
+
+- Dependency updates from Dependabot, collected in one change. The CI lock
+  (`requirements-ci.txt`) moves to alembic 1.20.1, FastAPI 0.162.0, pytest 9.2.0 and
+  SQLAlchemy 2.1.6, the versions the container image's lock already uses. The floors in
+  `requirements-dev.txt` move to pytest-asyncio 1.4.1, isort 9.0.2, IPython 9.18.0 and
+  types-setuptools 84.0.0.20261006. The workflows use actions/checkout v7,
+  actions/setup-python v7, actions/download-artifact v8 and codecov/codecov-action v7.
+- Dependabot no longer proposes major updates for the Compose `postgres` image or for
+  pqcrypto. A PostgreSQL major upgrade needs a data migration, and from 18 a new volume mount
+  point; pqcrypto 1.0 renamed the API that `encrypted_ir.research.post_quantum` uses. Both are
+  deliberate changes, not bot bumps.
+
 ## [1.0.0] - 2026-11-03
 
 Phase 2 (issue #28): the production KMS and OIDC paths run end to end without a cloud account,
