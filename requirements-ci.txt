@@ -89,7 +89,7 @@ pytest==9.2.0
     #   pytest-cov
     #   pytest-timeout
     #   pytest-xdist
-pytest-benchmark==5.3.0
+pytest-benchmark==5.3.1
     # via -r requirements-ci.in
 pytest-cov==7.1.0
     # via -r requirements-ci.in
