@@ -111,6 +111,18 @@ and its proof:
 Exit: CI runs the API in `ENCRYPTED_IR_ENV=prod` against a local IdP and a local KMS emulator (moto) and the run is recorded in
 `PORTFOLIO_EVIDENCE.md`; `REVIEW_GUIDE.md` maps every README claim to its proof; `v1.0.0` tagged.
 
+**Status:** done in `v1.0.0`. Each exit criterion and its proof:
+
+- [x] CI runs the API in `ENCRYPTED_IR_ENV=prod` against Keycloak and moto, and the run is recorded: the CI `e2e`
+  job runs `scripts/kms_smoke.sh` and `scripts/oidc_smoke.sh`, and the run on the evidence commit is in
+  [PORTFOLIO_EVIDENCE.md](PORTFOLIO_EVIDENCE.md#end-to-end-runs).
+- [x] [REVIEW_GUIDE.md](REVIEW_GUIDE.md) maps every README claim to its proof: `tests/test_review_guide.py` fails
+  when a cited test, file, CI job or step is missing, or a "What Is Real" line has no row.
+- [x] `v1.0.0` tagged by the release workflow: the
+  [v1.0.0 release](https://github.com/MysterionRise/encrypted-information-retrieval/releases/tag/v1.0.0) carries the
+  sdist, the wheel and a CycloneDX SBOM. Its evidence guard confirmed that only `PORTFOLIO_EVIDENCE.md` changed
+  after the evidence run (`tests/test_migrations_and_tools.py::test_release_guard_accepts_only_an_evidence_only_change`).
+
 ## Not planned
 
 These stay out of scope so that no document implies they exist. Each would be a new decision, not a continuation.
