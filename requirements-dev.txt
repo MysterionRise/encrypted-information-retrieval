@@ -31,4 +31,4 @@ ipython>=9.18.0
 ipdb>=0.13.13
 
 # Type stubs
-types-setuptools>=84.0.0.20261006
+types-setuptools>=84.2.0.20261104
