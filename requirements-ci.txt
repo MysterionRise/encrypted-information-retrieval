@@ -62,9 +62,9 @@ pluggy==1.7.0
     #   pytest-cov
 prometheus-client==0.26.0
     # via -r requirements.txt
-psycopg==3.3.6
+psycopg==3.3.8
     # via -r requirements.txt
-psycopg-binary==3.3.6
+psycopg-binary==3.3.8
     # via psycopg
 py-cpuinfo2==10.1.1
     # via pytest-benchmark
