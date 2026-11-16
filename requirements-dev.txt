@@ -24,7 +24,7 @@ pre-commit>=3.3.3
 # Documentation (future)
 sphinx>=9.0.4
 sphinx-rtd-theme>=3.1.0
-myst-parser>=5.1.0
+myst-parser>=5.2.0
 
 # Development Tools
 ipython>=9.18.0
